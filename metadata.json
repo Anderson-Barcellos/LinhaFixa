@@ -1,0 +1,6 @@
+{
+  "name": "Linha Fixa",
+  "description": "Aplicativo de apoio ao controle oculomotor e estabilidade da cabeça para leitura e reabilitação visual.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
