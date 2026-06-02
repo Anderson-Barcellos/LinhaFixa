@@ -53,7 +53,7 @@ export const assistedReadingExercise: ExerciseImplementation = {
     // Continuously sample webcam gaze while the user reads. When the session is
     // calibrated, use the calibrated horizontal screen position (normalized 0..1),
     // which is a cleaner reading signal than the raw iris ratio; otherwise fall back.
-    if (context.latestGazePoint && context.width > 0) {
+    if (context.latestGazePoint && context.width > 0 && context.height > 0) {
       s.gazeSamples.push({
         t: context.timeMs,
         h: context.latestGazePoint.x / context.width,
