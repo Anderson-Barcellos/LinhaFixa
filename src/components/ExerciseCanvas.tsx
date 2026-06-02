@@ -16,6 +16,7 @@ interface ExerciseCanvasProps {
 // Standard CSS reference is 96px/inch => ~37.8px/cm.
 // NOTE: this canvas currently uses CSS pixel dimensions (no DPR upscaling), so
 // conversions are in CSS px unless resize() is updated to apply devicePixelRatio.
+const PX_PER_CM = 37.8;
 
 export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled, viewingDistanceCm = 40, fontSizePreference = 'normal' }: ExerciseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -76,7 +77,6 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
       const degToPx = (deg: number) => {
         const sizeCm = 2 * viewingDistanceCm * Math.tan((deg * Math.PI / 180) / 2);
         return sizeCm * pxPerCm;
-      };
       };
 
       const exContext = {
