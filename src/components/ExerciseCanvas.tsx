@@ -13,9 +13,9 @@ interface ExerciseCanvasProps {
   fontSizePreference?: string;
 }
 
-// Standard CSS reference is 96px/inch => ~37.8px/cm, scaled by the device pixel ratio
-// because the canvas is sized in device pixels here.
-const PX_PER_CM = 37.8;
+// Standard CSS reference is 96px/inch => ~37.8px/cm.
+// NOTE: this canvas currently uses CSS pixel dimensions (no DPR upscaling), so
+// conversions are in CSS px unless resize() is updated to apply devicePixelRatio.
 
 export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled, viewingDistanceCm = 40, fontSizePreference = 'normal' }: ExerciseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
