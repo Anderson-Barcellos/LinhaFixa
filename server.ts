@@ -1,7 +1,13 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
+
+const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+function getClient() {
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
 
 async function startServer() {
   const app = express();
@@ -12,36 +18,29 @@ async function startServer() {
   app.post("/api/generateReadingContent", async (req, res) => {
     try {
       const { complexity } = req.body;
-      const ai = new GoogleGenAI({ 
-        apiKey: process.env.GEMINI_API_KEY,
-        httpOptions: {
-            headers: {
-            'User-Agent': 'aistudio-build',
-            }
-        }
-      });
-      
-      const difficultyRule = complexity === 'facil' 
+      const client = getClient();
+
+      const difficultyRule = complexity === 'facil'
         ? "Produza um texto mais fácil e ameno, com encadeamento de ideias direto, frases mais curtas e vocabulário cotidiano sobre programação/tecnologia."
         : "Produza um texto estruturalmente mais complexo, com encadeamento de ideias denso, orações subordinadas e jargão técnico sobre programação/tecnologia.";
 
-      const prompt = `Gere um trecho de curiosidade sobre tecnologias e programação gerada por IA.
+      const prompt = `Gere um trecho de curiosidade sobre tecnologias e programação.
 Requisito de Formatação/Complexidade: ${difficultyRule}
 O texto deve servir para uma sessão curta de leitura (em torno de 30-50 palavras).
 Apenas o texto, sem título, sem formatação markdown. Responda em português (pt-BR).`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          systemInstruction: "Você é um assistente criativo especializado em gerar textos curtos para testes de leitura sacádica em pacientes oftalmológicos ou neurológicos.",
-          temperature: 0.7,
-        }
+      const completion = await client.chat.completions.create({
+        model: MODEL,
+        temperature: 0.7,
+        messages: [
+          { role: "system", content: "Você é um assistente criativo especializado em gerar textos curtos para testes de leitura sacádica em pacientes oftalmológicos ou neurológicos." },
+          { role: "user", content: prompt }
+        ]
       });
 
-      res.json({ text: response.text });
+      res.json({ text: completion.choices[0]?.message?.content ?? "" });
     } catch (e) {
-      console.error("Gemini Error:", e);
+      console.error("OpenAI Error (reading content):", e);
       res.status(500).json({ error: "Failed to generate reading content" });
     }
   });
@@ -49,11 +48,8 @@ Apenas o texto, sem título, sem formatação markdown. Responda em português (
   app.post("/api/generateInsight", async (req, res) => {
     try {
       const { sessionSummary } = req.body;
-      const ai = new GoogleGenAI({ 
-        apiKey: process.env.GEMINI_API_KEY,
-        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
-      });
-      
+      const client = getClient();
+
       const prompt = `Analise os seguintes dados agregados de sessões de controle oculomotor e leitura de um paciente:
 ${JSON.stringify(sessionSummary, null, 2)}
 
@@ -61,19 +57,82 @@ Produza um parágrafo avaliando o progresso da estabilidade de cabeça, cadênci
 Seja cauteloso: você é um assistente de software, NÃO faça diagnósticos médicos, apenas aponte tendências observadas nos dados.
 Aja de forma encorajadora e profissional, em português do Brasil (pt-BR).`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          systemInstruction: "Aponte tendências a partir de dados quantitativos com linguagem encorajadora, isentando-se de diagnóstico médico.",
-          temperature: 0.3,
-        }
+      const completion = await client.chat.completions.create({
+        model: MODEL,
+        temperature: 0.3,
+        messages: [
+          { role: "system", content: "Aponte tendências a partir de dados quantitativos com linguagem encorajadora, isentando-se de diagnóstico médico." },
+          { role: "user", content: prompt }
+        ]
       });
 
-      res.json({ text: response.text });
+      res.json({ text: completion.choices[0]?.message?.content ?? "" });
     } catch (e) {
-      console.error("Gemini Insight Error:", e);
+      console.error("OpenAI Error (insight):", e);
       res.status(500).json({ error: "Failed to generate insight" });
+    }
+  });
+
+  app.post("/api/generatePlan", async (req, res) => {
+    try {
+      const { profile, symptoms, history } = req.body;
+      const client = getClient();
+
+      const prompt = `Você é um assistente que monta um plano de treino oculomotor curto e seguro.
+Perfil do usuário: ${JSON.stringify(profile)}
+Sintomas atuais (0-10): ${JSON.stringify(symptoms)}
+Resumo do histórico recente: ${JSON.stringify((history || []).slice(-5))}
+
+Monte um plano com 2 a 4 exercícios escolhidos APENAS entre estes IDs:
+- "fixation" (fixação central, toque ao mudar de cor)
+- "saccades" (alvo que pula; use amplitudeDeg entre 8 e 25)
+- "smooth_pursuit" (perseguição suave; use speedDegPerSec entre 1 e 5 e amplitudeDeg entre 8 e 20)
+- "assistedReading" (leitura guiada; defina textComplexity "facil" ou "dificil")
+
+Adapte a dificuldade ao histórico e ao conforto (sintomas mais altos => mais leve e curto).
+Responda SOMENTE com um objeto JSON com EXATAMENTE este formato:
+{
+  "sessionTitle": string,
+  "safetyStatus": { "allowTraining": boolean, "reason": string, "recommendPause": boolean, "recommendProfessionalReview": boolean },
+  "exercises": [
+    {
+      "exerciseId": "fixation" | "saccades" | "smooth_pursuit" | "assistedReading",
+      "durationSec": number,
+      "difficulty": number,
+      "parameters": {
+        "targetSizeMm": number,
+        "speedDegPerSec": number,
+        "amplitudeDeg": number,
+        "lineSpacingMultiplier": number,
+        "contrastMode": string,
+        "durationSec": number,
+        "textComplexity": "facil" | "dificil"
+      },
+      "rationalePtBR": string,
+      "stopRules": string[]
+    }
+  ],
+  "patientFeedbackPtBR": string,
+  "clinicianSummaryPtBR": string
+}
+Todos os textos voltados ao usuário devem estar em português (pt-BR). Não inclua diagnóstico médico.`;
+
+      const completion = await client.chat.completions.create({
+        model: MODEL,
+        temperature: 0.4,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "Você gera planos de treino oculomotor seguros e conservadores como assistente de software, sem fazer diagnóstico médico. Responda apenas com JSON válido." },
+          { role: "user", content: prompt }
+        ]
+      });
+
+      const raw = completion.choices[0]?.message?.content ?? "{}";
+      const plan = JSON.parse(raw);
+      res.json({ plan });
+    } catch (e) {
+      console.error("OpenAI Error (plan):", e);
+      res.status(500).json({ error: "Failed to generate plan" });
     }
   });
 

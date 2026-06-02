@@ -42,11 +42,30 @@ export interface ExerciseResult {
   exerciseId: string;
   completed: boolean;
   score: number; // 0-100
-  headStillnessScore: number; // 0-100
+  headStillnessScore: number | null; // 0-100, or null when no real face tracking was available
   reactionTimeMs?: number;
   parametersUsed: ExerciseParameters;
   timestamp: number;
   extraData?: any;
+}
+
+// A single horizontal/vertical gaze sample (normalized 0..1 ratios) with a timestamp.
+export interface GazeSample {
+  t: number; // ms relative to exercise start
+  h: number; // horizontal gaze ratio (0 = looking left, 1 = looking right)
+  v: number; // vertical gaze ratio (0 = up, 1 = down)
+}
+
+// Experimental, webcam-based saccade estimate produced from a stream of GazeSamples.
+// NOTE: a consumer webcam (~30Hz, ~1-2 deg accuracy) cannot resolve microsaccades.
+// These are coarse saccade/fixation estimates only.
+export interface SaccadeMetrics {
+  trackingAvailable: boolean; // false when no real gaze data was captured
+  samplesValid: number;       // number of usable gaze samples
+  saccadeCount: number;
+  regressionCount: number;        // saccades against the reading direction (re-reading)
+  meanSaccadeAmplitude: number;   // mean |Δh| of detected saccades (gaze-ratio units, approx.)
+  meanFixationMs: number;         // mean duration between saccades
 }
 
 export interface SessionResult {
@@ -59,13 +78,13 @@ export interface SessionResult {
   clinicianSummaryPtBR?: string;
 }
 
-export interface GeminiPlanResponse {
+export interface TreatmentPlanResponse {
   sessionTitle: string;
   safetyStatus: {
     allowTraining: boolean;
     reason: string;
-    recommendPause: boolean;
-    recommendProfessionalReview: boolean;
+    recommendPause?: boolean;
+    recommendProfessionalReview?: boolean;
   };
   exercises: {
     exerciseId: string;

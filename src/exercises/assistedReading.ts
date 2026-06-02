@@ -1,17 +1,43 @@
 import { ExerciseImplementation } from './engine';
 import { getReadingContent } from '../services/contentGenerator';
+import { analyzeSaccades } from './saccadeAnalysis';
+import { GazeSample } from '@/types';
+
+// Maps the user's font preference to a reading font size in px.
+function readingFontPx(pref: string): number {
+  switch (pref) {
+    case 'small': return 26;
+    case 'large': return 40;
+    case 'huge': return 48;
+    default: return 32; // 'normal'
+  }
+}
+
+// roundRect isn't available in every browser; fall back to a plain rect.
+function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  if (typeof (ctx as any).roundRect === 'function') {
+    ctx.beginPath();
+    (ctx as any).roundRect(x, y, w, h, r);
+  } else {
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+  }
+}
 
 export const assistedReadingExercise: ExerciseImplementation = {
   id: 'assistedReading',
   init: (context) => {
+    const fontPx = readingFontPx(context.fontSizePreference);
     context.state = {
       text: "Aguarde, gerando texto adaptado...",
       chunks: [],
       currentIndex: 0,
       intervals: [] as number[],
+      gazeSamples: [] as GazeSample[],
       lastTapTime: context.timeMs,
       setupDone: false,
-      loading: true
+      loading: true,
+      fontPx
     };
 
     getReadingContent(context.parameters.textComplexity || 'facil').then(text => {
@@ -23,13 +49,19 @@ export const assistedReadingExercise: ExerciseImplementation = {
   },
   update: (context) => {
     const s = context.state;
+
+    // Continuously sample webcam gaze while the user reads.
+    if (context.latestGaze) {
+      s.gazeSamples.push(context.latestGaze);
+    }
+
     if (s.loading) return;
-    
+
     if (!s.setupDone) {
       s.setupDone = true;
       const { ctx, width, height } = context;
-      ctx.font = '32px Inter, sans-serif';
-      
+      ctx.font = `${s.fontPx}px Inter, sans-serif`;
+
       const rawWords = s.text.split(' ');
       const chunks = [];
       for(let i=0; i<rawWords.length; i+=2) {
@@ -37,23 +69,22 @@ export const assistedReadingExercise: ExerciseImplementation = {
       }
 
       const margin = 100;
-      const maxWidth = width - margin * 2;
       let currX = margin;
       let currY = height / 3;
-      const lineHeight = 60 * (context.parameters.lineSpacingMultiplier || 1.5);
-      
+      const lineHeight = (s.fontPx * 1.875) * (context.parameters.lineSpacingMultiplier || 1.5);
+
       s.chunks = [];
-      
+
       chunks.forEach(c => {
          const metrics = ctx.measureText(c + ' ');
          if (currX + metrics.width > width - margin && currX > margin) {
             currX = margin;
             currY += lineHeight;
          }
-         s.chunks.push({ text: c, x: currX, y: currY, width: metrics.width, height: 40 });
+         s.chunks.push({ text: c, x: currX, y: currY, width: metrics.width, height: s.fontPx * 1.25 });
          currX += metrics.width;
       });
-      
+
       // Center vertically if needed
       const totalHeight = currY - (height/3);
       const offsetY = (height - totalHeight) / 2 - (height/3);
@@ -64,15 +95,15 @@ export const assistedReadingExercise: ExerciseImplementation = {
     const s = context.state;
     const { ctx, width, height } = context;
     ctx.clearRect(0,0,width,height);
-    
+
     // Check contrast mode
     const isDark = context.parameters.contrastMode === 'dark';
     ctx.fillStyle = isDark ? '#0f172a' : '#f8fafc';
     ctx.fillRect(0,0,width,height);
-    
-    ctx.font = '32px Inter, sans-serif';
+
+    ctx.font = `${s.fontPx}px Inter, sans-serif`;
     ctx.textBaseline = 'bottom';
-    
+
     if (s.loading) {
        ctx.fillStyle = isDark ? '#f8fafc' : '#0f172a';
        ctx.textAlign = 'center';
@@ -83,8 +114,7 @@ export const assistedReadingExercise: ExerciseImplementation = {
     s.chunks.forEach((c: any, index: number) => {
        if (index === s.currentIndex) {
           // Highlight background
-          ctx.beginPath();
-          ctx.roundRect(c.x - 5, c.y - c.height + 5, c.width + 10, c.height, 8);
+          drawRoundedRect(ctx, c.x - 5, c.y - c.height + 5, c.width + 10, c.height, 8);
           ctx.fillStyle = '#3b82f6';
           ctx.fill();
           ctx.fillStyle = '#ffffff'; // contrasting text
@@ -95,7 +125,7 @@ export const assistedReadingExercise: ExerciseImplementation = {
        }
        ctx.fillText(c.text, c.x, c.y);
     });
-    
+
     ctx.fillStyle = isDark ? '#64748b' : '#94a3b8';
     ctx.font = '18px Inter, sans-serif';
     ctx.textAlign = 'center';
@@ -112,12 +142,14 @@ export const assistedReadingExercise: ExerciseImplementation = {
        }
        s.lastTapTime = now;
        s.currentIndex++;
-       
+
        if (s.currentIndex === s.chunks.length) {
-          // measure last tap
+          // Run the experimental webcam saccade estimate over the gaze stream.
+          const saccadeMetrics = analyzeSaccades(s.gazeSamples);
           context.finishExercise({
              intervals: s.intervals,
-             textComplexity: context.parameters.textComplexity || 'facil'
+             textComplexity: context.parameters.textComplexity || 'facil',
+             saccadeMetrics
           });
        }
     }

@@ -77,9 +77,9 @@ export const saccadesExercise: ExerciseImplementation = {
     ctx.beginPath();
     const targetPx = context.cmToPx(parameters.targetSizeMm / 10);
     
-    // Amplitude mapping
-    const offsetPx = Math.min(width * 0.4, context.cmToPx(parameters.amplitudeDeg)); // Very rough approximation
-    
+    // Amplitude is a visual angle (degrees); convert with the calibrated mapping.
+    const offsetPx = Math.min(width * 0.4, context.degToPx(parameters.amplitudeDeg));
+
     ctx.arc(width / 2 + (s.side * offsetPx), height / 2, targetPx, 0, Math.PI * 2);
     ctx.fill();
   },
@@ -97,8 +97,8 @@ export const smoothPursuitExercise: ExerciseImplementation = {
     ctx.fillStyle = '#3b82f6';
     ctx.beginPath();
     const targetPx = context.cmToPx(parameters.targetSizeMm / 10);
-    const speed = parameters.speedDegPerSec || 1; 
-    const offsetPx = Math.min(width * 0.4, context.cmToPx(parameters.amplitudeDeg));
+    const speed = parameters.speedDegPerSec || 1;
+    const offsetPx = Math.min(width * 0.4, context.degToPx(parameters.amplitudeDeg));
     
     // Sine wave motion
     const x = width / 2 + Math.sin(timeMs * 0.001 * speed) * offsetPx;

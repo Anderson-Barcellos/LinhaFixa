@@ -1,16 +1,22 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { registry } from '@/exercises/implementations';
 import { ExerciseParameters } from '@/types';
-import { estimateHeadPose, initFaceTracking } from '@/services/faceTracking';
+import { estimateHeadPose, estimateGaze, initFaceTracking, isFaceTrackingActive } from '@/services/faceTracking';
 
 interface ExerciseCanvasProps {
   exerciseId: string;
   parameters: ExerciseParameters;
-  onFinish: (score: number, headStillnessScore: number, extraData?: any) => void;
+  onFinish: (score: number, headStillnessScore: number | null, extraData?: any) => void;
   cameraEnabled: boolean;
+  viewingDistanceCm?: number;
+  fontSizePreference?: string;
 }
 
-export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled }: ExerciseCanvasProps) {
+// Standard CSS reference is 96px/inch => ~37.8px/cm, scaled by the device pixel ratio
+// because the canvas is sized in device pixels here.
+const PX_PER_CM = 37.8;
+
+export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled, viewingDistanceCm = 40, fontSizePreference = 'normal' }: ExerciseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const contextRef = useRef<any>(null);
@@ -61,7 +67,14 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
 
       const contextState = {};
       const ctx = canvas.getContext('2d')!;
-      
+
+      const pxPerCm = PX_PER_CM * (window.devicePixelRatio || 1);
+      // Visual angle -> physical size on screen: size_cm = 2 * dist * tan(deg/2).
+      const degToPx = (deg: number) => {
+        const sizeCm = 2 * viewingDistanceCm * Math.tan((deg * Math.PI / 180) / 2);
+        return sizeCm * pxPerCm;
+      };
+
       const exContext = {
         ctx,
         width: canvas.width,
@@ -71,11 +84,17 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
         state: contextState,
         parameters,
         onEvent: (ev: string, val: any) => console.log('Event', ev, val),
-        cmToPx: (cm: number) => cm * 40, // very rough standard web cm-to-px
+        cmToPx: (cm: number) => cm * pxPerCm,
+        degToPx,
+        viewingDistanceCm,
+        latestGaze: null,
+        fontSizePreference,
         finishExercise: (extraData?: any) => {
            if (!isRunning) return;
            isRunning = false;
-           const stillnessScore = framesAnalyzed > 0 ? (framesStable / framesAnalyzed) * 100 : 100;
+           // Honest stillness: null when no real tracking frames were captured,
+           // instead of reporting a fake perfect 100%.
+           const stillnessScore = framesAnalyzed > 0 ? (framesStable / framesAnalyzed) * 100 : null;
            onFinish(100, stillnessScore, extraData);
         }
       };
@@ -96,16 +115,22 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
         exContext.width = canvas.width;
         exContext.height = canvas.height;
 
-        // Face tracking logic
-        if (cameraEnabled && videoRef.current && videoRef.current.readyState >= 2) {
-           const headPose = estimateHeadPose(videoRef.current, performance.now());
-           framesAnalyzed++;
+        // Face tracking logic. Only count frames where a real face was detected,
+        // so the stillness score is not inflated by missing measurements.
+        if (cameraEnabled && isFaceTrackingActive() && videoRef.current && videoRef.current.readyState >= 2) {
+           const detectTs = performance.now();
+           const headPose = estimateHeadPose(videoRef.current, detectTs);
            if (headPose) {
+             framesAnalyzed++;
              // Arbitrary threshold for motion
              const isStable = Math.abs(headPose.yaw) < 5 && Math.abs(headPose.pitch) < 5;
              setHeadStable(isStable);
              if (isStable) framesStable++;
            }
+           // Capture gaze for exercises that consume it (e.g. assisted reading).
+           exContext.latestGaze = estimateGaze(videoRef.current, detectTs, exContext.timeMs);
+        } else {
+           exContext.latestGaze = null;
         }
 
         impl.update(exContext);
@@ -132,7 +157,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
         cameraStream.getTracks().forEach(t => t.stop());
       }
     };
-  }, [exerciseId, parameters, cameraEnabled, onFinish]);
+  }, [exerciseId, parameters, cameraEnabled, onFinish, viewingDistanceCm, fontSizePreference]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     const canvas = canvasRef.current;
