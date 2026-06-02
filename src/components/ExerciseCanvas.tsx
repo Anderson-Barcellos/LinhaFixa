@@ -69,11 +69,14 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
       const contextState = {};
       const ctx = canvas.getContext('2d')!;
 
-      const pxPerCm = PX_PER_CM * (window.devicePixelRatio || 1);
+      // NOTE: the canvas is currently sized in CSS pixels (see resize()), so do NOT
+      // scale px/cm by devicePixelRatio here.
+      const pxPerCm = PX_PER_CM;
       // Visual angle -> physical size on screen: size_cm = 2 * dist * tan(deg/2).
       const degToPx = (deg: number) => {
         const sizeCm = 2 * viewingDistanceCm * Math.tan((deg * Math.PI / 180) / 2);
         return sizeCm * pxPerCm;
+      };
       };
 
       const exContext = {
