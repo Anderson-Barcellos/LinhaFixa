@@ -51,7 +51,10 @@ export function DashboardScreen() {
          durationMins: Math.round(s.durationSec / 60),
          maxSymptomBefore: Math.max(...(Object.values(s.symptomsBefore) as number[])),
          maxSymptomAfter: Math.max(...(Object.values(s.symptomsAfter) as number[])),
-         avgHeadStillness: s.exercises.length ? s.exercises.reduce((acc, e) => acc + e.headStillnessScore, 0) / s.exercises.length : 100,
+         avgHeadStillness: (() => {
+            const scores = s.exercises.map(e => e.headStillnessScore).filter((v): v is number => v !== null);
+            return scores.length ? scores.reduce((acc, v) => acc + v, 0) / scores.length : null;
+         })(),
          exercisesCount: s.exercises.length
       }));
 
@@ -140,14 +143,14 @@ export function DashboardScreen() {
 
             {(facil.length > 0 || dificil.length > 0) && (
               <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 mb-8">
-                <h3 className="text-xl font-bold text-slate-800 mb-2">Cadência de Leitura (Fixações)</h3>
-                <p className="text-slate-500 font-medium mb-6">Comparação do tempo de cada pulo visual em textos fáceis e difíceis.</p>
+                <h3 className="text-xl font-bold text-slate-800 mb-2">Cadência de Leitura (toques)</h3>
+                <p className="text-slate-500 font-medium mb-6">Tempo entre toques ao avançar cada trecho, em textos fáceis e difíceis.</p>
                 <div className="h-80 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                       <XAxis type="number" dataKey="chunk" name="Trecho" label={{ value: 'Posição do Trecho', position: 'insideBottom', offset: -10 }} stroke="#94a3b8" />
-                      <YAxis type="number" dataKey="time" name="Tempo (ms)" label={{ value: 'Tempo de Fixação (ms)', angle: -90, position: 'insideLeft', offset: 10 }} stroke="#94a3b8" />
+                      <YAxis type="number" dataKey="time" name="Tempo (ms)" label={{ value: 'Tempo entre toques (ms)', angle: -90, position: 'insideLeft', offset: 10 }} stroke="#94a3b8" />
                       <ZAxis range={[60, 60]} />
                       <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0' }} />
                       <Legend verticalAlign="top" height={36} iconType="circle" />
@@ -161,7 +164,8 @@ export function DashboardScreen() {
 
             {sessions.map(s => {
                const dt = new Date(s.timestamp);
-               const avgStillness = s.exercises.length ? s.exercises.reduce((acc, e) => acc + e.headStillnessScore, 0) / s.exercises.length : 0;
+               const stillnessScores = s.exercises.map(e => e.headStillnessScore).filter((v): v is number => v !== null);
+               const avgStillness = stillnessScores.length ? stillnessScores.reduce((acc, v) => acc + v, 0) / stillnessScores.length : null;
                return (
                  <div key={s.id} className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
                     <div>
@@ -179,7 +183,7 @@ export function DashboardScreen() {
                         <p className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-1">Estabilidade</p>
                         <p className="text-2xl font-bold text-slate-800 flex items-center gap-2">
                           <Eye className="w-5 h-5 text-indigo-500" />
-                          {Math.round(avgStillness)}%
+                          {avgStillness !== null ? `${Math.round(avgStillness)}%` : 'N/D'}
                         </p>
                       </div>
                       <div className="w-px h-12 bg-slate-200"></div>

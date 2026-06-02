@@ -2,12 +2,17 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/useAppStore';
 import { saveProfile } from '@/services/storage';
-import { ArrowLeft, Save } from 'lucide-react';
+import { CalibrationOverlay } from '@/components/CalibrationOverlay';
+import { isCalibrated, getAccuracyDeg } from '@/services/gazeCalibration';
+import { ArrowLeft, Save, Eye } from 'lucide-react';
 
 export function SettingsScreen() {
   const navigate = useNavigate();
   const { profile, setProfile } = useAppStore();
-  
+  const [showCalibration, setShowCalibration] = useState(false);
+  // Bump to refresh the calibration status label after calibrating.
+  const [, setCalTick] = useState(0);
+
   const [formData, setFormData] = useState({
     name: profile?.name || '',
     isAdult: profile?.isAdult ?? true,
@@ -28,6 +33,16 @@ export function SettingsScreen() {
     setProfile(updated);
     navigate('/');
   };
+
+  if (showCalibration) {
+    return (
+      <CalibrationOverlay
+        viewingDistanceCm={formData.viewingDistanceCm}
+        onComplete={() => { setShowCalibration(false); setCalTick(t => t + 1); }}
+        onSkip={() => { setShowCalibration(false); setCalTick(t => t + 1); }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-12">
@@ -109,9 +124,28 @@ export function SettingsScreen() {
                   onChange={e => setFormData({...formData, cameraEnabled: e.target.checked})}
                   className="w-6 h-6 border-slate-300 text-blue-600 rounded"
                 />
-                <span className="text-lg font-medium text-slate-700">Usar câmera frontal para monitorar estabilidade da cabeça</span>
+                <span className="text-lg font-medium text-slate-700">Usar câmera frontal para monitorar a cabeça e medir o olhar (sacadas, fixação, perseguição)</span>
              </label>
           </div>
+
+          {formData.cameraEnabled && (
+            <div className="p-6 bg-indigo-50 rounded-2xl border border-indigo-100">
+               <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div>
+                     <div className="text-lg font-bold text-slate-800 flex items-center gap-2"><Eye className="w-5 h-5 text-indigo-500" /> Calibração do olhar</div>
+                     <div className="text-sm text-slate-500 font-medium mt-1">
+                        {isCalibrated()
+                          ? `Calibrada — precisão estimada ${getAccuracyDeg() != null ? `~${getAccuracyDeg()!.toFixed(1)}°` : 'não medida'}`
+                          : 'Não calibrada nesta sessão. Calibre para habilitar as métricas oculares.'}
+                     </div>
+                  </div>
+                  <button onClick={() => setShowCalibration(true)} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold">
+                     {isCalibrated() ? 'Recalibrar' : 'Calibrar agora'}
+                  </button>
+               </div>
+               <p className="text-xs text-indigo-400 font-medium mt-3">Estimativa por webcam (~30Hz, ~1–2°). Não detecta microssacadas nem substitui equipamento clínico.</p>
+            </div>
+          )}
 
           <button onClick={handleSubmit} className="w-full py-4 bg-slate-900 text-white font-bold text-lg rounded-xl flex items-center justify-center gap-3 mt-4 hover:opacity-90">
              <Save className="w-5 h-5"/> Salvar Preferências
