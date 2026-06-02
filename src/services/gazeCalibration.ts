@@ -127,7 +127,8 @@ export function predictNorm(features: number[]): { x: number; y: number } | null
     x += row[i] * weightsX[i];
     y += row[i] * weightsY[i];
   }
-  return { x, y };
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+  return { x: clamp01(x), y: clamp01(y) };
 }
 
 // Store/read the validation accuracy (mean error in degrees) for display in the UI.
