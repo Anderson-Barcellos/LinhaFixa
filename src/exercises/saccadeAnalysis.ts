@@ -62,6 +62,16 @@ export function analyzeSaccades(samples: GazeSample[]): SaccadeMetrics {
     }
   }
 
+  // If we ended while still in a saccade, close it using the last sample.
+  if (inSaccade) {
+    const last = valid[valid.length - 1];
+    const amplitude = last.h - saccadeStartH;
+    if (Math.abs(amplitude) >= MIN_SACCADE_AMPLITUDE) {
+      amplitudes.push(Math.abs(amplitude));
+      if (amplitude < 0) regressionCount++;
+    }
+  }
+
   const mean = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
 
   return {
