@@ -6,9 +6,11 @@ import { useAppStore } from '@/store/useAppStore';
 import { generateTreatmentPlan } from '@/services/planner';
 import { checkSymptomsSafety } from '@/services/safety';
 import { saveSession } from '@/services/storage';
+import { CalibrationOverlay } from '@/components/CalibrationOverlay';
+import { isCalibrated } from '@/services/gazeCalibration';
 import { SymptomRating, TreatmentPlanResponse, SessionResult, ExerciseResult } from '@/types';
 
-type PlayerStage = 'PRE_SYMPTOMS' | 'LOADING_PLAN' | 'BLOCKED' | 'PRE_EXERCISE_INFO' | 'EXERCISE' | 'POST_READING_RATING' | 'POST_SYMPTOMS' | 'SUMMARY';
+type PlayerStage = 'PRE_SYMPTOMS' | 'LOADING_PLAN' | 'BLOCKED' | 'PRE_EXERCISE_INFO' | 'CALIBRATION' | 'EXERCISE' | 'POST_READING_RATING' | 'POST_SYMPTOMS' | 'SUMMARY';
 
 export function ExercisePlayerScreen() {
   const navigate = useNavigate();
@@ -30,6 +32,14 @@ export function ExercisePlayerScreen() {
   const [safetyReason, setSafetyReason] = useState("");
   const [readingExtraData, setReadingExtraData] = useState<any>(null);
   const [readingRating, setReadingRating] = useState<string | null>(null);
+  // Once the user has been offered calibration this session, don't prompt again.
+  const [calibrationOffered, setCalibrationOffered] = useState(false);
+
+  // Decide whether to calibrate before the exercise, then enter it.
+  const proceedToExercise = () => {
+    const needsCalibration = (profile?.cameraEnabled ?? false) && !isCalibrated() && !calibrationOffered;
+    setStage(needsCalibration ? 'CALIBRATION' : 'EXERCISE');
+  };
 
   const handlePreSymptomsSubmit = async () => {
     const safety = checkSymptomsSafety(symptomsPre);
@@ -160,10 +170,20 @@ export function ExercisePlayerScreen() {
            <span className="font-bold uppercase tracking-widest text-sm text-slate-400">Objetivo Principal</span>
            Lembre-se: Mantenha a cabeça perfeitamente parada.
         </p>
-        <button onClick={() => setStage('EXERCISE')} className="px-12 py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-2xl font-bold shadow-lg transition-transform active:scale-95">
+        <button onClick={proceedToExercise} className="px-12 py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-2xl font-bold shadow-lg transition-transform active:scale-95">
           Estou Pronto
         </button>
       </div>
+    );
+  }
+
+  if (stage === 'CALIBRATION') {
+    return (
+      <CalibrationOverlay
+        viewingDistanceCm={profile?.viewingDistanceCm ?? 40}
+        onComplete={() => { setCalibrationOffered(true); setStage('EXERCISE'); }}
+        onSkip={() => { setCalibrationOffered(true); setStage('EXERCISE'); }}
+      />
     );
   }
 
@@ -303,6 +323,57 @@ export function ExercisePlayerScreen() {
                </div>
              </div>
            </div>
+
+           {(() => {
+              const ocular = results.filter(r =>
+                r.extraData?.fixationMetrics?.trackingAvailable ||
+                r.extraData?.saccadeTaskMetrics?.trackingAvailable ||
+                r.extraData?.pursuitMetrics?.trackingAvailable
+              );
+              if (ocular.length === 0) return null;
+              const name = (id: string) => id === 'fixation' ? 'Fixação' : id === 'saccades' ? 'Sacadas' : id === 'smooth_pursuit' ? 'Perseguição' : id;
+              return (
+                <div className="bg-indigo-50 p-8 rounded-2xl text-left border border-indigo-100 mb-12">
+                   <h3 className="text-sm font-bold text-indigo-500 uppercase tracking-widest mb-2">Métricas oculares — experimental (webcam)</h3>
+                   <p className="text-xs text-indigo-400 font-medium mb-6">Valores aproximados a partir da câmera calibrada (~30Hz, ~1–2°). Dependem de iluminação/posição e não substituem equipamento clínico. Microssacadas não são detectáveis por webcam.</p>
+                   <div className="space-y-5">
+                      {ocular.map((r, i) => {
+                         const fx = r.extraData?.fixationMetrics;
+                         const sc = r.extraData?.saccadeTaskMetrics;
+                         const pu = r.extraData?.pursuitMetrics;
+                         const stat = (label: string, value: string) => (
+                            <div key={label}>
+                               <div className="text-lg font-bold text-slate-800">{value}</div>
+                               <div className="text-slate-500 text-xs font-medium mt-1">{label}</div>
+                            </div>
+                         );
+                         return (
+                            <div key={i} className="bg-white rounded-xl p-5 border border-indigo-100">
+                               <div className="text-sm font-bold text-slate-700 mb-3">{name(r.exerciseId)}</div>
+                               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                  {fx?.trackingAvailable && [
+                                     stat('Tempo na mira', `${Math.round(fx.percentWithinThreshold)}%`),
+                                     stat('Dispersão média', `${fx.meanDispersionDeg.toFixed(1)}°`),
+                                     stat('Quebras de fixação', `${fx.fixationBreaks}`),
+                                  ]}
+                                  {sc?.trackingAvailable && [
+                                     stat('Latência média', `${Math.round(sc.meanLatencyMs)} ms`),
+                                     stat('Precisão (erro)', `${sc.meanAccuracyDeg.toFixed(1)}°`),
+                                     stat('Ganho médio', sc.meanGain.toFixed(2)),
+                                  ]}
+                                  {pu?.trackingAvailable && [
+                                     stat('Ganho de perseguição', pu.gain.toFixed(2)),
+                                     stat('Erro de rastreio', `${pu.rmsErrorDeg.toFixed(1)}°`),
+                                     stat('Tempo no alvo', `${Math.round(pu.percentOnTarget)}%`),
+                                  ]}
+                               </div>
+                            </div>
+                         );
+                      })}
+                   </div>
+                </div>
+              );
+           })()}
 
            <button onClick={() => navigate('/')} className="px-10 py-4 bg-slate-900 text-white rounded-xl text-lg font-bold w-full hover:bg-slate-800 transition-colors">Voltar ao Início</button>
         </div>

@@ -24,7 +24,8 @@ export async function initFaceTracking() {
         modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
         delegate: "GPU"
       },
-      outputFaceBlendshapes: false,
+      // Blendshapes give robust eyeLook* coefficients used as gaze-calibration features.
+      outputFaceBlendshapes: true,
       runningMode: "VIDEO",
       numFaces: 1
     });
@@ -39,10 +40,12 @@ export function isFaceTrackingActive(): boolean {
   return faceLandmarker !== null;
 }
 
-// Cache of the most recent detection so head pose and gaze can be derived from a
-// single detectForVideo() call per frame (the model is monotonic on timestamp).
+// Cache of the most recent detection so head pose, gaze and calibration features can
+// all be derived from a single detectForVideo() call per frame (the model is
+// monotonic on timestamp).
 let lastDetectTimestamp = -1;
 let lastLandmarks: { x: number; y: number; z: number }[] | null = null;
+let lastBlendshapes: Map<string, number> | null = null;
 
 function detect(videoElement: HTMLVideoElement, timestamp: number) {
   if (!faceLandmarker) return null;
@@ -55,6 +58,15 @@ function detect(videoElement: HTMLVideoElement, timestamp: number) {
   lastLandmarks = (results.faceLandmarks && results.faceLandmarks.length > 0)
     ? results.faceLandmarks[0]
     : null;
+  if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+    const map = new Map<string, number>();
+    for (const cat of results.faceBlendshapes[0].categories) {
+      map.set(cat.categoryName, cat.score);
+    }
+    lastBlendshapes = map;
+  } else {
+    lastBlendshapes = null;
+  }
   return lastLandmarks;
 }
 
@@ -125,4 +137,36 @@ export function estimateGaze(videoElement: HTMLVideoElement, timestamp: number, 
   const v = (vLeft + vRight) / 2;
 
   return { t: tMs, h, v };
+}
+
+// Names of the eyeLook blendshapes used as gaze features, in a fixed order so the
+// calibration model always sees the same feature layout.
+const GAZE_BLENDSHAPES = [
+  'eyeLookInLeft', 'eyeLookOutLeft', 'eyeLookUpLeft', 'eyeLookDownLeft',
+  'eyeLookInRight', 'eyeLookOutRight', 'eyeLookUpRight', 'eyeLookDownRight',
+];
+
+// Number of features produced by extractGazeFeatures (kept in sync with the layout
+// below). Consumers can rely on this for fixed-width model matrices.
+export const GAZE_FEATURE_LENGTH = 4 + GAZE_BLENDSHAPES.length;
+
+// Build the gaze feature vector for the current frame, combining iris ratios,
+// head pose (to compensate head movement) and eyeLook* blendshapes. Returns null
+// when no face is detected. The values are NOT screen coordinates — the calibration
+// model (gazeCalibration.ts) maps them to the screen.
+export function extractGazeFeatures(videoElement: HTMLVideoElement, timestamp: number): number[] | null {
+  const gaze = estimateGaze(videoElement, timestamp, 0);
+  if (!gaze) return null;
+  const pose = estimateHeadPose(videoElement, timestamp);
+
+  const bs = lastBlendshapes;
+  const blend = GAZE_BLENDSHAPES.map(name => (bs ? bs.get(name) ?? 0 : 0));
+
+  return [
+    gaze.h,
+    gaze.v,
+    pose ? pose.yaw : 0,
+    pose ? pose.pitch : 0,
+    ...blend,
+  ];
 }

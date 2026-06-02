@@ -1,7 +1,8 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { registry } from '@/exercises/implementations';
 import { ExerciseParameters } from '@/types';
-import { estimateHeadPose, estimateGaze, initFaceTracking, isFaceTrackingActive } from '@/services/faceTracking';
+import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive } from '@/services/faceTracking';
+import { isCalibrated, predictNorm } from '@/services/gazeCalibration';
 
 interface ExerciseCanvasProps {
   exerciseId: string;
@@ -88,6 +89,8 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
         degToPx,
         viewingDistanceCm,
         latestGaze: null,
+        latestGazePoint: null,
+        isGazeCalibrated: cameraEnabled && isFaceTrackingActive() && isCalibrated(),
         fontSizePreference,
         finishExercise: (extraData?: any) => {
            if (!isRunning) return;
@@ -95,7 +98,9 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
            // Honest stillness: null when no real tracking frames were captured,
            // instead of reporting a fake perfect 100%.
            const stillnessScore = framesAnalyzed > 0 ? (framesStable / framesAnalyzed) * 100 : null;
-           onFinish(100, stillnessScore, extraData);
+           // Exercises that measure performance supply their own score via getResultData.
+           const score = extraData && typeof extraData.score === 'number' ? extraData.score : 100;
+           onFinish(score, stillnessScore, extraData);
         }
       };
       
@@ -129,8 +134,19 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
            }
            // Capture gaze for exercises that consume it (e.g. assisted reading).
            exContext.latestGaze = estimateGaze(videoRef.current, detectTs, exContext.timeMs);
+           // Project the calibrated point of gaze into canvas pixels, if calibrated.
+           if (exContext.isGazeCalibrated) {
+             const feat = extractGazeFeatures(videoRef.current, detectTs);
+             const norm = feat ? predictNorm(feat) : null;
+             exContext.latestGazePoint = norm
+               ? { x: norm.x * canvas.width, y: norm.y * canvas.height }
+               : null;
+           } else {
+             exContext.latestGazePoint = null;
+           }
         } else {
            exContext.latestGaze = null;
+           exContext.latestGazePoint = null;
         }
 
         impl.update(exContext);
@@ -138,7 +154,8 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
 
         // Check if finished
         if (exContext.timeMs >= parameters.durationSec * 1000) {
-          exContext.finishExercise();
+          const resultData = impl.getResultData ? impl.getResultData(exContext) : undefined;
+          exContext.finishExercise(resultData);
           return;
         }
 
