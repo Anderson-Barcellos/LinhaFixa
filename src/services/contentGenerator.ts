@@ -1,6 +1,8 @@
+import { apiUrl } from './apiBase';
+
 export async function getReadingContent(complexity: 'facil' | 'dificil'): Promise<string> {
    try {
-     const response = await fetch('/api/generateReadingContent', {
+     const response = await fetch(apiUrl('/api/generateReadingContent'), {
        method: 'POST',
        headers: { 'Content-Type': 'application/json' },
        body: JSON.stringify({ complexity })

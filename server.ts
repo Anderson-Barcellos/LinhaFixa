@@ -9,13 +9,23 @@ function getClient() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
+// Optional sub-path mount (APP_BASE_PATH, e.g. /gaze). Must match the Vite `base`
+// the client was built with and the Apache ProxyPass prefix. '' means root mount.
+function basePrefix(): string {
+  const v = process.env.APP_BASE_PATH;
+  if (!v || v === '/') return '';
+  return '/' + v.replace(/^\/+|\/+$/g, '');
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
+  const base = basePrefix();
+  const p = (route: string) => `${base}${route}`;
 
   app.use(express.json());
 
-  app.post("/api/generateReadingContent", async (req, res) => {
+  app.post(p("/api/generateReadingContent"), async (req, res) => {
     try {
       const { complexity } = req.body;
       const client = getClient();
@@ -45,7 +55,7 @@ Apenas o texto, sem título, sem formatação markdown. Responda em português (
     }
   });
 
-  app.post("/api/generateInsight", async (req, res) => {
+  app.post(p("/api/generateInsight"), async (req, res) => {
     try {
       const { sessionSummary } = req.body;
       const client = getClient();
@@ -73,7 +83,7 @@ Aja de forma encorajadora e profissional, em português do Brasil (pt-BR).`;
     }
   });
 
-  app.post("/api/generatePlan", async (req, res) => {
+  app.post(p("/api/generatePlan"), async (req, res) => {
     try {
       const { profile, symptoms, history } = req.body;
       const client = getClient();
@@ -145,8 +155,13 @@ Todos os textos voltados ao usuário devem estar em português (pt-BR). Não inc
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    // Serve static assets under the (optional) base prefix.
+    app.use(base || '/', express.static(distPath));
+    // Convenience: redirect the bare root to the mounted app when sub-pathed.
+    if (base) app.get('/', (_req, res) => res.redirect(base + '/'));
+    // SPA fallback: any other GET returns index.html (its asset URLs already carry
+    // the base, baked in by Vite at build time).
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

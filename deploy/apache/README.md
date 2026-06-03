@@ -6,10 +6,10 @@ fallback de rota client-side (`app.get('*') -> index.html`). O Apache entra só 
 **reverse proxy com HTTPS** na frente dele.
 
 > 🎯 **Destino pretendido:** `https://ultrassom.ai/gaze` (o app montado sob o prefixo
-> `/gaze` no domínio já existente). **Ainda não está no ar.** Ver a seção
-> [Servir sob `/gaze`](#servir-sob-gaze-intenção) para o que falta. Enquanto isso, o
-> deploy na raiz (ou em um subdomínio `gaze.ultrassom.ai`) já funciona sem mudanças
-> no app.
+> `/gaze` no domínio já existente). O suporte a sub-path **já está implementado** via a
+> env **`APP_BASE_PATH`** — a MESMA base de código serve na raiz (padrão) ou sob `/gaze`.
+> Ver [Servir sob `/gaze`](#servir-sob-gaze-via-app_base_path). Falta apenas publicar
+> (apontar o DNS/vhost do `ultrassom.ai` e ligar a env).
 
 > ⚠️ **HTTPS é obrigatório**: a tela de diagnóstico usa `getUserMedia` (câmera), que
 > os navegadores só liberam em contexto seguro. Em `http://` a câmera é bloqueada no
@@ -56,36 +56,64 @@ O certbot preenche os caminhos de certificado automaticamente. Depois disso, ace
 `https://linhafixa.seudominio.com/eye-tracking-test` no iPhone (landscape) e a câmera
 deve pedir permissão normalmente.
 
-## Servir sob `/gaze` (intenção)
+## Servir sob `/gaze` via `APP_BASE_PATH`
 
-> Status: **planejado, ainda não implementado.** O alvo é `https://ultrassom.ai/gaze`.
+> Status: **implementado.** O alvo é `https://ultrassom.ai/gaze`.
 
-Como `ultrassom.ai` é um domínio já existente, o app fica sob o **prefixo de caminho
-`/gaze`** (e não em um vhost próprio). Isso exige mudanças **no Apache _e_ no app** —
-o prefixo é preservado de ponta a ponta (Apache → Node ambos enxergam `/gaze/...`).
+A env **`APP_BASE_PATH`** controla onde o app é montado. Vazia ou `/` = raiz (padrão).
+`/gaze` = tudo (SPA, assets, `/api`) sob o prefixo `/gaze`, preservado de ponta a ponta
+(Apache → Node ambos enxergam `/gaze/...`). Um único valor alimenta os três pontos:
 
-**1. Apache** — adicionar o bloco `<Location "/gaze">` (em `linhafixa.conf`) dentro do
-vhost `:443` existente do `ultrassom.ai`. Ele faz `ProxyPass http://127.0.0.1:3000/gaze`.
+| Onde | Como usa `APP_BASE_PATH` |
+|------|--------------------------|
+| `vite.config.ts` | vira o `base` do Vite (`/gaze/`) → assets em `/gaze/assets/...` |
+| `src/App.tsx`     | vira o `basename` do React Router (`/gaze`) |
+| `server.ts`       | prefixa rotas `/api`, o `express.static` e o fallback SPA |
+| client (`apiUrl`) | `src/services/apiBase.ts` usa `import.meta.env.BASE_URL` nos `fetch` |
 
-**2. App (a fazer)** — checklist para o subpath funcionar:
+> ⚠️ **Crítico:** `APP_BASE_PATH` precisa ser igual no **build** (assa o `base` no
+> client) **e** no **runtime** do Node. Se divergirem, os assets 404 ou o `/api` quebra.
 
-- [ ] `vite.config.ts`: definir `base: '/gaze/'` (assets passam a ser referenciados em
-      `/gaze/assets/...`).
-- [ ] `src/App.tsx`: `<BrowserRouter basename="/gaze">` (rotas client-side sob o prefixo).
-- [ ] `server.ts`: montar o Express sob `/gaze` — `app.use('/gaze', express.static(dist))`,
-      mover as rotas para `/gaze/api/...` e o fallback para `app.get('/gaze/*', …)`.
-- [ ] Chamadas de API base-aware: trocar `fetch('/api/...')` por
-      `fetch(\`${import.meta.env.BASE_URL}api/...\`)` (com `base`, `BASE_URL` vira
-      `/gaze/`). Afeta `src/services/contentGenerator.ts` e os callers de plano/insight.
-- [ ] `index.html`: ajustar referências absolutas de `public/` (ex.: `href="/manifest.json"`
-      → `/gaze/manifest.json`) e os ícones do manifest.
+### Passos (deploy sob /gaze)
 
-Recomendação para evitar quebrar o deploy na raiz: introduzir um env `APP_BASE_PATH`
-(padrão `/`) e derivar dele o `base` do Vite, o `basename` do Router e o mount do
-Express — assim a mesma build serve raiz **ou** `/gaze`.
+```bash
+# 1) Build COM a base (assa /gaze/ nos assets do client)
+cd /var/www/linhafixa
+APP_BASE_PATH=/gaze npm run build
 
-> Alternativa de menor atrito: usar um **subdomínio** `gaze.ultrassom.ai` (vhost próprio,
-> app na raiz). Sem nenhuma das mudanças acima. Há um exemplo comentado em `linhafixa.conf`.
+# 2) Runtime: a MESMA env no serviço Node. Em /etc/linhafixa.env:
+echo "APP_BASE_PATH=/gaze" | sudo tee -a /etc/linhafixa.env
+sudo systemctl restart linhafixa
+
+# 3) Apache: colar o bloco <Location "/gaze"> (linhafixa.conf) no vhost :443 do ultrassom.ai
+sudo apache2ctl configtest && sudo systemctl reload apache2
+```
+
+### Verificação (local, antes do Apache)
+
+```bash
+APP_BASE_PATH=/gaze NODE_ENV=production node dist/server.cjs &   # porta 3000
+curl -s -o /dev/null -w "%{http_code} -> %{redirect_url}\n" http://127.0.0.1:3000/            # 302 -> /gaze/
+curl -s -o /dev/null -w "%{http_code} %{content_type}\n"   http://127.0.0.1:3000/gaze/        # 200 text/html
+curl -s -o /dev/null -w "%{http_code} %{content_type}\n"   http://127.0.0.1:3000/gaze/eye-tracking-test  # 200 text/html
+curl -s -o /dev/null -w "%{http_code} %{content_type}\n" -X POST \
+  -H 'Content-Type: application/json' -d '{"complexity":"facil"}' \
+  http://127.0.0.1:3000/gaze/api/generateReadingContent        # JSON (200 com key; 500 sem key) — nunca HTML
+```
+
+### Voltar para a raiz
+
+Basta **não** definir `APP_BASE_PATH` (ou `=/`), rebuildar e reiniciar. Nada mais muda.
+
+> Alternativa de menor atrito ainda: subdomínio `gaze.ultrassom.ai` (vhost próprio, app
+> na raiz, `APP_BASE_PATH` vazio). Exemplo de vhost comentado em `linhafixa.conf`.
+
+### Pendência conhecida (PWA)
+
+O `index.html` é reescrito pelo Vite (o `href="/manifest.json"` vira `/gaze/manifest.json`
+automaticamente). Mas os caminhos **internos** do `public/manifest.json` (ex.: `start_url`,
+`icons[].src`) não são processados pelo Vite — se forem absolutos (`/...`), ficam fora do
+`/gaze`. Ajustar quando o PWA/instalação for relevante; não bloqueia a navegação nem a câmera.
 
 ## Notas
 

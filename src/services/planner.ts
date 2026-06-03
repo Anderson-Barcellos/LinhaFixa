@@ -1,4 +1,5 @@
 import { TreatmentPlanResponse, SymptomRating, UserProfile, SessionResult } from '@/types';
+import { apiUrl } from './apiBase';
 
 // Deterministic, offline-safe plan used as a fallback whenever the AI planner is
 // unavailable (no API key, network error, or invalid response).
@@ -102,7 +103,7 @@ export async function generateTreatmentPlan(
 
   // Try the AI planner (OpenAI, proxied by the server). Falls back deterministically.
   try {
-    const res = await fetch('/api/generatePlan', {
+    const res = await fetch(apiUrl('/api/generatePlan'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profile, symptoms, history })

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSessions } from '@/services/storage';
+import { apiUrl } from '@/services/apiBase';
 import { SessionResult } from '@/types';
 import { Activity, ArrowLeft, Clock, Eye, AlertTriangle, Sparkles, Download } from 'lucide-react';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ZAxis } from 'recharts';
@@ -58,7 +59,7 @@ export function DashboardScreen() {
          exercisesCount: s.exercises.length
       }));
 
-      const res = await fetch('/api/generateInsight', {
+      const res = await fetch(apiUrl('/api/generateInsight'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionSummary: summaryPayload })

@@ -35,8 +35,12 @@ export default function App() {
     });
   }, [setProfile, setConsentAccepted]);
 
+  // Router basename derived from the Vite `base` (APP_BASE_PATH). '/' at the root,
+  // '/gaze' when mounted under a sub-path. Keeps client-side routes correct in both.
+  const basename = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') || '/';
+
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
        <Routes>
           <Route path="/consent" element={<ConsentScreen />} />
           <Route path="/" element={consentAccepted ? <HomeScreen /> : <Navigate to="/consent" replace />} />
