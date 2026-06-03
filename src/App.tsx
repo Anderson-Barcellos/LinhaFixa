@@ -14,6 +14,7 @@ import { ExercisePlayerScreen } from '@/screens/ExercisePlayerScreen';
 import { DashboardScreen } from '@/screens/DashboardScreen';
 import { ExerciseLibraryScreen } from '@/screens/ExerciseLibraryScreen';
 import { SettingsScreen } from '@/screens/SettingsScreen';
+import { EyeTrackingTestScreen } from '@/screens/EyeTrackingTestScreen';
 
 export default function App() {
   const { profile, setProfile, consentAccepted, setConsentAccepted } = useAppStore();
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="/dashboard" element={consentAccepted ? <DashboardScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/library" element={consentAccepted ? <ExerciseLibraryScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/settings" element={consentAccepted ? <SettingsScreen /> : <Navigate to="/consent" replace />} />
+          <Route path="/eye-tracking-test" element={consentAccepted ? <EyeTrackingTestScreen /> : <Navigate to="/consent" replace />} />
        </Routes>
     </BrowserRouter>
   );

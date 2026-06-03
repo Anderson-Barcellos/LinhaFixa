@@ -4,7 +4,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { saveProfile } from '@/services/storage';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { isCalibrated, getAccuracyDeg } from '@/services/gazeCalibration';
-import { ArrowLeft, Save, Eye } from 'lucide-react';
+import { ArrowLeft, Save, Eye, ScanEye } from 'lucide-react';
 
 export function SettingsScreen() {
   const navigate = useNavigate();
@@ -144,6 +144,12 @@ export function SettingsScreen() {
                   </button>
                </div>
                <p className="text-xs text-indigo-400 font-medium mt-3">Estimativa por webcam (~30Hz, ~1–2°). Não detecta microssacadas nem substitui equipamento clínico.</p>
+               <button
+                  onClick={() => navigate('/eye-tracking-test')}
+                  className="mt-4 flex items-center gap-2 px-5 py-3 bg-white border border-indigo-200 text-indigo-700 rounded-xl font-bold hover:bg-indigo-50"
+               >
+                  <ScanEye className="w-5 h-5" /> Diagnóstico de rastreamento
+               </button>
             </div>
           )}
 
