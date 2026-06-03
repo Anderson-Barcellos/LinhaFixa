@@ -2,6 +2,7 @@
   "name": "Linha Fixa",
   "short_name": "Linha Fixa",
   "start_url": ".",
+  "scope": ".",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#0f172a",

@@ -108,12 +108,14 @@ Basta **não** definir `APP_BASE_PATH` (ou `=/`), rebuildar e reiniciar. Nada ma
 > Alternativa de menor atrito ainda: subdomínio `gaze.ultrassom.ai` (vhost próprio, app
 > na raiz, `APP_BASE_PATH` vazio). Exemplo de vhost comentado em `linhafixa.conf`.
 
-### Pendência conhecida (PWA)
+### PWA / manifest (base-safe)
 
-O `index.html` é reescrito pelo Vite (o `href="/manifest.json"` vira `/gaze/manifest.json`
-automaticamente). Mas os caminhos **internos** do `public/manifest.json` (ex.: `start_url`,
-`icons[].src`) não são processados pelo Vite — se forem absolutos (`/...`), ficam fora do
-`/gaze`. Ajustar quando o PWA/instalação for relevante; não bloqueia a navegação nem a câmera.
+O `index.html` é reescrito pelo Vite (`href="/manifest.json"` → `/gaze/manifest.json`).
+O `public/manifest.json` **já é seguro para sub-path**: `start_url` e `scope` são `"."`
+(resolvidos relativos à URL do manifest → `/gaze/` ou `/` automaticamente) e o ícone é um
+**data URI** (sem caminho). Não há caminho absoluto a corrigir. O `index.html` também
+inclui as metas de standalone do iOS (`apple-mobile-web-app-*`) para melhor experiência
+em tela cheia no iPhone.
 
 ## Notas
 
