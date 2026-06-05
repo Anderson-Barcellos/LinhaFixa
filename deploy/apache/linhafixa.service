@@ -1,0 +1,30 @@
+# systemd unit to keep the Linha Fixa Node server running (the Apache vhost
+# reverse-proxies to it on 127.0.0.1:3000).
+#
+# Install:
+#   sudo cp deploy/apache/linhafixa.service /etc/systemd/system/linhafixa.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now linhafixa
+#
+# Build first on the server: `npm ci && npm run build` (produces dist/server.cjs).
+# Adjust WorkingDirectory, User and the OPENAI_API_KEY (prefer an EnvironmentFile).
+
+[Unit]
+Description=Linha Fixa (oculomotor training app)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/linhafixa
+ExecStart=/usr/bin/node dist/server.cjs
+Restart=on-failure
+Environment=NODE_ENV=production
+# Keep secrets out of git: put OPENAI_API_KEY=... in this file (chmod 600).
+# To serve under /gaze, also add APP_BASE_PATH=/gaze here AND build with the same
+# value (`APP_BASE_PATH=/gaze npm run build`). They must match.
+EnvironmentFile=-/etc/linhafixa.env
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Play, TrendingUp, Settings, Activity, ArrowRight, Target, Maximize, FastForward, BookOpen } from 'lucide-react';
+import { Play, TrendingUp, Settings, Activity, ArrowRight, Target, Maximize, FastForward, BookOpen, ScanEye } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { getSessions } from '@/services/storage';
 import { SessionResult } from '@/types';
@@ -98,6 +98,21 @@ export function HomeScreen() {
              ))}
            </div>
         </div>
+
+        {/* Diagnostics shortcut */}
+        <button
+          onClick={() => navigate('/eye-tracking-test')}
+          className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all text-left flex items-center gap-4"
+        >
+           <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-slate-100 shrink-0">
+              <ScanEye className="w-6 h-6 text-slate-600" />
+           </div>
+           <div className="flex-1">
+              <h4 className="font-bold text-slate-800 text-lg">Diagnóstico de rastreamento</h4>
+              <p className="text-slate-500 text-sm font-medium">Teste a detecção e o acompanhamento dos olhos durante a leitura (ideal em landscape).</p>
+           </div>
+           <ArrowRight className="w-5 h-5 text-slate-400" />
+        </button>
 
       </main>
     </div>

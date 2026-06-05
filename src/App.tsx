@@ -14,6 +14,7 @@ import { ExercisePlayerScreen } from '@/screens/ExercisePlayerScreen';
 import { DashboardScreen } from '@/screens/DashboardScreen';
 import { ExerciseLibraryScreen } from '@/screens/ExerciseLibraryScreen';
 import { SettingsScreen } from '@/screens/SettingsScreen';
+import { EyeTrackingTestScreen } from '@/screens/EyeTrackingTestScreen';
 
 export default function App() {
   const { profile, setProfile, consentAccepted, setConsentAccepted } = useAppStore();
@@ -34,8 +35,12 @@ export default function App() {
     });
   }, [setProfile, setConsentAccepted]);
 
+  // Router basename derived from the Vite `base` (APP_BASE_PATH). '/' at the root,
+  // '/gaze' when mounted under a sub-path. Keeps client-side routes correct in both.
+  const basename = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') || '/';
+
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
        <Routes>
           <Route path="/consent" element={<ConsentScreen />} />
           <Route path="/" element={consentAccepted ? <HomeScreen /> : <Navigate to="/consent" replace />} />
@@ -43,6 +48,7 @@ export default function App() {
           <Route path="/dashboard" element={consentAccepted ? <DashboardScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/library" element={consentAccepted ? <ExerciseLibraryScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/settings" element={consentAccepted ? <SettingsScreen /> : <Navigate to="/consent" replace />} />
+          <Route path="/eye-tracking-test" element={consentAccepted ? <EyeTrackingTestScreen /> : <Navigate to="/consent" replace />} />
        </Routes>
     </BrowserRouter>
   );
