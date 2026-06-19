@@ -52,3 +52,19 @@ Details:
 
 Notes:
 Nao houve mudanca nova em rota/porta real nesta manutencao, entao `/etc/apache2/APACHE.md` nao precisou ser alterado. Antes de fechar git, validar testes, TypeScript, build com `APP_BASE_PATH=/gaze` e health local/publico.
+
+### 2026-06-19 14:21 - Kickoff da proxima conversa
+
+Context:
+Anders pediu para liberar contexto e deixar salvo o proximo ponto de retomada. O acompanhamento principal do projeto esta no `BACKLOG.md`; nao existe `AGENTS.md` no repo neste momento.
+
+Details:
+ROADPACK sugerido para a proxima conversa:
+
+- PACK 1: Pescoço/postura (recomendado como proximo active). Criar indice separado de estabilidade cervical/postural usando `yaw/pitch/roll` da face e Motion Assist, sem misturar com o detector ocular.
+- PACK 2: Validacao real guiada. Comparar capturas com/sem iluminacao, distancias e postura, registrando quando o sinal horizontal, vertical e diagonal ajuda ou atrapalha.
+- PACK 3: Refinamento visual do relatorio. Melhorar hierarquia de resultado para destacar dinamica ocular, confianca temporal e leitura funcional.
+- PACK 4: Exportacao/clinica. Definir formato enxuto de historico para acompanhamento longitudinal, sem diagnostico e sem prometer precisao laboratorial.
+
+Notes:
+Na retomada, comecar pelo PACK 1 salvo acima. Bundle inicial recomendado: desenhar e implementar uma metrica postural separada, provavelmente com campos como estabilidade cervical, inclinacao sustentada, rotacao, movimento alto e confianca. Nao alterar `saccadeAnalysis.ts` no mesmo bundle, salvo se Anders pedir explicitamente.
