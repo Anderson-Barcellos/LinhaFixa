@@ -3,31 +3,36 @@ import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures } from '@/s
 import {
   resetCalibration, addCalibrationSample, fitCalibration, predictNorm, setAccuracyDeg,
 } from '@/services/gazeCalibration';
+import { attachStream, getFrontCameraStream, stopCameraStream } from '@/services/cameraStream';
+import { setMotionBaseline, stopMotionSensor } from '@/services/motionSensor';
 
 interface CalibrationOverlayProps {
   viewingDistanceCm: number;
   onComplete: () => void; // calibrated successfully and user chose to continue
   onSkip: () => void;      // proceed without eye metrics
+  keepCameraOnClose?: boolean;
 }
 
 // Normalized screen positions (0..1) for the calibration grid and validation checks.
 const CALIB_POINTS = [
-  { x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.9, y: 0.1 },
-  { x: 0.1, y: 0.5 }, { x: 0.5, y: 0.5 }, { x: 0.9, y: 0.5 },
-  { x: 0.1, y: 0.9 }, { x: 0.5, y: 0.9 }, { x: 0.9, y: 0.9 },
+  { x: 0.14, y: 0.18 }, { x: 0.5, y: 0.18 }, { x: 0.86, y: 0.18 },
+  { x: 0.14, y: 0.5 }, { x: 0.5, y: 0.5 }, { x: 0.86, y: 0.5 },
+  { x: 0.14, y: 0.82 }, { x: 0.5, y: 0.82 }, { x: 0.86, y: 0.82 },
 ];
 const VALID_POINTS = [
-  { x: 0.3, y: 0.3 }, { x: 0.7, y: 0.3 }, { x: 0.5, y: 0.5 },
-  { x: 0.3, y: 0.7 }, { x: 0.7, y: 0.7 },
+  { x: 0.32, y: 0.32 }, { x: 0.68, y: 0.32 }, { x: 0.5, y: 0.5 },
+  { x: 0.32, y: 0.68 }, { x: 0.68, y: 0.68 },
 ];
 
-const SETTLE_MS = 700;          // let the eyes land on a new dot before collecting
-const SAMPLES_PER_POINT = 30;   // frames collected per dot
+const SETTLE_MS = 450;          // let the eyes land on a new dot before collecting
+const MIN_POINT_MS = 550;       // avoid advancing from a burst of adjacent frames
+const MAX_POINT_MS = 2200;      // avoid hanging forever on dropped 30fps frames
+const MIN_SAMPLES_PER_POINT = 12;
 const PX_PER_CM = 37.8;         // CSS reference (~96 dpi); used only for the deg readout
 
 type Phase = 'warmup' | 'calibrating' | 'validating' | 'done' | 'unavailable';
 
-export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip }: CalibrationOverlayProps) {
+export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keepCameraOnClose = false }: CalibrationOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [phase, setPhase] = useState<Phase>('warmup');
   const [mode, setMode] = useState<'calib' | 'valid'>('calib');
@@ -49,7 +54,6 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip }: Ca
   const pxPerDeg = 2 * viewingDistanceCm * Math.tan((1 * Math.PI / 180) / 2) * PX_PER_CM;
 
   useEffect(() => {
-    let stream: MediaStream | null = null;
     let raf = 0;
     runningRef.current = true;
 
@@ -71,10 +75,9 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip }: Ca
         return;
       }
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+        const stream = await getFrontCameraStream();
         if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
+          await attachStream(videoRef.current, stream);
         }
       } catch {
         setPhaseBoth('unavailable');
@@ -114,7 +117,11 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip }: Ca
             collectedRef.current += 1;
           }
 
-          if (collectedRef.current >= SAMPLES_PER_POINT) {
+          const collectionElapsed = elapsed - SETTLE_MS;
+          const hasEnoughSamples = collectedRef.current >= MIN_SAMPLES_PER_POINT && collectionElapsed >= MIN_POINT_MS;
+          const timedOutWithSignal = collectedRef.current > 0 && collectionElapsed >= MAX_POINT_MS;
+
+          if (hasEnoughSamples || timedOutWithSignal) {
             // Close out validation point: record its mean prediction error.
             if (phaseNow === 'validating' && validAccumRef.current.n > 0) {
               const mx = validAccumRef.current.x / validAccumRef.current.n;
@@ -149,6 +156,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip }: Ca
               const meanDeg = errs.length ? errs.reduce((a, b) => a + b, 0) / errs.length : null;
               setAccuracyDeg(meanDeg);
               setAccuracy(meanDeg);
+              setMotionBaseline('calibration');
               setPhaseBoth('done');
             }
           }
@@ -164,9 +172,12 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip }: Ca
     return () => {
       runningRef.current = false;
       cancelAnimationFrame(raf);
-      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (!keepCameraOnClose) {
+        stopCameraStream();
+        stopMotionSensor();
+      }
     };
-  }, [pxPerDeg]);
+  }, [keepCameraOnClose, pxPerDeg]);
 
   const restart = () => {
     // Re-run the whole flow by remounting the loop via a phase reset.
@@ -189,23 +200,33 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip }: Ca
   const totalThisMode = points.length;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900 overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 bg-slate-900 overflow-hidden"
+      style={{
+        width: '100dvw',
+        height: '100dvh',
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingRight: 'env(safe-area-inset-right)',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+        paddingLeft: 'env(safe-area-inset-left)',
+      }}
+    >
       <video ref={videoRef} playsInline muted className="hidden" />
 
       {(phase === 'calibrating' || phase === 'validating') && (
         <>
           {/* The moving dot the user must follow with their eyes. */}
           <div
-            className="absolute w-6 h-6 rounded-full bg-blue-400 ring-4 ring-blue-400/30 -translate-x-1/2 -translate-y-1/2 transition-all duration-300"
+            className="absolute w-5 h-5 md:w-6 md:h-6 rounded-full bg-blue-400 ring-4 ring-blue-400/30 -translate-x-1/2 -translate-y-1/2 transition-all duration-300"
             style={{ left: `${target.x * 100}%`, top: `${target.y * 100}%` }}
           >
             <div className="absolute inset-0 rounded-full bg-blue-200 animate-ping opacity-60" />
           </div>
-          <div className="absolute top-8 left-1/2 -translate-x-1/2 text-center text-white">
-            <p className="text-xl font-semibold mb-1">
-              {phase === 'calibrating' ? 'Calibrando o olhar' : 'Verificando precisão'}
+          <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2 text-center text-white px-4">
+            <p className="text-base md:text-xl font-semibold mb-1">
+              {phase === 'calibrating' ? 'Calibrando posição do olhar' : 'Verificando mapeamento'}
             </p>
-            <p className="text-slate-400 text-sm">
+            <p className="text-slate-400 text-xs md:text-sm whitespace-nowrap">
               Olhe para o ponto azul e siga-o sem mover a cabeça · {index + 1}/{totalThisMode}
             </p>
           </div>
@@ -237,14 +258,14 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip }: Ca
         <div className="absolute inset-0 flex flex-col items-center justify-center text-white text-center p-6">
           <h2 className="text-3xl font-bold mb-3">Calibração concluída</h2>
           <p className="text-slate-300 max-w-md mb-2">
-            Precisão estimada:&nbsp;
+            Erro espacial estimado:&nbsp;
             <span className="font-bold text-blue-300">
               {accuracyDeg != null ? `~${accuracyDeg.toFixed(1)}°` : 'não medida'}
             </span>
           </p>
           <p className="text-slate-500 text-sm max-w-md mb-8">
-            Estimativa por webcam (~30Hz). Iluminação e movimento da cabeça afetam a
-            precisão; recalibre se notar desvios.
+            A calibração ajuda a posicionar o ponto na tela. A análise de leitura
+            continua priorizando movimento relativo, sacadas e regressões.
           </p>
           <div className="flex flex-col sm:flex-row gap-4">
             <button onClick={onComplete} className="px-10 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-lg font-bold">
@@ -261,7 +282,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip }: Ca
       )}
 
       {(phase === 'calibrating' || phase === 'validating') && (
-        <button onClick={onSkip} className="absolute bottom-6 right-6 px-5 py-2 text-slate-400 hover:text-slate-200 text-sm">
+        <button onClick={onSkip} className="absolute bottom-3 md:bottom-6 right-4 md:right-6 px-5 py-2 text-slate-400 hover:text-slate-200 text-sm">
           Pular calibração
         </button>
       )}

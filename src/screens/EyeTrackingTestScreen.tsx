@@ -6,8 +6,17 @@ import {
   initFaceTracking, isFaceTrackingActive, estimateHeadPose, estimateGaze, extractGazeFeatures,
 } from '@/services/faceTracking';
 import { isCalibrated, predictNorm, getAccuracyDeg } from '@/services/gazeCalibration';
+import { attachStream, getActiveCameraStream, getFrontCameraStream, stopCameraStream } from '@/services/cameraStream';
+import {
+  getMotionQuality,
+  requestMotionPermissionFromGesture,
+  startMotionSensor,
+  stopMotionSensor,
+  type MotionQuality,
+} from '@/services/motionSensor';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { analyzeSaccades } from '@/exercises/saccadeAnalysis';
+import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
 import { GazeSample, SaccadeMetrics } from '@/types';
 import { getReadingContent } from '@/services/contentGenerator';
 
@@ -65,6 +74,7 @@ export function EyeTrackingTestScreen() {
   const [capturing, setCapturing] = useState(false);
   const [captureRemaining, setCaptureRemaining] = useState(0);
   const [captureResult, setCaptureResult] = useState<{ metrics: SaccadeMetrics; coverage: number } | null>(null);
+  const [motionQuality, setMotionQuality] = useState<MotionQuality>(() => getMotionQuality());
 
   // Loop-local mutable state (refs so the rAF loop is created once).
   const streamRef = useRef<MediaStream | null>(null);
@@ -128,9 +138,11 @@ export function EyeTrackingTestScreen() {
     capturingRef.current = false;
     setCapturing(false);
     cancelAnimationFrame(rafRef.current);
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
+    stopCameraStream();
+    stopMotionSensor();
+    streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
     setCameraState('idle');
     setLive(EMPTY_LIVE);
@@ -139,20 +151,47 @@ export function EyeTrackingTestScreen() {
 
   useEffect(() => () => stopCamera(), []); // cleanup on unmount
 
+  useEffect(() => {
+    const id = window.setInterval(() => setMotionQuality(getMotionQuality()), 250);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (showCalibration) return;
+    const stream = getActiveCameraStream();
+    if (!stream) return;
+
+    streamRef.current = stream;
+    setCameraState('running');
+    if (videoRef.current) {
+      attachStream(videoRef.current, stream).catch(() => setCameraState('unavailable'));
+    }
+    if (!runningRef.current) {
+      runningRef.current = true;
+      frameTimesRef.current = [];
+      coverageWindowRef.current = [];
+      rafRef.current = requestAnimationFrame(loop);
+    }
+  }, [showCalibration]);
+
   const startCamera = async () => {
     setCameraState('starting');
     setCaptureResult(null);
+    const motionPermission = await requestMotionPermissionFromGesture();
+    if (motionPermission === 'granted') {
+      startMotionSensor();
+      setMotionQuality(getMotionQuality());
+    }
     await initFaceTracking();
     if (!isFaceTrackingActive()) {
       setCameraState('unavailable');
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      const stream = await getFrontCameraStream();
       streamRef.current = stream;
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        await attachStream(videoRef.current, stream);
       }
     } catch {
       setCameraState('unavailable');
@@ -309,12 +348,16 @@ export function EyeTrackingTestScreen() {
         viewingDistanceCm={profile?.viewingDistanceCm || 40}
         onComplete={() => setShowCalibration(false)}
         onSkip={() => setShowCalibration(false)}
+        keepCameraOnClose
       />
     );
   }
 
   const calibrated = isCalibrated();
   const accuracyDeg = getAccuracyDeg();
+  const captureSummary = captureResult
+    ? summarizeReadingDynamics(captureResult.metrics, captureResult.coverage)
+    : null;
 
   const Chip = ({ ok, label, neutral }: { ok: boolean; label: string; neutral?: boolean }) => (
     <span className={`px-3 py-1 rounded-full text-sm font-bold ${
@@ -342,8 +385,8 @@ export function EyeTrackingTestScreen() {
         <button onClick={() => { stopCamera(); navigate('/'); }} className="p-2 bg-white/10 rounded-full hover:bg-white/20">
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h1 className="text-lg font-bold">Diagnóstico de rastreamento ocular</h1>
-        <span className="ml-auto text-xs text-slate-400 hidden sm:block">webcam ~30Hz · não detecta microssacadas</span>
+        <h1 className="text-lg font-bold">Dinâmica ocular de leitura</h1>
+        <span className="ml-auto text-xs text-slate-400 hidden sm:block">webcam ~30Hz · foco em sacadas e regressões</span>
       </header>
 
       {/* Main area: reading canvas + diagnostics panel */}
@@ -356,11 +399,11 @@ export function EyeTrackingTestScreen() {
                 <>
                   <Camera className="w-12 h-12 text-indigo-400 mb-4" />
                   <p className="text-slate-300 max-w-md mb-6">
-                    Toque para iniciar a câmera frontal. Leia o texto naturalmente enquanto
-                    observamos se rosto e olhos estão sendo detectados e para onde você olha.
+                    Toque para iniciar a câmera frontal e, se o Safari permitir, os sensores
+                    de movimento para medir a estabilidade da posição do iPhone.
                   </p>
                   <button onClick={startCamera} className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold text-lg">
-                    Iniciar câmera
+                    Iniciar câmera + sensores
                   </button>
                 </>
               )}
@@ -400,20 +443,31 @@ export function EyeTrackingTestScreen() {
             <Chip ok={live.faceFound} label="Rosto" />
             <Chip ok={live.eyesFound} label="Olhos" />
             <Chip ok={calibrated} label={calibrated ? `Calib ~${accuracyDeg != null ? accuracyDeg.toFixed(1) : '?'}°` : 'Sem calib'} neutral={!calibrated} />
+            <Chip
+              ok={motionQuality.status === 'stable'}
+              label={motionStatusLabel(motionQuality.status)}
+              neutral={motionQuality.status === 'unavailable'}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-sm">
             <Metric label="FPS detecção" value={live.fps ? String(live.fps) : '—'} />
             <Metric label="Cobertura" value={`${live.coverage.toFixed(0)}%`} />
-            <Metric label="Olhar h" value={fmt(live.h)} />
-            <Metric label="Olhar v" value={fmt(live.v)} />
+            <Metric label="Olhar H" value={fmt(live.h)} />
+            <Metric label="Olhar V" value={fmt(live.v)} />
             <Metric label="Yaw" value={live.yaw != null ? `${live.yaw.toFixed(0)}°` : '—'} />
             <Metric label="Pitch" value={live.pitch != null ? `${live.pitch.toFixed(0)}°` : '—'} />
+            <Metric label="Delta pos." value={motionQuality.deltaDeg != null ? `${motionQuality.deltaDeg.toFixed(1)}°` : '—'} />
+            <Metric label="Confiança" value={confidenceLabel(motionQuality.confidence)} />
           </div>
 
           <div className="text-xs text-slate-400">
-            Ponto <span className="text-blue-400 font-bold">azul</span> = olhar calibrado ·{' '}
-            <span className="text-amber-400 font-bold">âmbar</span> = direção bruta (sem calibração)
+            Horizontal é o eixo principal da leitura; vertical/diagonal fica como contexto.
+            <br />
+            Ponto <span className="text-blue-400 font-bold">azul</span> = posição calibrada ·{' '}
+            <span className="text-amber-400 font-bold">âmbar</span> = movimento bruto
+            <br />
+            Motion Assist sinaliza mudança do iPhone desde a calibração; não corrige o olhar automaticamente.
           </div>
 
           <div className="mt-auto flex flex-col gap-2">
@@ -457,19 +511,36 @@ export function EyeTrackingTestScreen() {
           <div className="bg-slate-800 rounded-3xl p-8 max-w-lg w-full border border-white/10">
             <div className="flex items-center gap-2 mb-1">
               <Eye className="w-5 h-5 text-indigo-400" />
-              <h2 className="text-2xl font-bold">Resultado da captura</h2>
+              <h2 className="text-2xl font-bold">Dinâmica ocular capturada</h2>
             </div>
-            <p className="text-xs text-slate-400 mb-6">Estimativa experimental por webcam (~30Hz). Não detecta microssacadas.</p>
+            <p className="text-xs text-slate-400 mb-6">
+              Estimativa experimental por webcam. Prioriza movimento relativo, ritmo e eventos
+              de leitura; não promete palavra exata nem detecta microssacadas.
+            </p>
 
-            {captureResult.metrics.trackingAvailable ? (
-              <div className="grid grid-cols-2 gap-3">
-                <Metric label="Cobertura (rosto)" value={`${captureResult.coverage.toFixed(0)}%`} big />
-                <Metric label="Amostras válidas" value={String(captureResult.metrics.samplesValid)} big />
-                <Metric label="Sacadas" value={String(captureResult.metrics.saccadeCount)} big />
-                <Metric label="Regressões" value={String(captureResult.metrics.regressionCount)} big />
-                <Metric label="Amplitude média" value={captureResult.metrics.meanSaccadeAmplitude.toFixed(3)} big />
-                <Metric label="Fixação média" value={`${captureResult.metrics.meanFixationMs.toFixed(0)} ms`} big />
-              </div>
+            {captureResult.metrics.trackingAvailable && captureSummary ? (
+              <>
+                <div className="rounded-2xl bg-slate-900/70 border border-white/10 p-4 mb-4">
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 text-xs font-bold">
+                      {captureSummary.signalLabel}
+                    </span>
+                    <span className="px-2.5 py-1 rounded-full bg-indigo-500/15 text-indigo-300 text-xs font-bold">
+                      {captureSummary.positionLabel}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-200 font-medium">{captureSummary.primaryInsight}</p>
+                  <p className="text-xs text-slate-400 mt-2">{captureSummary.confidenceNote}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Metric label="Cobertura (rosto)" value={`${captureResult.coverage.toFixed(0)}%`} big />
+                  <Metric label="Amostras válidas" value={String(captureResult.metrics.samplesValid)} big />
+                  <Metric label="Sacadas" value={String(captureResult.metrics.saccadeCount)} big />
+                  <Metric label="Regressões" value={String(captureResult.metrics.regressionCount)} big />
+                  <Metric label="Amplitude média" value={captureResult.metrics.meanSaccadeAmplitude.toFixed(3)} big />
+                  <Metric label="Fixação média" value={`${captureResult.metrics.meanFixationMs.toFixed(0)} ms`} big />
+                </div>
+              </>
             ) : (
               <p className="text-amber-300 font-medium">
                 Detecção insuficiente para estimar sacadas ({captureResult.metrics.samplesValid} amostras,
@@ -507,6 +578,30 @@ export function EyeTrackingTestScreen() {
 
 function fmt(v: number | null): string {
   return v != null ? v.toFixed(2) : '—';
+}
+
+function motionStatusLabel(status: MotionQuality['status']): string {
+  switch (status) {
+    case 'stable':
+      return 'Posição estável';
+    case 'moved':
+      return 'Posição mudou';
+    case 'shaking':
+      return 'Movimento alto';
+    default:
+      return 'Sem sensores';
+  }
+}
+
+function confidenceLabel(confidence: MotionQuality['confidence']): string {
+  switch (confidence) {
+    case 'high':
+      return 'Alta';
+    case 'medium':
+      return 'Média';
+    default:
+      return 'Baixa';
+  }
 }
 
 function Metric({ label, value, big }: { label: string; value: string; big?: boolean }) {

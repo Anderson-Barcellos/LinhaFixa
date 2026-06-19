@@ -1,12 +1,12 @@
 # systemd unit to keep the Linha Fixa Node server running (the Apache vhost
-# reverse-proxies to it on 127.0.0.1:3000).
+# reverse-proxies to it on 127.0.0.1:3060 in the ultrassom.ai deployment).
 #
 # Install:
 #   sudo cp deploy/apache/linhafixa.service /etc/systemd/system/linhafixa.service
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now linhafixa
 #
-# Build first on the server: `npm ci && npm run build` (produces dist/server.cjs).
+# Build first on the server: `APP_BASE_PATH=/gaze npm run build` (produces dist/server.cjs).
 # Adjust WorkingDirectory, User and the OPENAI_API_KEY (prefer an EnvironmentFile).
 
 [Unit]
@@ -15,16 +15,17 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/var/www/linhafixa
+WorkingDirectory=/root/Gaze
 ExecStart=/usr/bin/node dist/server.cjs
 Restart=on-failure
 Environment=NODE_ENV=production
 # Keep secrets out of git: put OPENAI_API_KEY=... in this file (chmod 600).
 # To serve under /gaze, also add APP_BASE_PATH=/gaze here AND build with the same
 # value (`APP_BASE_PATH=/gaze npm run build`). They must match.
+# On ultrassom.ai, /etc/linhafixa.env sets PORT=3060 because port 3000 is occupied.
 EnvironmentFile=-/etc/linhafixa.env
-User=www-data
-Group=www-data
+User=root
+Group=root
 
 [Install]
 WantedBy=multi-user.target

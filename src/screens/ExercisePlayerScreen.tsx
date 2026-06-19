@@ -8,6 +8,9 @@ import { checkSymptomsSafety } from '@/services/safety';
 import { saveSession } from '@/services/storage';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { isCalibrated } from '@/services/gazeCalibration';
+import { stopCameraStream } from '@/services/cameraStream';
+import { requestMotionPermissionFromGesture, startMotionSensor, stopMotionSensor } from '@/services/motionSensor';
+import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
 import { SymptomRating, TreatmentPlanResponse, SessionResult, ExerciseResult } from '@/types';
 
 type PlayerStage = 'PRE_SYMPTOMS' | 'LOADING_PLAN' | 'BLOCKED' | 'PRE_EXERCISE_INFO' | 'CALIBRATION' | 'EXERCISE' | 'POST_READING_RATING' | 'POST_SYMPTOMS' | 'SUMMARY';
@@ -35,8 +38,17 @@ export function ExercisePlayerScreen() {
   // Once the user has been offered calibration this session, don't prompt again.
   const [calibrationOffered, setCalibrationOffered] = useState(false);
 
+  useEffect(() => () => {
+    stopCameraStream();
+    stopMotionSensor();
+  }, []);
+
   // Decide whether to calibrate before the exercise, then enter it.
-  const proceedToExercise = () => {
+  const proceedToExercise = async () => {
+    if (profile?.cameraEnabled ?? false) {
+      const motionPermission = await requestMotionPermissionFromGesture();
+      if (motionPermission === 'granted') startMotionSensor();
+    }
     const needsCalibration = (profile?.cameraEnabled ?? false) && !isCalibrated() && !calibrationOffered;
     setStage(needsCalibration ? 'CALIBRATION' : 'EXERCISE');
   };
@@ -183,6 +195,7 @@ export function ExercisePlayerScreen() {
         viewingDistanceCm={profile?.viewingDistanceCm ?? 40}
         onComplete={() => { setCalibrationOffered(true); setStage('EXERCISE'); }}
         onSkip={() => { setCalibrationOffered(true); setStage('EXERCISE'); }}
+        keepCameraOnClose
       />
     );
   }
@@ -252,8 +265,27 @@ export function ExercisePlayerScreen() {
 
            {readingExtraData?.saccadeMetrics?.trackingAvailable ? (
               <div className="bg-indigo-50 p-8 rounded-2xl text-left border border-indigo-100 mb-10">
-                 <h3 className="text-sm font-bold text-indigo-500 uppercase tracking-widest mb-2">Estimativa de sacadas — experimental (webcam)</h3>
-                 <p className="text-xs text-indigo-400 font-medium mb-6">Valores aproximados a partir da câmera. Dependem de iluminação/posição e não substituem equipamento clínico. Microssacadas não são detectáveis por webcam.</p>
+                 <h3 className="text-sm font-bold text-indigo-500 uppercase tracking-widest mb-2">Dinâmica ocular de leitura - experimental</h3>
+                 <p className="text-xs text-indigo-400 font-medium mb-4">
+                   Valores aproximados por webcam. A análise prioriza movimento relativo,
+                   sacadas, regressões e fixações; não promete palavra exata no texto.
+                 </p>
+                 {(() => {
+                   const summary = summarizeReadingDynamics(readingExtraData.saccadeMetrics, 100);
+                   return (
+                     <div className="bg-white/70 rounded-xl border border-indigo-100 p-4 mb-6">
+                       <div className="flex flex-wrap gap-2 mb-2">
+                         <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold">
+                           {summary.signalLabel}
+                         </span>
+                         <span className="px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">
+                           {summary.positionLabel}
+                         </span>
+                       </div>
+                       <p className="text-sm text-slate-700 font-medium">{summary.primaryInsight}</p>
+                     </div>
+                   );
+                 })()}
                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                     <div>
                        <div className="text-xl font-bold text-slate-800">{readingExtraData.saccadeMetrics.saccadeCount}</div>
@@ -275,7 +307,9 @@ export function ExercisePlayerScreen() {
               </div>
            ) : (
               <div className="bg-slate-50 p-6 rounded-2xl text-left border border-slate-100 mb-10">
-                 <p className="text-sm text-slate-500 font-medium">Estimativa de sacadas por webcam indisponível nesta sessão (câmera desligada ou rosto não detectado).</p>
+                 <p className="text-sm text-slate-500 font-medium">
+                   Dinâmica ocular por webcam indisponível nesta sessão (câmera desligada ou rosto não detectado).
+                 </p>
               </div>
            )}
 
@@ -335,7 +369,11 @@ export function ExercisePlayerScreen() {
               return (
                 <div className="bg-indigo-50 p-8 rounded-2xl text-left border border-indigo-100 mb-12">
                    <h3 className="text-sm font-bold text-indigo-500 uppercase tracking-widest mb-2">Métricas oculares — experimental (webcam)</h3>
-                   <p className="text-xs text-indigo-400 font-medium mb-6">Valores aproximados a partir da câmera calibrada (~30Hz, ~1–2°). Dependem de iluminação/posição e não substituem equipamento clínico. Microssacadas não são detectáveis por webcam.</p>
+                   <p className="text-xs text-indigo-400 font-medium mb-6">
+                     Valores aproximados a partir da câmera calibrada (~30Hz, ~1-2°).
+                     A posição na tela é apoio; a leitura principal vem do padrão temporal
+                     de fixações, sacadas e regressões.
+                   </p>
                    <div className="space-y-5">
                       {ocular.map((r, i) => {
                          const fx = r.extraData?.fixationMetrics;

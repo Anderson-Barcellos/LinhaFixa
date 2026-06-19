@@ -18,20 +18,29 @@ export async function initFaceTracking() {
     const vision = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
     );
-    faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        // This .task bundle includes the iris mesh (478 landmarks), needed for gaze.
-        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-        delegate: "GPU"
-      },
-      // Blendshapes give robust eyeLook* coefficients used as gaze-calibration features.
-      outputFaceBlendshapes: true,
-      runningMode: "VIDEO",
-      numFaces: 1
-    });
+    try {
+      faceLandmarker = await createFaceLandmarker(vision, "GPU");
+    } catch (gpuErr) {
+      console.warn("GPU face tracking unavailable; falling back to CPU.", gpuErr);
+      faceLandmarker = await createFaceLandmarker(vision, "CPU");
+    }
   } catch (err) {
     console.warn("Não foi possível inicializar o rastreamento facial real. O monitoramento de cabeça/olhar ficará indisponível.", err);
   }
+}
+
+function createFaceLandmarker(vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>, delegate: "GPU" | "CPU") {
+  return FaceLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      // This .task bundle includes the iris mesh (478 landmarks), needed for gaze.
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      delegate,
+    },
+    // Blendshapes give robust eyeLook* coefficients used as gaze-calibration features.
+    outputFaceBlendshapes: true,
+    runningMode: "VIDEO",
+    numFaces: 1
+  });
 }
 
 // Whether a real (non-mock) face tracker is loaded. The UI uses this to avoid
@@ -46,6 +55,7 @@ export function isFaceTrackingActive(): boolean {
 let lastDetectTimestamp = -1;
 let lastLandmarks: { x: number; y: number; z: number }[] | null = null;
 let lastBlendshapes: Map<string, number> | null = null;
+let warnedDetectFailure = false;
 
 function detect(videoElement: HTMLVideoElement, timestamp: number) {
   if (!faceLandmarker) return null;
@@ -54,7 +64,18 @@ function detect(videoElement: HTMLVideoElement, timestamp: number) {
     return lastLandmarks;
   }
   lastDetectTimestamp = timestamp;
-  const results = faceLandmarker.detectForVideo(videoElement, timestamp);
+  let results;
+  try {
+    results = faceLandmarker.detectForVideo(videoElement, timestamp);
+  } catch (err) {
+    lastLandmarks = null;
+    lastBlendshapes = null;
+    if (!warnedDetectFailure) {
+      warnedDetectFailure = true;
+      console.warn("Face tracking failed during video detection; continuing without gaze metrics.", err);
+    }
+    return null;
+  }
   lastLandmarks = (results.faceLandmarks && results.faceLandmarks.length > 0)
     ? results.faceLandmarks[0]
     : null;

@@ -3,6 +3,7 @@ import { registry } from '@/exercises/implementations';
 import { ExerciseParameters } from '@/types';
 import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive } from '@/services/faceTracking';
 import { isCalibrated, predictNorm } from '@/services/gazeCalibration';
+import { attachStream, getFrontCameraStream } from '@/services/cameraStream';
 
 interface ExerciseCanvasProps {
   exerciseId: string;
@@ -26,7 +27,6 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
   
   useEffect(() => {
     let animationFrameId: number;
-    let cameraStream: MediaStream | null = null;
     let startTime = performance.now();
     let isRunning = true;
 
@@ -40,10 +40,9 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
       if (cameraEnabled) {
         try {
           await initFaceTracking();
-          cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }});
+          const cameraStream = await getFrontCameraStream();
           if (videoRef.current) {
-            videoRef.current.srcObject = cameraStream;
-            videoRef.current.play();
+            await attachStream(videoRef.current, cameraStream);
           }
         } catch (e) {
           console.warn("Could not start camera, continuing without face tracking");
@@ -173,9 +172,6 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
     return () => {
       isRunning = false;
       cancelAnimationFrame(animationFrameId);
-      if (cameraStream) {
-        cameraStream.getTracks().forEach(t => t.stop());
-      }
     };
   }, [exerciseId, parameters, cameraEnabled, onFinish, viewingDistanceCm, fontSizePreference]);
 

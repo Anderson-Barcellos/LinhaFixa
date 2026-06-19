@@ -4,6 +4,8 @@ import { useAppStore } from '@/store/useAppStore';
 import { saveProfile } from '@/services/storage';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { isCalibrated, getAccuracyDeg } from '@/services/gazeCalibration';
+import { clampViewingDistanceCm, normalizeViewingDistanceInput, viewingDistanceInputValue } from '@/services/viewingDistance';
+import { requestMotionPermissionFromGesture, startMotionSensor } from '@/services/motionSensor';
 import { ArrowLeft, Save, Eye, ScanEye } from 'lucide-react';
 
 export function SettingsScreen() {
@@ -19,28 +21,35 @@ export function SettingsScreen() {
     fontSizePreference: profile?.fontSizePreference || 'normal',
     contrastPreference: profile?.contrastPreference || 'light',
     cameraEnabled: profile?.cameraEnabled ?? true,
-    viewingDistanceCm: profile?.viewingDistanceCm || 40,
+    viewingDistanceCm: viewingDistanceInputValue(profile?.viewingDistanceCm),
   });
 
   const handleSubmit = async () => {
     // Basic types assertions for MVP
     const updated = {
-       ...formData,
-       fontSizePreference: formData.fontSizePreference as any,
-       contrastPreference: formData.contrastPreference as any
-    };
+	     ...formData,
+	     fontSizePreference: formData.fontSizePreference as any,
+	     contrastPreference: formData.contrastPreference as any,
+	     viewingDistanceCm: clampViewingDistanceCm(formData.viewingDistanceCm),
+	  };
     await saveProfile(updated);
     setProfile(updated);
     navigate('/');
   };
 
+  const beginCalibration = async () => {
+    const motionPermission = await requestMotionPermissionFromGesture();
+    if (motionPermission === 'granted') startMotionSensor();
+    setShowCalibration(true);
+  };
+
   if (showCalibration) {
     return (
-      <CalibrationOverlay
-        viewingDistanceCm={formData.viewingDistanceCm}
-        onComplete={() => { setShowCalibration(false); setCalTick(t => t + 1); }}
-        onSkip={() => { setShowCalibration(false); setCalTick(t => t + 1); }}
-      />
+        <CalibrationOverlay
+	        viewingDistanceCm={clampViewingDistanceCm(formData.viewingDistanceCm)}
+	        onComplete={() => { setShowCalibration(false); setCalTick(t => t + 1); }}
+	        onSkip={() => { setShowCalibration(false); setCalTick(t => t + 1); }}
+	      />
     );
   }
 
@@ -107,10 +116,14 @@ export function SettingsScreen() {
 
             <div>
                <label className="block text-sm font-bold text-slate-500 uppercase tracking-widest mb-2">Distância da Tela (cm)</label>
-               <input 
-                 type="number" 
+               <input
+                 type="number"
                  value={formData.viewingDistanceCm}
-                 onChange={e => setFormData({...formData, viewingDistanceCm: parseInt(e.target.value) || 40})}
+                 min={20}
+                 max={120}
+                 inputMode="numeric"
+                 onChange={e => setFormData({...formData, viewingDistanceCm: normalizeViewingDistanceInput(e.target.value)})}
+                 onBlur={() => setFormData({...formData, viewingDistanceCm: String(clampViewingDistanceCm(formData.viewingDistanceCm))})}
                  className="w-full text-lg p-4 bg-slate-50 rounded-xl border border-slate-200 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                />
             </div>
@@ -124,7 +137,9 @@ export function SettingsScreen() {
                   onChange={e => setFormData({...formData, cameraEnabled: e.target.checked})}
                   className="w-6 h-6 border-slate-300 text-blue-600 rounded"
                 />
-                <span className="text-lg font-medium text-slate-700">Usar câmera frontal para monitorar a cabeça e medir o olhar (sacadas, fixação, perseguição)</span>
+                <span className="text-lg font-medium text-slate-700">
+                  Usar câmera frontal para medir dinâmica ocular de leitura e estabilidade da cabeça
+                </span>
              </label>
           </div>
 
@@ -132,23 +147,26 @@ export function SettingsScreen() {
             <div className="p-6 bg-indigo-50 rounded-2xl border border-indigo-100">
                <div className="flex items-center justify-between gap-4 flex-wrap">
                   <div>
-                     <div className="text-lg font-bold text-slate-800 flex items-center gap-2"><Eye className="w-5 h-5 text-indigo-500" /> Calibração do olhar</div>
+                     <div className="text-lg font-bold text-slate-800 flex items-center gap-2"><Eye className="w-5 h-5 text-indigo-500" /> Calibração espacial do olhar</div>
                      <div className="text-sm text-slate-500 font-medium mt-1">
                         {isCalibrated()
                           ? `Calibrada — precisão estimada ${getAccuracyDeg() != null ? `~${getAccuracyDeg()!.toFixed(1)}°` : 'não medida'}`
-                          : 'Não calibrada nesta sessão. Calibre para habilitar as métricas oculares.'}
+                          : 'Não calibrada nesta sessão. A análise dinâmica ainda pode usar o movimento bruto.'}
                      </div>
                   </div>
-                  <button onClick={() => setShowCalibration(true)} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold">
+                  <button onClick={beginCalibration} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold">
                      {isCalibrated() ? 'Recalibrar' : 'Calibrar agora'}
                   </button>
                </div>
-               <p className="text-xs text-indigo-400 font-medium mt-3">Estimativa por webcam (~30Hz, ~1–2°). Não detecta microssacadas nem substitui equipamento clínico.</p>
+               <p className="text-xs text-indigo-400 font-medium mt-3">
+                 A calibração melhora a posição na tela; sacadas, regressões e ritmo de leitura
+                 continuam sendo estimativas experimentais por webcam.
+               </p>
                <button
                   onClick={() => navigate('/eye-tracking-test')}
                   className="mt-4 flex items-center gap-2 px-5 py-3 bg-white border border-indigo-200 text-indigo-700 rounded-xl font-bold hover:bg-indigo-50"
                >
-                  <ScanEye className="w-5 h-5" /> Diagnóstico de rastreamento
+                  <ScanEye className="w-5 h-5" /> Dinâmica ocular de leitura
                </button>
             </div>
           )}
