@@ -53,18 +53,29 @@ Details:
 Notes:
 Nao houve mudanca nova em rota/porta real nesta manutencao, entao `/etc/apache2/APACHE.md` nao precisou ser alterado. Antes de fechar git, validar testes, TypeScript, build com `APP_BASE_PATH=/gaze` e health local/publico.
 
-### 2026-06-19 14:21 - Kickoff da proxima conversa
+### 2026-06-20 - PACK 1 concluido: estabilidade cervical/postural
 
 Context:
-Anders pediu para liberar contexto e deixar salvo o proximo ponto de retomada. O acompanhamento principal do projeto esta no `BACKLOG.md`; nao existe `AGENTS.md` no repo neste momento.
+Primeiro pack do ROADPACK. Criado um indice separado de estabilidade cervical/postural a partir de `yaw/pitch/roll` da face (`estimateHeadPose`) e da flag de movimento do Motion Assist, sem tocar no detector ocular `saccadeAnalysis.ts`.
 
 Details:
-ROADPACK sugerido para a proxima conversa:
+Novo `src/exercises/posturalStability.ts` com `summarizePosturalStability(samples, context)` espelhando o padrao de `readingDynamics.ts`: status (`stable`/`sustained-tilt`/`rotating`/`high-movement`/`insufficient`), `cervicalStability` 0-100, `sustainedTiltDeg`, `rotationRange`, `confidence` e textos prontos. `EyeTrackingTestScreen` bufferiza pose durante a captura, marca shaking do Motion Assist e mostra um bloco postural no relatorio de diagnostico. `ExerciseCanvas` acumula pose no loop e injeta `posturalStability` no `extraData` do `onFinish`, preservando os dados do exercicio. `ExercisePlayerScreen` mostra o indice postural por exercicio no resumo da sessao. Teste novo `posturalStability.test.ts` cobre os cinco status.
 
-- PACK 1: Pescoço/postura (recomendado como proximo active). Criar indice separado de estabilidade cervical/postural usando `yaw/pitch/roll` da face e Motion Assist, sem misturar com o detector ocular.
-- PACK 2: Validacao real guiada. Comparar capturas com/sem iluminacao, distancias e postura, registrando quando o sinal horizontal, vertical e diagonal ajuda ou atrapalha.
-- PACK 3: Refinamento visual do relatorio. Melhorar hierarquia de resultado para destacar dinamica ocular, confianca temporal e leitura funcional.
+Notes:
+Decisoes honestas: retorna `insufficient` quando faltam amostras (nao finge postura perfeita); roll neutro = 0 por enquanto, a compensacao matematica fica para depois de coletar dados reais no iPhone Pro Max; thresholds de jitter alinhados a regra `<5` que ja existia no `ExerciseCanvas`. Validado com `node --import tsx --test` (15/15), `tsc --noEmit`, `npm run lint` e `APP_BASE_PATH=/gaze npm run build`. Falta a validacao manual no iPhone (Anders) e eventual ajuste de thresholds com dado real.
+
+### 2026-06-20 - Kickoff da proxima conversa
+
+Context:
+PACK 1 (estabilidade cervical/postural) concluido e aprovado no gate; falta apenas a validacao manual no iPhone. O acompanhamento principal segue no `BACKLOG.md`; nao existe `AGENTS.md` no repo neste momento.
+
+Details:
+ROADPACK restante:
+
+- PACK 1: Pescoço/postura. CONCLUIDO em 2026-06-20 (`src/exercises/posturalStability.ts` + consumidores). Pendente so a validacao manual no iPhone Pro Max e possivel ajuste de thresholds com dado real.
+- PACK 2: Validacao real guiada (recomendado como proximo). Comparar capturas com/sem iluminacao, distancias e postura, registrando quando o sinal horizontal, vertical e diagonal ajuda ou atrapalha — e calibrar os thresholds do PACK 1 com esses dados.
+- PACK 3: Refinamento visual do relatorio. Melhorar hierarquia de resultado para destacar dinamica ocular, confianca temporal, leitura funcional e agora tambem o indice postural.
 - PACK 4: Exportacao/clinica. Definir formato enxuto de historico para acompanhamento longitudinal, sem diagnostico e sem prometer precisao laboratorial.
 
 Notes:
-Na retomada, comecar pelo PACK 1 salvo acima. Bundle inicial recomendado: desenhar e implementar uma metrica postural separada, provavelmente com campos como estabilidade cervical, inclinacao sustentada, rotacao, movimento alto e confianca. Nao alterar `saccadeAnalysis.ts` no mesmo bundle, salvo se Anders pedir explicitamente.
+Na retomada, comecar pelo PACK 2 salvo acima. Como o PACK 1 ja produz `posturalStability` no `extraData` dos exercicios e na captura do diagnostico, o PACK 2 pode reaproveitar essas saidas para registrar sessoes reais e aferir se os thresholds (`STEADY_JITTER`, `MAX_JITTER`, `SUSTAINED_TILT_DEG`, `ROTATION_RANGE` em `posturalStability.ts`) batem com a fenomenologia no iPhone. Nao alterar `saccadeAnalysis.ts` sem pedido explicito de Anders.

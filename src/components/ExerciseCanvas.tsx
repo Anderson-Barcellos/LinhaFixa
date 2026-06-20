@@ -4,6 +4,8 @@ import { ExerciseParameters } from '@/types';
 import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive } from '@/services/faceTracking';
 import { isCalibrated, predictNorm } from '@/services/gazeCalibration';
 import { attachStream, getFrontCameraStream } from '@/services/cameraStream';
+import { getMotionQuality } from '@/services/motionSensor';
+import { summarizePosturalStability, type PosturalSample } from '@/exercises/posturalStability';
 
 interface ExerciseCanvasProps {
   exerciseId: string;
@@ -34,6 +36,11 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
     // Extremely simplified head scoring for this prototype
     let framesAnalyzed = 0;
     let framesStable = 0;
+
+    // Cervical/postural samples accumulated over the exercise, plus a Motion Assist
+    // high-movement flag. Summarized into extraData.posturalStability on finish.
+    const posturalSamples: PosturalSample[] = [];
+    let posturalHighMovement = false;
 
     const setup = async () => {
       // 1. Camera setup if enabled
@@ -102,7 +109,11 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
            const stillnessScore = framesAnalyzed > 0 ? (framesStable / framesAnalyzed) * 100 : null;
            // Exercises that measure performance supply their own score via getResultData.
            const score = extraData && typeof extraData.score === 'number' ? extraData.score : 100;
-           onFinish(score, stillnessScore, extraData);
+           // Attach the cervical/postural summary alongside the exercise's own data.
+           const posturalStability = summarizePosturalStability(posturalSamples, {
+             motionHighMovement: posturalHighMovement,
+           });
+           onFinish(score, stillnessScore, { ...(extraData || {}), posturalStability });
         }
       };
       
@@ -129,6 +140,8 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
            const headPose = estimateHeadPose(videoRef.current, detectTs);
            if (headPose) {
              framesAnalyzed++;
+             posturalSamples.push({ yaw: headPose.yaw, pitch: headPose.pitch, roll: headPose.roll });
+             if (getMotionQuality().status === 'shaking') posturalHighMovement = true;
              // Arbitrary threshold for motion
              const isStable = Math.abs(headPose.yaw) < 5 && Math.abs(headPose.pitch) < 5;
              setHeadStable(isStable);

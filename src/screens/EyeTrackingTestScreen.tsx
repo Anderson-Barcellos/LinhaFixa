@@ -17,6 +17,7 @@ import {
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { analyzeSaccades } from '@/exercises/saccadeAnalysis';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
+import { summarizePosturalStability, type PosturalStabilityMetrics, type PosturalSample } from '@/exercises/posturalStability';
 import { GazeSample, SaccadeMetrics } from '@/types';
 import { getReadingContent } from '@/services/contentGenerator';
 
@@ -73,7 +74,7 @@ export function EyeTrackingTestScreen() {
   const [text, setText] = useState('Carregando texto de leitura…');
   const [capturing, setCapturing] = useState(false);
   const [captureRemaining, setCaptureRemaining] = useState(0);
-  const [captureResult, setCaptureResult] = useState<{ metrics: SaccadeMetrics; coverage: number } | null>(null);
+  const [captureResult, setCaptureResult] = useState<{ metrics: SaccadeMetrics; coverage: number; postural: PosturalStabilityMetrics } | null>(null);
   const [motionQuality, setMotionQuality] = useState<MotionQuality>(() => getMotionQuality());
 
   // Loop-local mutable state (refs so the rAF loop is created once).
@@ -93,6 +94,8 @@ export function EyeTrackingTestScreen() {
   const captureSamplesRef = useRef<GazeSample[]>([]);
   const captureFaceRef = useRef(0);
   const captureTotalRef = useRef(0);
+  const posturalSamplesRef = useRef<PosturalSample[]>([]);
+  const captureShakeRef = useRef(false);
 
   useEffect(() => { textRef.current = text; layoutRef.current = null; }, [text]);
 
@@ -290,6 +293,8 @@ export function EyeTrackingTestScreen() {
         const tMs = ts - captureStartRef.current;
         captureTotalRef.current += 1;
         if (faceFound) captureFaceRef.current += 1;
+        if (pose) posturalSamplesRef.current.push({ yaw: pose.yaw, pitch: pose.pitch, roll: pose.roll });
+        if (getMotionQuality().status === 'shaking') captureShakeRef.current = true;
         if (dotCalibrated && dot) {
           captureSamplesRef.current.push({ t: tMs, h: dot.x / cssW, v: dot.y / cssH });
         } else if (gaze) {
@@ -326,6 +331,8 @@ export function EyeTrackingTestScreen() {
     captureSamplesRef.current = [];
     captureFaceRef.current = 0;
     captureTotalRef.current = 0;
+    posturalSamplesRef.current = [];
+    captureShakeRef.current = false;
     setCaptureResult(null);
     setCaptureRemaining(CAPTURE_MS);
     setCapturing(true);
@@ -339,7 +346,10 @@ export function EyeTrackingTestScreen() {
     const coverage = captureTotalRef.current
       ? (captureFaceRef.current / captureTotalRef.current) * 100
       : 0;
-    setCaptureResult({ metrics, coverage });
+    const postural = summarizePosturalStability(posturalSamplesRef.current, {
+      motionHighMovement: captureShakeRef.current,
+    });
+    setCaptureResult({ metrics, coverage, postural });
   };
 
   if (showCalibration) {
@@ -547,6 +557,27 @@ export function EyeTrackingTestScreen() {
                 cobertura {captureResult.coverage.toFixed(0)}%). Ajuste o enquadramento, a iluminação e a
                 distância e tente novamente.
               </p>
+            )}
+
+            {captureResult.postural.status !== 'insufficient' && (
+              <div className="rounded-2xl bg-slate-900/70 border border-white/10 p-4 mt-4">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                    captureResult.postural.status === 'stable'
+                      ? 'bg-emerald-500/15 text-emerald-300'
+                      : 'bg-amber-500/15 text-amber-300'
+                  }`}>
+                    {captureResult.postural.label}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-full bg-slate-700 text-slate-200 text-xs font-bold">
+                    Estabilidade cervical {captureResult.postural.cervicalStability}%
+                  </span>
+                  <span className="ml-auto text-xs text-slate-400">
+                    Confiança {confidenceLabel(captureResult.postural.confidence)}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">{captureResult.postural.insight}</p>
+              </div>
             )}
 
             <div className="flex gap-3 mt-8">

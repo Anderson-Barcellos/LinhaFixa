@@ -413,6 +413,51 @@ export function ExercisePlayerScreen() {
               );
            })()}
 
+           {(() => {
+              const postural = results.filter(r =>
+                r.extraData?.posturalStability && r.extraData.posturalStability.status !== 'insufficient'
+              );
+              if (postural.length === 0) return null;
+              const name = (id: string) => id === 'fixation' ? 'Fixação' : id === 'saccades' ? 'Sacadas' : id === 'smooth_pursuit' ? 'Perseguição' : id;
+              return (
+                <div className="bg-teal-50 p-8 rounded-2xl text-left border border-teal-100 mb-12">
+                   <h3 className="text-sm font-bold text-teal-600 uppercase tracking-widest mb-2">Estabilidade cervical/postural — experimental</h3>
+                   <p className="text-xs text-teal-500 font-medium mb-6">
+                     Índice separado da dinâmica ocular, estimado pela posição da cabeça (face)
+                     e pelo Motion Assist do aparelho. Mede o quão firme a postura ficou; não
+                     corrige o olhar nem substitui avaliação clínica.
+                   </p>
+                   <div className="space-y-4">
+                      {postural.map((r, i) => {
+                         const p = r.extraData.posturalStability;
+                         return (
+                            <div key={i} className="bg-white rounded-xl p-5 border border-teal-100">
+                               <div className="flex items-center justify-between mb-3">
+                                  <span className="text-sm font-bold text-slate-700">{name(r.exerciseId)}</span>
+                                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${p.status === 'stable' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{p.label}</span>
+                               </div>
+                               <div className="grid grid-cols-3 gap-4">
+                                  <div>
+                                     <div className="text-lg font-bold text-slate-800">{p.cervicalStability}%</div>
+                                     <div className="text-slate-500 text-xs font-medium mt-1">Estabilidade cervical</div>
+                                  </div>
+                                  <div>
+                                     <div className="text-lg font-bold text-slate-800">{p.sustainedTiltDeg.toFixed(1)}°</div>
+                                     <div className="text-slate-500 text-xs font-medium mt-1">Inclinação sustentada</div>
+                                  </div>
+                                  <div>
+                                     <div className="text-lg font-bold text-slate-800">{p.rotationRange.toFixed(1)}</div>
+                                     <div className="text-slate-500 text-xs font-medium mt-1">Amplitude de rotação</div>
+                                  </div>
+                               </div>
+                            </div>
+                         );
+                      })}
+                   </div>
+                </div>
+              );
+           })()}
+
            <button onClick={() => navigate('/')} className="px-10 py-4 bg-slate-900 text-white rounded-xl text-lg font-bold w-full hover:bg-slate-800 transition-colors">Voltar ao Início</button>
         </div>
       )}
