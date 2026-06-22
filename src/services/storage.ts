@@ -1,5 +1,5 @@
 import { openDB, DBSchema } from 'idb';
-import { UserProfile, SessionResult } from '@/types';
+import { UserProfile, SessionResult, ValidationCapture } from '@/types';
 
 interface LinhaFixaDB extends DBSchema {
   profile: {
@@ -15,10 +15,15 @@ interface LinhaFixaDB extends DBSchema {
     value: SessionResult;
     indexes: { 'by-date': number };
   };
+  validationCaptures: {
+    key: string;
+    value: ValidationCapture;
+    indexes: { 'by-date': number };
+  };
 }
 
 const DB_NAME = 'linhafixa_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export async function initDB() {
   return openDB<LinhaFixaDB>(DB_NAME, DB_VERSION, {
@@ -32,6 +37,10 @@ export async function initDB() {
       if (!db.objectStoreNames.contains('sessions')) {
         const sessionStore = db.createObjectStore('sessions', { keyPath: 'id' });
         sessionStore.createIndex('by-date', 'timestamp');
+      }
+      if (!db.objectStoreNames.contains('validationCaptures')) {
+        const captureStore = db.createObjectStore('validationCaptures', { keyPath: 'id' });
+        captureStore.createIndex('by-date', 'timestamp');
       }
     },
   });
@@ -66,4 +75,21 @@ export async function saveSession(session: SessionResult) {
 export async function getSessions(): Promise<SessionResult[]> {
   const db = await initDB();
   return db.getAllFromIndex('sessions', 'by-date');
+}
+
+export async function saveValidationCapture(capture: ValidationCapture) {
+  const db = await initDB();
+  await db.put('validationCaptures', capture);
+}
+
+// Most-recent-first, so the review list shows the latest capture on top.
+export async function getValidationCaptures(): Promise<ValidationCapture[]> {
+  const db = await initDB();
+  const captures = await db.getAllFromIndex('validationCaptures', 'by-date');
+  return captures.reverse();
+}
+
+export async function deleteValidationCapture(id: string) {
+  const db = await initDB();
+  await db.delete('validationCaptures', id);
 }

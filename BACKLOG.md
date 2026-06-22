@@ -64,18 +64,29 @@ Novo `src/exercises/posturalStability.ts` com `summarizePosturalStability(sample
 Notes:
 Decisoes honestas: retorna `insufficient` quando faltam amostras (nao finge postura perfeita); roll neutro = 0 por enquanto, a compensacao matematica fica para depois de coletar dados reais no iPhone Pro Max; thresholds de jitter alinhados a regra `<5` que ja existia no `ExerciseCanvas`. Validado com `node --import tsx --test` (15/15), `tsc --noEmit`, `npm run lint` e `APP_BASE_PATH=/gaze npm run build`. Falta a validacao manual no iPhone (Anders) e eventual ajuste de thresholds com dado real.
 
-### 2026-06-20 - Kickoff da proxima conversa
+### 2026-06-22 - PACK 2 concluido: validacao real guiada
 
 Context:
-PACK 1 (estabilidade cervical/postural) concluido e aprovado no gate; falta apenas a validacao manual no iPhone. O acompanhamento principal segue no `BACKLOG.md`; nao existe `AGENTS.md` no repo neste momento.
+Segundo pack do ROADPACK. A captura do diagnostico nao gravava nada (relatorio efemero). PACK 2 transforma cada captura num registro etiquetado e persistido, para acumular dado real e calibrar os thresholds do PACK 1.
+
+Details:
+Novos tipos em `types.ts` (`ValidationCapture`, `ValidationConditions`, `AxisSignalSummary`, enums de iluminacao/postura). `storage.ts` subiu para DB v2 com store `validationCaptures` (indice por data) + CRUD (`saveValidationCapture`, `getValidationCaptures` ordenado mais-recente-primeiro, `deleteValidationCapture`). Novo `src/services/validationCapture.ts` puro: `summarizeAxisSignal()` (dispersao H/V do sinal) e `serializeValidationExport()` (JSON auto-descritivo, recebe `exportedAt` do caller). `EyeTrackingTestScreen` ganhou seletor de condicao (luz/postura/distancia-do-perfil/nota), grava a captura no `finishCapture` com axis + amostras cruas, e um drawer "Capturas salvas" com lista comparavel (cobertura, sacadas, cervical %, H/V range), export JSON e delete. Teste novo `validationCapture.test.ts` com 3 casos.
+
+Notes:
+Decisoes honestas: distancia vem do perfil (nao inventa); export tenta clipboard primeiro (Safari iOS instavel com download de Blob) e cai para download de arquivo, reportando a rota usada; cada captura guarda `samples` crus para analise H/V/diagonal offline. Nada toca `saccadeAnalysis.ts`. Validado com `node --import tsx --test` (18/18), `tsc --noEmit`, `npm run lint` e `APP_BASE_PATH=/gaze npm run build`. Falta a validacao manual no iPhone (Anders): rodar capturas variando condicao e ver se os numeros separam bem os cenarios.
+
+### 2026-06-22 - Kickoff da proxima conversa
+
+Context:
+PACKs 1 e 2 concluidos e aprovados no gate; falta a validacao manual no iPhone (idealmente usar o PACK 2 para coletar o dado que calibra o PACK 1). O acompanhamento principal segue no `BACKLOG.md`; nao existe `AGENTS.md` no repo neste momento.
 
 Details:
 ROADPACK restante:
 
-- PACK 1: Pescoço/postura. CONCLUIDO em 2026-06-20 (`src/exercises/posturalStability.ts` + consumidores). Pendente so a validacao manual no iPhone Pro Max e possivel ajuste de thresholds com dado real.
-- PACK 2: Validacao real guiada (recomendado como proximo). Comparar capturas com/sem iluminacao, distancias e postura, registrando quando o sinal horizontal, vertical e diagonal ajuda ou atrapalha — e calibrar os thresholds do PACK 1 com esses dados.
-- PACK 3: Refinamento visual do relatorio. Melhorar hierarquia de resultado para destacar dinamica ocular, confianca temporal, leitura funcional e agora tambem o indice postural.
-- PACK 4: Exportacao/clinica. Definir formato enxuto de historico para acompanhamento longitudinal, sem diagnostico e sem prometer precisao laboratorial.
+- PACK 1: Pescoço/postura. CONCLUIDO em 2026-06-20 (`src/exercises/posturalStability.ts` + consumidores). Pendente so validacao manual e possivel ajuste de thresholds com dado real.
+- PACK 2: Validacao real guiada. CONCLUIDO em 2026-06-22 (`src/services/validationCapture.ts`, store `validationCaptures` em `storage.ts`, captura etiquetada + drawer/export em `EyeTrackingTestScreen`). Pendente coletar capturas reais no iPhone.
+- PACK 3: Refinamento visual do relatorio (recomendado como proximo). Melhorar hierarquia de resultado para destacar dinamica ocular, confianca temporal, leitura funcional e o indice postural. Decisao de design pendente: este pack mexe so na apresentacao (relatorio de captura + resumo de sessao + drawer de capturas) — confirmar com Anders escopo visual antes de codar.
+- PACK 4: Exportacao/clinica. Definir formato enxuto de historico para acompanhamento longitudinal, sem diagnostico e sem prometer precisao laboratorial. Parte do encanamento (export JSON) ja existe do PACK 2; aqui seria o formato clinico enxuto.
 
 Notes:
-Na retomada, comecar pelo PACK 2 salvo acima. Como o PACK 1 ja produz `posturalStability` no `extraData` dos exercicios e na captura do diagnostico, o PACK 2 pode reaproveitar essas saidas para registrar sessoes reais e aferir se os thresholds (`STEADY_JITTER`, `MAX_JITTER`, `SUSTAINED_TILT_DEG`, `ROTATION_RANGE` em `posturalStability.ts`) batem com a fenomenologia no iPhone. Nao alterar `saccadeAnalysis.ts` sem pedido explicito de Anders.
+Na retomada, comecar pelo PACK 3 salvo acima. Como e um pack visual, abrir com brainstorming/decisao de escopo com Anders (o que destacar, hierarquia, antes/depois) — `superpowers:brainstorming` + `frontend-design` aplicam. Reaproveitar os dados ja existentes: `posturalStability` (PACK 1) e `ValidationCapture`/`summarizeAxisSignal` (PACK 2). Nao alterar `saccadeAnalysis.ts` sem pedido explicito de Anders. Rodar o Pos-Sprint Protocol ao fechar (rotacao do KICKOFF como item #1).

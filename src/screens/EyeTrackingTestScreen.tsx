@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Camera, Eye, Play, Square, RotateCcw, Crosshair } from 'lucide-react';
+import { ArrowLeft, Camera, Eye, Play, Square, RotateCcw, Crosshair, Trash2, Database } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import {
   initFaceTracking, isFaceTrackingActive, estimateHeadPose, estimateGaze, extractGazeFeatures,
@@ -18,7 +18,9 @@ import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { analyzeSaccades } from '@/exercises/saccadeAnalysis';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
 import { summarizePosturalStability, type PosturalStabilityMetrics, type PosturalSample } from '@/exercises/posturalStability';
-import { GazeSample, SaccadeMetrics } from '@/types';
+import { GazeSample, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
+import { saveValidationCapture, getValidationCaptures, deleteValidationCapture } from '@/services/storage';
+import { summarizeAxisSignal, serializeValidationExport } from '@/services/validationCapture';
 import { getReadingContent } from '@/services/contentGenerator';
 
 // Standalone diagnostics screen: shows reading text, runs the front camera and
@@ -76,6 +78,14 @@ export function EyeTrackingTestScreen() {
   const [captureRemaining, setCaptureRemaining] = useState(0);
   const [captureResult, setCaptureResult] = useState<{ metrics: SaccadeMetrics; coverage: number; postural: PosturalStabilityMetrics } | null>(null);
   const [motionQuality, setMotionQuality] = useState<MotionQuality>(() => getMotionQuality());
+  const [conditions, setConditions] = useState<ValidationConditions>({
+    lighting: 'normal',
+    distanceCm: profile?.viewingDistanceCm ?? 40,
+    posture: 'upright',
+  });
+  const [captures, setCaptures] = useState<ValidationCapture[]>([]);
+  const [showCaptures, setShowCaptures] = useState(false);
+  const [exportNote, setExportNote] = useState<string | null>(null);
 
   // Loop-local mutable state (refs so the rAF loop is created once).
   const streamRef = useRef<MediaStream | null>(null);
@@ -103,6 +113,18 @@ export function EyeTrackingTestScreen() {
   useEffect(() => {
     getReadingContent('facil').then(setText).catch(() => {/* keep placeholder */});
   }, []);
+
+  // Load saved validation captures once.
+  useEffect(() => {
+    getValidationCaptures().then(setCaptures).catch(() => {/* empty list */});
+  }, []);
+
+  // Keep the capture distance in sync with the profile once it hydrates.
+  useEffect(() => {
+    if (profile?.viewingDistanceCm != null) {
+      setConditions(prev => ({ ...prev, distanceCm: profile.viewingDistanceCm! }));
+    }
+  }, [profile?.viewingDistanceCm]);
 
   // Track orientation (Safari iOS cannot lock it, so we detect and guide instead).
   useEffect(() => {
@@ -350,6 +372,55 @@ export function EyeTrackingTestScreen() {
       motionHighMovement: captureShakeRef.current,
     });
     setCaptureResult({ metrics, coverage, postural });
+
+    // Persist the tagged capture so PACK 1 thresholds can be calibrated on real data.
+    const samples = captureSamplesRef.current.slice();
+    const capture: ValidationCapture = {
+      id: Date.now().toString(),
+      timestamp: Date.now(),
+      conditions,
+      coverage,
+      calibrated: isCalibrated(),
+      metrics,
+      postural,
+      axis: summarizeAxisSignal(samples),
+      sampleCount: samples.length,
+      samples,
+    };
+    saveValidationCapture(capture)
+      .then(() => setCaptures(prev => [capture, ...prev]))
+      .catch(() => {/* keep the on-screen report even if persistence fails */});
+  };
+
+  const removeCapture = (id: string) => {
+    deleteValidationCapture(id)
+      .then(() => setCaptures(prev => prev.filter(c => c.id !== id)))
+      .catch(() => {/* ignore */});
+  };
+
+  const exportCaptures = async () => {
+    if (captures.length === 0) return;
+    const json = serializeValidationExport(captures, Date.now());
+    // Safari on iOS is unreliable with Blob downloads, so try clipboard first and
+    // fall back to a download link; report which path worked.
+    try {
+      await navigator.clipboard.writeText(json);
+      setExportNote('JSON copiado para a área de transferência.');
+      return;
+    } catch {
+      try {
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `linhafixa-validacao-${captures.length}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setExportNote('Arquivo JSON gerado para download.');
+      } catch {
+        setExportNote('Não foi possível exportar neste navegador.');
+      }
+    }
   };
 
   if (showCalibration) {
@@ -480,6 +551,45 @@ export function EyeTrackingTestScreen() {
             Motion Assist sinaliza mudança do iPhone desde a calibração; não corrige o olhar automaticamente.
           </div>
 
+          {/* PACK 2: tag the physical conditions so captures are comparable. */}
+          <div className="rounded-xl bg-slate-900/50 border border-white/10 p-3 flex flex-col gap-3">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Condição da captura</div>
+            <div>
+              <div className="text-[11px] text-slate-500 mb-1">Iluminação</div>
+              <div className="flex gap-1">
+                {([['dim', 'Fraca'], ['normal', 'Normal'], ['bright', 'Forte']] as [ValidationLighting, string][]).map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => setConditions(p => ({ ...p, lighting: val }))}
+                    className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-bold ${conditions.lighting === val ? 'bg-indigo-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}
+                  >{label}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] text-slate-500 mb-1">Postura</div>
+              <div className="grid grid-cols-2 gap-1">
+                {([['upright', 'Reta'], ['tilted', 'Inclinada'], ['slouched', 'Curvada'], ['reclined', 'Recostada']] as [ValidationPosture, string][]).map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => setConditions(p => ({ ...p, posture: val }))}
+                    className={`px-2 py-1.5 rounded-lg text-xs font-bold ${conditions.posture === val ? 'bg-indigo-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}
+                  >{label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span>Distância (perfil)</span>
+              <span className="font-bold text-slate-200">{conditions.distanceCm} cm</span>
+            </div>
+            <input
+              value={conditions.note ?? ''}
+              onChange={e => setConditions(p => ({ ...p, note: e.target.value }))}
+              placeholder="Nota (opcional)"
+              className="w-full px-2 py-1.5 rounded-lg bg-white/10 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:bg-white/15"
+            />
+          </div>
+
           <div className="mt-auto flex flex-col gap-2">
             <button
               onClick={() => setShowCalibration(true)}
@@ -505,6 +615,13 @@ export function EyeTrackingTestScreen() {
                 <Square className="w-4 h-4" /> Parar ({Math.ceil(captureRemaining / 1000)}s)
               </button>
             )}
+
+            <button
+              onClick={() => { setExportNote(null); setShowCaptures(true); }}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-xl font-bold text-sm"
+            >
+              <Database className="w-4 h-4" /> Capturas salvas ({captures.length})
+            </button>
 
             {cameraState === 'running' && (
               <button onClick={stopCamera} className="flex items-center justify-center gap-2 px-4 py-2 text-slate-400 hover:text-slate-200 text-sm">
@@ -592,6 +709,66 @@ export function EyeTrackingTestScreen() {
         </div>
       )}
 
+      {/* Saved validation captures */}
+      {showCaptures && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-900/90 p-4">
+          <div className="bg-slate-800 rounded-3xl p-6 max-w-2xl w-full max-h-[90vh] flex flex-col border border-white/10">
+            <div className="flex items-center gap-3 mb-1">
+              <Database className="w-5 h-5 text-indigo-400" />
+              <h2 className="text-xl font-bold">Capturas de validação</h2>
+              <span className="text-sm text-slate-400">{captures.length}</span>
+              <div className="ml-auto flex gap-2">
+                <button
+                  onClick={exportCaptures}
+                  disabled={captures.length === 0}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-lg text-sm font-bold"
+                >Exportar JSON</button>
+                <button
+                  onClick={() => { setShowCaptures(false); setExportNote(null); }}
+                  className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-bold"
+                >Fechar</button>
+              </div>
+            </div>
+            <p className="text-xs text-slate-400 mb-3">
+              Cada captura guarda condição, métricas oculares, índice postural e sinal por eixo
+              (H/V) para calibrar os thresholds do app com dado real.
+            </p>
+            {exportNote && <p className="text-xs text-emerald-300 mb-3">{exportNote}</p>}
+            {captures.length === 0 ? (
+              <p className="text-slate-400 text-sm py-10 text-center">
+                Nenhuma captura salva ainda. Etiquete a condição e inicie uma captura.
+              </p>
+            ) : (
+              <div className="overflow-y-auto flex flex-col gap-2 pr-1">
+                {captures.map(c => (
+                  <div key={c.id} className="rounded-xl bg-slate-900/70 border border-white/10 p-3">
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <span className="text-xs font-bold text-slate-300">{new Date(c.timestamp).toLocaleString()}</span>
+                      <span className="px-2 py-0.5 rounded-full bg-slate-700 text-slate-200 text-[11px] font-bold">{lightingLabel(c.conditions.lighting)}</span>
+                      <span className="px-2 py-0.5 rounded-full bg-slate-700 text-slate-200 text-[11px] font-bold">{c.conditions.distanceCm} cm</span>
+                      <span className="px-2 py-0.5 rounded-full bg-slate-700 text-slate-200 text-[11px] font-bold">{postureLabel(c.conditions.posture)}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${c.postural.status === 'stable' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}`}>{c.postural.label}</span>
+                      <button onClick={() => removeCapture(c.id)} className="ml-auto p-1.5 text-slate-500 hover:text-rose-400">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
+                      <CapStat label="Cobertura" value={`${c.coverage.toFixed(0)}%`} />
+                      <CapStat label="Sacadas" value={String(c.metrics.saccadeCount)} />
+                      <CapStat label="Cervical" value={`${c.postural.cervicalStability}%`} />
+                      <CapStat label="H range" value={c.axis.hRange.toFixed(2)} />
+                      <CapStat label="V range" value={c.axis.vRange.toFixed(2)} />
+                      <CapStat label="Amostras" value={String(c.sampleCount)} />
+                    </div>
+                    {c.conditions.note && <p className="text-xs text-slate-400 mt-2 italic">{c.conditions.note}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Require landscape on phones */}
       {cameraState === 'running' && !isLandscape && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900 text-center p-8">
@@ -633,6 +810,32 @@ function confidenceLabel(confidence: MotionQuality['confidence']): string {
     default:
       return 'Baixa';
   }
+}
+
+function lightingLabel(lighting: ValidationLighting): string {
+  switch (lighting) {
+    case 'dim': return 'Luz fraca';
+    case 'bright': return 'Luz forte';
+    default: return 'Luz normal';
+  }
+}
+
+function postureLabel(posture: ValidationPosture): string {
+  switch (posture) {
+    case 'tilted': return 'Inclinada';
+    case 'slouched': return 'Curvada';
+    case 'reclined': return 'Recostada';
+    default: return 'Reta';
+  }
+}
+
+function CapStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-sm font-bold text-slate-200">{value}</div>
+      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+    </div>
+  );
 }
 
 function Metric({ label, value, big }: { label: string; value: string; big?: boolean }) {

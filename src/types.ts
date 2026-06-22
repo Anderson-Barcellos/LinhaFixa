@@ -1,3 +1,5 @@
+import type { PosturalStabilityMetrics } from '@/exercises/posturalStability';
+
 export interface UserProfile {
   name: string;
   isAdult: boolean;
@@ -116,6 +118,43 @@ export interface SessionResult {
   symptomsAfter: SymptomRating;
   exercises: ExerciseResult[];
   clinicianSummaryPtBR?: string;
+}
+
+// --- PACK 2: guided real-world validation captures ---
+// A diagnostic capture tagged with the physical conditions it was taken under, so
+// the PACK 1 postural thresholds and the ocular signal can be calibrated against
+// real iPhone data instead of guessed constants.
+
+export type ValidationLighting = 'dim' | 'normal' | 'bright';
+export type ValidationPosture = 'upright' | 'tilted' | 'slouched' | 'reclined';
+
+export interface ValidationConditions {
+  lighting: ValidationLighting;
+  distanceCm: number; // viewing distance at capture time (from the profile)
+  posture: ValidationPosture;
+  note?: string;
+}
+
+// Lightweight per-axis dispersion of the captured gaze signal, used to see when the
+// horizontal/vertical signal carries structure vs. noise across conditions.
+export interface AxisSignalSummary {
+  hStd: number;
+  hRange: number;
+  vStd: number;
+  vRange: number;
+}
+
+export interface ValidationCapture {
+  id: string;
+  timestamp: number;
+  conditions: ValidationConditions;
+  coverage: number; // % of frames with a detected face
+  calibrated: boolean; // whether the gaze samples came from the calibrated model
+  metrics: SaccadeMetrics;
+  postural: PosturalStabilityMetrics;
+  axis: AxisSignalSummary;
+  sampleCount: number;
+  samples: GazeSample[]; // raw signal kept for offline per-axis analysis
 }
 
 export interface TreatmentPlanResponse {
