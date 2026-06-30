@@ -16,7 +16,10 @@ export async function initFaceTracking() {
   if (faceLandmarker) return;
   try {
     const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+      // Self-hosted wasm (copied from the pinned @mediapipe/tasks-vision at build time),
+      // served under the app base path so it works at '/' or '/gaze/'. Avoids the runtime
+      // CDN dependency for offline/privacy/PWA.
+      `${import.meta.env.BASE_URL}vendor/mediapipe/wasm`
     );
     try {
       faceLandmarker = await createFaceLandmarker(vision, "GPU");
@@ -32,8 +35,9 @@ export async function initFaceTracking() {
 function createFaceLandmarker(vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>, delegate: "GPU" | "CPU") {
   return FaceLandmarker.createFromOptions(vision, {
     baseOptions: {
-      // This .task bundle includes the iris mesh (478 landmarks), needed for gaze.
-      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      // Self-hosted .task bundle (vendored in public/vendor/mediapipe). Includes the
+      // iris mesh (478 landmarks), needed for gaze. Served under the app base path.
+      modelAssetPath: `${import.meta.env.BASE_URL}vendor/mediapipe/face_landmarker.task`,
       delegate,
     },
     // Blendshapes give robust eyeLook* coefficients used as gaze-calibration features.
@@ -165,6 +169,27 @@ export function estimateGaze(videoElement: HTMLVideoElement, timestamp: number, 
   const v = (vLeft + vRight) / 2;
 
   return { t: tMs, h, v };
+}
+
+// Blink score threshold above which the current frame is treated as a blink and its
+// gaze sample is dropped. Tuned for the MediaPipe eyeBlink* blendshapes, which run
+// ~0 when the eye is open and approach 1 during a full blink.
+export const BLINK_REJECT_THRESHOLD = 0.5;
+
+// Max of the left/right eyeBlink blendshapes for the most recent frame, or null when
+// no blendshapes are available. During a blink the iris drops/disappears and would
+// inject spurious vertical (and some horizontal) motion into the reading metrics, so
+// callers use this to drop the sample while still counting the face as detected.
+export function getBlinkScore(): number | null {
+  const bs = lastBlendshapes;
+  if (!bs) return null;
+  return Math.max(bs.get('eyeBlinkLeft') ?? 0, bs.get('eyeBlinkRight') ?? 0);
+}
+
+// Pure decision helper so the blink gate is testable without MediaPipe. A null score
+// (no blendshapes) is treated as "not blinking" — we don't reject when we can't tell.
+export function isBlinking(score: number | null, threshold: number = BLINK_REJECT_THRESHOLD): boolean {
+  return score != null && score > threshold;
 }
 
 // Names of the eyeLook blendshapes used as gaze features, in a fixed order so the

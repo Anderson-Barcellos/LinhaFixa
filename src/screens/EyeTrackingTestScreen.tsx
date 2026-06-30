@@ -4,6 +4,7 @@ import { ArrowLeft, Camera, Eye, Play, Square, RotateCcw, Crosshair, Trash2, Dat
 import { useAppStore } from '@/store/useAppStore';
 import {
   initFaceTracking, isFaceTrackingActive, estimateHeadPose, estimateGaze, extractGazeFeatures, getLastLandmarks,
+  getBlinkScore, isBlinking,
 } from '@/services/faceTracking';
 import {
   interpupillaryPx, estimateDistanceCm, getDistanceAnchor, readingFontCssPx, readingFontAngleDeg,
@@ -301,6 +302,9 @@ export function EyeTrackingTestScreen() {
       const gaze = estimateGaze(video, ts, ts);
       const faceFound = pose !== null;
       const eyesFound = gaze !== null;
+      // Drop gaze samples captured mid-blink: the iris drops/disappears and would inject
+      // spurious motion into the reading metrics. Coverage still counts the face below.
+      const blinking = isBlinking(getBlinkScore());
 
       // Distance from IPD (detect already ran above) → font sized by visual angle so the
       // apparent text size is stable as the user leans in/out and across devices.
@@ -389,15 +393,17 @@ export function EyeTrackingTestScreen() {
         dot = { x: gaze.h * cssW, y: gaze.v * cssH };
       }
       if (dot) {
-        const sample = dotCalibrated
-          ? { t: ts, h: dot.x / cssW, v: dot.y / cssH, calibrated: true }
-          : { t: ts, h: dot.x / cssW, v: dot.y / cssH, calibrated: false };
-        const samples = visualSignalSamplesRef.current;
-        samples.push(sample);
-        while (samples.length && ts - samples[0].t > 2600) samples.shift();
-        drawFunctionalSignalTrace(ctx, samples, cssW, cssH, isDark, dotCalibrated);
+        if (!blinking) {
+          const sample = dotCalibrated
+            ? { t: ts, h: dot.x / cssW, v: dot.y / cssH, calibrated: true }
+            : { t: ts, h: dot.x / cssW, v: dot.y / cssH, calibrated: false };
+          const samples = visualSignalSamplesRef.current;
+          samples.push(sample);
+          while (samples.length && ts - samples[0].t > 2600) samples.shift();
+        }
+        drawFunctionalSignalTrace(ctx, visualSignalSamplesRef.current, cssW, cssH, isDark, dotCalibrated);
       }
-      if (dot) {
+      if (dot && !blinking) {
         const color = dotCalibrated ? '#2563eb' : '#f59e0b';
         ctx.beginPath();
         ctx.arc(dot.x, dot.y, 9, 0, Math.PI * 2);
@@ -416,10 +422,10 @@ export function EyeTrackingTestScreen() {
         if (faceFound) captureFaceRef.current += 1;
         if (pose) posturalSamplesRef.current.push({ yaw: pose.yaw, pitch: pose.pitch, roll: pose.roll });
         if (getMotionQuality().status === 'shaking') captureShakeRef.current = true;
-        if (dotCalibrated && dot) {
+        if (!blinking && dotCalibrated && dot) {
           captureSamplesRef.current.push({ t: tMs, h: dot.x / cssW, v: dot.y / cssH });
           captureCalibratedSamplesRef.current += 1;
-        } else if (gaze) {
+        } else if (!blinking && gaze) {
           captureSamplesRef.current.push({ t: tMs, h: gaze.h, v: gaze.v });
           captureRawSamplesRef.current += 1;
         }

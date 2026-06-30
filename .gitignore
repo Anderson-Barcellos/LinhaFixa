@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+# MediaPipe wasm is copied from the pinned package at build/dev time
+# (scripts/copy-mediapipe.mjs), not committed. The face_landmarker.task model IS
+# committed (vendored) alongside it under public/vendor/mediapipe/.
+public/vendor/mediapipe/wasm/
