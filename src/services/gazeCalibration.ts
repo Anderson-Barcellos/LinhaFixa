@@ -26,6 +26,13 @@ const LAMBDA = 1e-3;
 let samples: Sample[] = [];
 let weightsX: number[] | null = null; // length GAZE_FEATURE_LENGTH + 1 (bias first)
 let weightsY: number[] | null = null;
+// Per-feature mean/std captured at fit time. Features are standardized before the ridge
+// solve (and again at prediction) because they live on wildly different scales — iris
+// ratios and blendshapes in [0,1] but head yaw/pitch ×100 — which otherwise mis-conditions
+// the normal equations and makes the uniform ridge penalty meaningless for the large-scale
+// terms. Length GAZE_FEATURE_LENGTH (feature dims only; the bias is not standardized).
+let featureMean: number[] | null = null;
+let featureStd: number[] | null = null;
 let accuracyDeg: number | null = null; // validation accuracy, for display
 let calibrationSignature: CalibrationSignature | null = null;
 
@@ -33,8 +40,20 @@ export function resetCalibration() {
   samples = [];
   weightsX = null;
   weightsY = null;
+  featureMean = null;
+  featureStd = null;
   accuracyDeg = null;
   calibrationSignature = null;
+}
+
+// Standardize a raw feature vector with the stored per-feature mean/std. A zero std
+// (a feature that never varied during calibration) maps to 0 so it contributes nothing.
+function standardizeFeatures(features: number[]): number[] {
+  if (!featureMean || !featureStd) return features.slice();
+  return features.map((v, i) => {
+    const std = featureStd![i];
+    return std > 1e-9 ? (v - featureMean![i]) / std : 0;
+  });
 }
 
 // Buffer one labelled calibration sample (a feature vector seen while the user
@@ -88,8 +107,23 @@ export function fitCalibration(): boolean {
   if (samples.length < GAZE_FEATURE_LENGTH + 2) return false;
 
   const d = GAZE_FEATURE_LENGTH + 1; // + bias
-  // Design rows with a leading bias term.
-  const rows = samples.map(s => [1, ...s.features]);
+
+  // Per-feature mean/std over the calibration samples (population std).
+  const n = samples.length;
+  const mean = new Array(GAZE_FEATURE_LENGTH).fill(0);
+  for (const s of samples) for (let i = 0; i < GAZE_FEATURE_LENGTH; i++) mean[i] += s.features[i];
+  for (let i = 0; i < GAZE_FEATURE_LENGTH; i++) mean[i] /= n;
+  const variance = new Array(GAZE_FEATURE_LENGTH).fill(0);
+  for (const s of samples) for (let i = 0; i < GAZE_FEATURE_LENGTH; i++) {
+    const diff = s.features[i] - mean[i];
+    variance[i] += diff * diff;
+  }
+  const std = variance.map(v => Math.sqrt(v / n));
+  featureMean = mean;
+  featureStd = std;
+
+  // Design rows with a leading bias term, over standardized features.
+  const rows = samples.map(s => [1, ...standardizeFeatures(s.features)]);
 
   // Normal equations: A = XᵀX + λI (bias term left unregularized), B = Xᵀ[yX yY].
   const A: number[][] = Array.from({ length: d }, () => new Array(d).fill(0));
@@ -125,7 +159,7 @@ export function isCalibrated(): boolean {
 // Returns null when not calibrated or the feature vector is the wrong shape.
 export function predictNorm(features: number[]): { x: number; y: number } | null {
   if (!weightsX || !weightsY || features.length !== GAZE_FEATURE_LENGTH) return null;
-  const row = [1, ...features];
+  const row = [1, ...standardizeFeatures(features)];
   let x = 0, y = 0;
   for (let i = 0; i < row.length; i++) {
     x += row[i] * weightsX[i];
