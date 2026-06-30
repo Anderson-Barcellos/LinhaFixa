@@ -46,13 +46,19 @@ export function resetCalibration() {
   calibrationSignature = null;
 }
 
-// Standardize a raw feature vector with the stored per-feature mean/std. A zero std
-// (a feature that never varied during calibration) maps to 0 so it contributes nothing.
-function standardizeFeatures(features: number[]): number[] {
-  if (!featureMean || !featureStd) return features.slice();
+// Standardize a raw feature vector with per-feature mean/std (defaulting to the stored
+// model stats, but overridable so fitCalibration can standardize with local stats before
+// committing them to module state). A zero std (a feature that never varied during
+// calibration) maps to 0 so it contributes nothing.
+function standardizeFeatures(
+  features: number[],
+  mean: number[] | null = featureMean,
+  std: number[] | null = featureStd,
+): number[] {
+  if (!mean || !std) return features.slice();
   return features.map((v, i) => {
-    const std = featureStd![i];
-    return std > 1e-9 ? (v - featureMean![i]) / std : 0;
+    const s = std[i];
+    return s > 1e-9 ? (v - mean[i]) / s : 0;
   });
 }
 
@@ -119,11 +125,10 @@ export function fitCalibration(): boolean {
     variance[i] += diff * diff;
   }
   const std = variance.map(v => Math.sqrt(v / n));
-  featureMean = mean;
-  featureStd = std;
 
-  // Design rows with a leading bias term, over standardized features.
-  const rows = samples.map(s => [1, ...standardizeFeatures(s.features)]);
+  // Design rows with a leading bias term, over features standardized with the LOCAL
+  // stats (not yet committed to module state — see below, after the solve succeeds).
+  const rows = samples.map(s => [1, ...standardizeFeatures(s.features, mean, std)]);
 
   // Normal equations: A = XᵀX + λI (bias term left unregularized), B = Xᵀ[yX yY].
   const A: number[][] = Array.from({ length: d }, () => new Array(d).fill(0));
@@ -146,6 +151,10 @@ export function fitCalibration(): boolean {
   const sol = solveLinearSystem(A, B);
   if (!sol) return false;
 
+  // Commit standardization stats and weights together, only on success, so a failed
+  // solve never leaves the model in a half-calibrated state.
+  featureMean = mean;
+  featureStd = std;
   weightsX = sol.map(r => r[0]);
   weightsY = sol.map(r => r[1]);
   return true;

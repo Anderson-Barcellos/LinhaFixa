@@ -403,7 +403,7 @@ export function EyeTrackingTestScreen() {
         }
         drawFunctionalSignalTrace(ctx, visualSignalSamplesRef.current, cssW, cssH, isDark, dotCalibrated);
       }
-      if (dot) {
+      if (dot && !blinking) {
         const color = dotCalibrated ? '#2563eb' : '#f59e0b';
         ctx.beginPath();
         ctx.arc(dot.x, dot.y, 9, 0, Math.PI * 2);
