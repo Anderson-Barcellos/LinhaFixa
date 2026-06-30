@@ -7,7 +7,7 @@ export function buildFrontCameraConstraints(): MediaStreamConstraints {
       facingMode: { ideal: 'user' },
       width: { ideal: 1280 },
       height: { ideal: 720 },
-      frameRate: { ideal: 30, max: 30 },
+      frameRate: { ideal: 60, max: 120 },
     },
     audio: false,
   };
@@ -35,12 +35,15 @@ export async function getFrontCameraStream(): Promise<MediaStream> {
 }
 
 export async function attachStream(video: HTMLVideoElement, stream: MediaStream): Promise<void> {
-  if (video.srcObject !== stream) {
+  const needsAttach = video.srcObject !== stream;
+  if (needsAttach) {
     video.srcObject = stream;
   }
   video.muted = true;
   video.playsInline = true;
-  await video.play();
+  if (needsAttach || video.paused) {
+    await video.play();
+  }
 }
 
 export function getActiveCameraStream(): MediaStream | null {

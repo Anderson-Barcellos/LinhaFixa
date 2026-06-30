@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { summarizePosturalStability, PosturalSample } from './posturalStability';
+import {
+  getPosturalBaseline,
+  resetPosturalBaseline,
+  setPosturalBaseline,
+  summarizePosturalBaseline,
+  summarizePosturalStability,
+  PosturalSample,
+} from './posturalStability';
 
 // Build a window of head-pose samples with small alternating jitter so the std is
 // deterministic and tiny, then let the caller bias yaw/roll to provoke each status.
@@ -34,6 +41,50 @@ test('summarizePosturalStability detects a sustained head tilt from roll offset'
   assert.equal(m.status, 'sustained-tilt');
   assert.equal(m.sustainedTiltDeg, 12);
   assert.match(m.label, /Inclinação/);
+});
+
+test('summarizePosturalStability applies calibration baseline before reporting sustained tilt', () => {
+  const baselineSamples = buildSamples(80, () => ({ yaw: 4, pitch: -2, roll: 10 }));
+  const baseline = summarizePosturalBaseline(baselineSamples);
+  const samples = buildSamples(200, () => ({ yaw: 4.5, pitch: -1.5, roll: 11 }));
+
+  const m = summarizePosturalStability(samples, { baseline });
+
+  assert.equal(m.status, 'stable');
+  assert.equal(m.baselineApplied, true);
+  assert.equal(m.sustainedTiltDeg, 1);
+  assert.equal(m.yawOffset, 0.5);
+  assert.equal(m.pitchOffset, 0.5);
+});
+
+test('summarizePosturalStability marks Motion Assist moved state without calling it shaking', () => {
+  const samples = buildSamples(200, () => ({}));
+  const m = summarizePosturalStability(samples, {
+    motionStatus: 'moved',
+    motionDeltaDeg: 8.5,
+    motionConfidence: 'medium',
+  });
+
+  assert.equal(m.status, 'position-changed');
+  assert.equal(m.highMovement, false);
+  assert.equal(m.motionStatus, 'moved');
+  assert.equal(m.motionDeltaDeg, 8.5);
+  assert.equal(m.confidence, 'medium');
+  assert.match(m.label, /Posição mudou/);
+});
+
+test('postural baseline helpers store defensive copies and can reset session state', () => {
+  const baseline = summarizePosturalBaseline(buildSamples(20, () => ({ yaw: 2, pitch: 3, roll: 4 })));
+
+  setPosturalBaseline(baseline);
+  const stored = getPosturalBaseline();
+  assert.deepEqual(stored, baseline);
+
+  baseline.roll = 99;
+  assert.equal(getPosturalBaseline()?.roll, 4);
+
+  resetPosturalBaseline();
+  assert.equal(getPosturalBaseline(), null);
 });
 
 test('summarizePosturalStability detects lateral head rotation from yaw range', () => {

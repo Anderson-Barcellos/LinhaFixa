@@ -2,24 +2,30 @@ import { GazeSample, SaccadeMetrics } from '@/types';
 
 // Simplified velocity-threshold (I-VT) saccade detector over webcam gaze samples.
 //
-// Honest limitations: webcam gaze is noisy and low-frequency (~30Hz, ~1-2 deg
-// accuracy). This estimates coarse SACCADES and FIXATIONS during reading; it
-// CANNOT detect microsaccades. Amplitudes are in normalized gaze-ratio units, not
-// degrees, and should be read as relative/approximate.
+// Honest limitations: webcam gaze is noisy and device/browser frame-rate dependent.
+// This estimates coarse SACCADES and FIXATIONS during reading; it CANNOT detect
+// microsaccades. Amplitudes are in normalized gaze-ratio units, not degrees, and
+// should be read as relative/approximate.
 
 // Horizontal gaze-ratio change per millisecond above which motion counts as a saccade.
-// Tuned for noisy webcam input sampled at ~30Hz.
+// Time-normalized so the threshold remains interpretable across negotiated FPS.
 const VELOCITY_THRESHOLD = 0.0025; // ratio units / ms
 // Ignore tiny saccades that are likely tracking noise.
 const MIN_SACCADE_AMPLITUDE = 0.04; // ratio units
 
-export function analyzeSaccades(samples: GazeSample[]): SaccadeMetrics {
+export interface AnalyzeSaccadesOptions {
+  signalSource?: SaccadeMetrics['signalSource'];
+}
+
+export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesOptions = {}): SaccadeMetrics {
   const valid = samples.filter(s => Number.isFinite(s.h) && Number.isFinite(s.t));
 
   if (valid.length < 5) {
     return {
       trackingAvailable: false,
       samplesValid: valid.length,
+      signalSource: options.signalSource ?? 'unavailable',
+      sampleRateHz: sampleRateHz(valid),
       saccadeCount: 0,
       regressionCount: 0,
       meanSaccadeAmplitude: 0,
@@ -77,9 +83,18 @@ export function analyzeSaccades(samples: GazeSample[]): SaccadeMetrics {
   return {
     trackingAvailable: true,
     samplesValid: valid.length,
+    signalSource: options.signalSource,
+    sampleRateHz: sampleRateHz(valid),
     saccadeCount: amplitudes.length,
     regressionCount,
     meanSaccadeAmplitude: mean(amplitudes),
     meanFixationMs: mean(fixationDurations.filter(d => d > 0)),
   };
+}
+
+function sampleRateHz(samples: GazeSample[]): number {
+  if (samples.length < 2) return 0;
+  const durationMs = samples[samples.length - 1].t - samples[0].t;
+  if (durationMs <= 0) return 0;
+  return Math.round(((samples.length - 1) / durationMs) * 1000);
 }

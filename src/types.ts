@@ -59,11 +59,13 @@ export interface GazeSample {
 }
 
 // Experimental, webcam-based saccade estimate produced from a stream of GazeSamples.
-// NOTE: a consumer webcam (~30Hz, ~1-2 deg accuracy) cannot resolve microsaccades.
-// These are coarse saccade/fixation estimates only.
+// NOTE: consumer webcam gaze is noisy and device/browser frame-rate dependent.
+// These are coarse saccade/fixation estimates only; they cannot resolve microsaccades.
 export interface SaccadeMetrics {
   trackingAvailable: boolean; // false when no real gaze data was captured
   samplesValid: number;       // number of usable gaze samples
+  signalSource?: 'calibrated-mediapipe' | 'raw-mediapipe' | 'unavailable';
+  sampleRateHz?: number;
   saccadeCount: number;
   regressionCount: number;        // saccades against the reading direction (re-reading)
   meanSaccadeAmplitude: number;   // mean |Δh| of detected saccades (gaze-ratio units, approx.)
@@ -79,7 +81,7 @@ export interface GazePoint {
 
 // Fixation stability during a hold-the-target task (e.g. the fixation exercise),
 // measured from calibrated screen-space gaze. All angular values are approximate
-// (webcam, ~30Hz, ~1-2 deg accuracy).
+// (webcam, device/browser-dependent frame rate, limited angular accuracy).
 export interface FixationMetrics {
   trackingAvailable: boolean;     // false when no calibrated gaze was captured
   samplesValid: number;

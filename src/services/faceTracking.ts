@@ -91,6 +91,13 @@ function detect(videoElement: HTMLVideoElement, timestamp: number) {
   return lastLandmarks;
 }
 
+// Raw landmarks from the most recent detect() (normalized [0,1]). Lets higher layers
+// derive measurements we don't model here (e.g. inter-pupillary distance for viewing
+// geometry) without re-running detection. Null when no face was found.
+export function getLastLandmarks(): { x: number; y: number; z: number }[] | null {
+  return lastLandmarks;
+}
+
 export function estimateHeadPose(videoElement: HTMLVideoElement, timestamp: number): HeadPose | null {
   // Honest behaviour: if the tracker isn't loaded or no face is found, return null.
   // Callers must treat null as "no measurement", not as a perfect/centered pose.

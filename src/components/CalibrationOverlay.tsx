@@ -1,10 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures } from '@/services/faceTracking';
+import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLandmarks, estimateHeadPose } from '@/services/faceTracking';
 import {
-  resetCalibration, addCalibrationSample, fitCalibration, predictNorm, setAccuracyDeg,
+  resetCalibration, addCalibrationSample, fitCalibration, predictNorm, setAccuracyDeg, setCalibrationSignature,
 } from '@/services/gazeCalibration';
+import { interpupillaryPx, setDistanceAnchor, resetDistanceAnchor } from '@/services/viewingGeometry';
 import { attachStream, getFrontCameraStream, stopCameraStream } from '@/services/cameraStream';
 import { setMotionBaseline, stopMotionSensor } from '@/services/motionSensor';
+import {
+  resetPosturalBaseline,
+  setPosturalBaseline,
+  summarizePosturalBaseline,
+  type PosturalSample,
+} from '@/exercises/posturalStability';
+import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
+import { currentOrientation, fullViewportRect } from '@/services/ocularSignalContract';
 
 interface CalibrationOverlayProps {
   viewingDistanceCm: number;
@@ -26,7 +35,7 @@ const VALID_POINTS = [
 
 const SETTLE_MS = 450;          // let the eyes land on a new dot before collecting
 const MIN_POINT_MS = 550;       // avoid advancing from a burst of adjacent frames
-const MAX_POINT_MS = 2200;      // avoid hanging forever on dropped 30fps frames
+const MAX_POINT_MS = 2200;      // avoid hanging forever on dropped video frames
 const MIN_SAMPLES_PER_POINT = 12;
 const PX_PER_CM = 37.8;         // CSS reference (~96 dpi); used only for the deg readout
 
@@ -48,13 +57,16 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   const collectedRef = useRef(0);
   const validErrorsRef = useRef<number[]>([]);
   const validAccumRef = useRef<{ x: number; y: number; n: number }>({ x: 0, y: 0, n: 0 });
+  // IPD (px) samples gathered across the routine; their median anchors distance estimation.
+  const ipdSamplesRef = useRef<number[]>([]);
+  const posturalSamplesRef = useRef<PosturalSample[]>([]);
   // Trigger a re-render to nudge progress without spamming state every frame.
   const [, setTick] = useState(0);
 
   const pxPerDeg = 2 * viewingDistanceCm * Math.tan((1 * Math.PI / 180) / 2) * PX_PER_CM;
 
   useEffect(() => {
-    let raf = 0;
+    let frameLoop: VideoFrameLoopHandle | null = null;
     runningRef.current = true;
 
     const setPhaseBoth = (p: Phase) => { phaseRef.current = p; setPhase(p); };
@@ -69,6 +81,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
 
     const setup = async () => {
       resetCalibration();
+      resetDistanceAnchor();
+      resetPosturalBaseline();
+      ipdSamplesRef.current = [];
+      posturalSamplesRef.current = [];
       await initFaceTracking();
       if (!isFaceTrackingActive()) {
         setPhaseBoth('unavailable');
@@ -88,7 +104,9 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
       setModeBoth('calib');
       setIdxBoth(0);
       startPoint();
-      raf = requestAnimationFrame(loop);
+      if (videoRef.current) {
+        frameLoop = startVideoFrameLoop(videoRef.current, loop);
+      }
     };
 
     const loop = () => {
@@ -102,8 +120,16 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
         const elapsed = performance.now() - pointStartRef.current;
 
         if (elapsed >= SETTLE_MS) {
-          const feat = extractGazeFeatures(video, performance.now());
+          const now = performance.now();
+          const feat = extractGazeFeatures(video, now);
+          const pose = estimateHeadPose(video, now);
+          if (pose) {
+            posturalSamplesRef.current.push({ yaw: pose.yaw, pitch: pose.pitch, roll: pose.roll });
+          }
           if (feat) {
+            // detect() just ran inside extractGazeFeatures, so the landmarks are fresh.
+            const ipd = interpupillaryPx(getLastLandmarks(), video.videoWidth || 1280, video.videoHeight || 720);
+            if (ipd) ipdSamplesRef.current.push(ipd);
             if (phaseNow === 'calibrating') {
               addCalibrationSample(feat, target);
             } else {
@@ -156,6 +182,26 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
               const meanDeg = errs.length ? errs.reduce((a, b) => a + b, 0) / errs.length : null;
               setAccuracyDeg(meanDeg);
               setAccuracy(meanDeg);
+              // Anchor distance estimation: median IPD (robust to blinks) at the profile distance.
+              const ipds = ipdSamplesRef.current.slice().sort((a, b) => a - b);
+              if (ipds.length) {
+                const medianIpd = ipds[Math.floor(ipds.length / 2)];
+                setDistanceAnchor({ distanceCm: viewingDistanceCm, ipdPx: medianIpd });
+              }
+              const trackSettings = ((video.srcObject as MediaStream | null)?.getVideoTracks()[0])?.getSettings?.();
+              const viewportWidth = window.innerWidth;
+              const viewportHeight = window.innerHeight;
+              setCalibrationSignature({
+                viewportWidth,
+                viewportHeight,
+                orientation: currentOrientation(viewportWidth, viewportHeight),
+                devicePixelRatio: window.devicePixelRatio || 1,
+                surfaceRect: fullViewportRect(viewportWidth, viewportHeight),
+                videoWidth: video.videoWidth || trackSettings?.width,
+                videoHeight: video.videoHeight || trackSettings?.height,
+                trackFrameRate: trackSettings?.frameRate,
+              });
+              setPosturalBaseline(summarizePosturalBaseline(posturalSamplesRef.current));
               setMotionBaseline('calibration');
               setPhaseBoth('done');
             }
@@ -163,15 +209,13 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
         }
         setTick(t => (t + 1) % 1000);
       }
-
-      raf = requestAnimationFrame(loop);
     };
 
     setup();
 
     return () => {
       runningRef.current = false;
-      cancelAnimationFrame(raf);
+      frameLoop?.stop();
       if (!keepCameraOnClose) {
         stopCameraStream();
         stopMotionSensor();
@@ -182,6 +226,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   const restart = () => {
     // Re-run the whole flow by remounting the loop via a phase reset.
     resetCalibration();
+    resetDistanceAnchor();
+    resetPosturalBaseline();
+    ipdSamplesRef.current = [];
+    posturalSamplesRef.current = [];
     validErrorsRef.current = [];
     phaseRef.current = 'calibrating';
     modeRef.current = 'calib';

@@ -6,7 +6,19 @@ import OpenAI from "openai";
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 function getClient() {
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  return new OpenAI({ apiKey });
+}
+
+function requireOpenAI(res: express.Response, feature: string) {
+  const client = getClient();
+  if (client) return client;
+  res.status(503).json({
+    error: "OPENAI_API_KEY_MISSING",
+    message: `${feature} requer OPENAI_API_KEY configurada no serviço.`,
+  });
+  return null;
 }
 
 // Optional sub-path mount (APP_BASE_PATH, e.g. /gaze). Must match the Vite `base`
@@ -28,7 +40,8 @@ async function startServer() {
   app.post(p("/api/generateReadingContent"), async (req, res) => {
     try {
       const { complexity } = req.body;
-      const client = getClient();
+      const client = requireOpenAI(res, "Geracao de texto de leitura");
+      if (!client) return;
 
       const difficultyRule = complexity === 'facil'
         ? "Produza um texto mais fácil e ameno, com encadeamento de ideias direto, frases mais curtas e vocabulário cotidiano sobre programação/tecnologia."
@@ -58,12 +71,14 @@ Apenas o texto, sem título, sem formatação markdown. Responda em português (
   app.post(p("/api/generateInsight"), async (req, res) => {
     try {
       const { sessionSummary } = req.body;
-      const client = getClient();
+      const client = requireOpenAI(res, "Analise de evolucao");
+      if (!client) return;
 
       const prompt = `Analise os seguintes dados agregados de sessões de controle oculomotor e leitura de um paciente:
 ${JSON.stringify(sessionSummary, null, 2)}
 
-Produza um parágrafo avaliando o progresso da estabilidade de cabeça, cadência de leitura e relato de sintomas.
+Produza um parágrafo avaliando o progresso da estabilidade de cabeça, dinâmica ocular de leitura (sacadas, regressões, fixações e cobertura do olhar) e relato de sintomas.
+Se houver tempos de toque/avanço manual, trate-os apenas como contexto de navegação do texto, não como medida de sacada ou fixação.
 Seja cauteloso: você é um assistente de software, NÃO faça diagnósticos médicos, apenas aponte tendências observadas nos dados.
 Aja de forma encorajadora e profissional, em português do Brasil (pt-BR).`;
 
@@ -86,7 +101,8 @@ Aja de forma encorajadora e profissional, em português do Brasil (pt-BR).`;
   app.post(p("/api/generatePlan"), async (req, res) => {
     try {
       const { profile, symptoms, history } = req.body;
-      const client = getClient();
+      const client = requireOpenAI(res, "Geracao de plano de treino");
+      if (!client) return;
 
       const prompt = `Você é um assistente que monta um plano de treino oculomotor curto e seguro.
 Perfil do usuário: ${JSON.stringify(profile)}

@@ -24,6 +24,29 @@ function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w:
   }
 }
 
+function buildReadingResult(context: Parameters<ExerciseImplementation['update']>[0]) {
+  const s = context.state;
+  if (!s.contentReady) {
+    return {
+      score: 0,
+      invalidReason: s.error ? 'reading-content-error' : 'reading-content-unavailable',
+      textLoaded: false,
+      textComplexity: context.parameters.textComplexity || 'facil',
+      saccadeMetrics: analyzeSaccades([], { signalSource: 'unavailable' }),
+    };
+  }
+
+  const saccadeMetrics = analyzeSaccades(s.gazeSamples, {
+    signalSource: s.gazeSamples.length ? 'calibrated-mediapipe' : 'unavailable',
+  });
+  return {
+    intervals: s.intervals,
+    textLoaded: true,
+    textComplexity: context.parameters.textComplexity || 'facil',
+    saccadeMetrics,
+  };
+}
+
 export const assistedReadingExercise: ExerciseImplementation = {
   id: 'assistedReading',
   init: (context) => {
@@ -37,33 +60,32 @@ export const assistedReadingExercise: ExerciseImplementation = {
       lastTapTime: context.timeMs,
       setupDone: false,
       loading: true,
+      error: null as string | null,
+      contentReady: false,
       fontPx
     };
 
-    getReadingContent(context.parameters.textComplexity || 'facil').then(text => {
-      context.state.text = text;
-      context.state.loading = false;
-      context.state.setupDone = false; // Trigger re-setup
-      context.state.lastTapTime = context.timeMs; // Reset time
-    });
+    getReadingContent(context.parameters.textComplexity || 'facil')
+      .then(text => {
+        const cleanText = text.trim();
+        if (!cleanText) throw new Error('empty generated reading text');
+        context.state.text = cleanText;
+        context.state.loading = false;
+        context.state.error = null;
+        context.state.contentReady = true;
+        context.state.setupDone = false; // Trigger re-setup
+        context.state.gazeSamples = [];
+        context.state.lastTapTime = context.timeMs; // Reset time
+      })
+      .catch(() => {
+        context.state.loading = false;
+        context.state.error = 'Não foi possível gerar o texto por IA. Verifique a configuração da OpenAI e tente novamente.';
+      });
   },
   update: (context) => {
     const s = context.state;
 
-    // Continuously sample webcam gaze while the user reads. When the session is
-    // calibrated, use the calibrated horizontal screen position (normalized 0..1),
-    // which is a cleaner reading signal than the raw iris ratio; otherwise fall back.
-    if (context.latestGazePoint && context.width > 0 && context.height > 0) {
-      s.gazeSamples.push({
-        t: context.timeMs,
-        h: context.latestGazePoint.x / context.width,
-        v: context.latestGazePoint.y / context.height,
-      });
-    } else if (context.latestGaze) {
-      s.gazeSamples.push(context.latestGaze);
-    }
-
-    if (s.loading) return;
+    if (s.loading || s.error) return;
 
     if (!s.setupDone) {
       s.setupDone = true;
@@ -98,6 +120,17 @@ export const assistedReadingExercise: ExerciseImplementation = {
       const offsetY = (height - totalHeight) / 2 - (height/3);
       s.chunks.forEach((c: any) => c.y += offsetY);
     }
+
+    // Continuously sample calibrated webcam gaze only after the real reading text
+    // exists. Raw iris ratios are intentionally ignored here: reading saccades
+    // require calibration.
+    if (context.latestGazePoint && context.width > 0 && context.height > 0) {
+      s.gazeSamples.push({
+        t: context.timeMs,
+        h: context.latestGazePoint.x / context.width,
+        v: context.latestGazePoint.y / context.height,
+      });
+    }
   },
   draw: (context) => {
     const s = context.state;
@@ -116,6 +149,18 @@ export const assistedReadingExercise: ExerciseImplementation = {
        ctx.fillStyle = isDark ? '#f8fafc' : '#0f172a';
        ctx.textAlign = 'center';
        ctx.fillText("Aguarde, gerando texto inteligente...", width/2, height/2);
+       return;
+    }
+
+    if (s.error) {
+       ctx.fillStyle = isDark ? '#f8fafc' : '#0f172a';
+       ctx.textAlign = 'center';
+       ctx.font = `${Math.max(18, Math.min(28, s.fontPx))}px Inter, sans-serif`;
+       ctx.fillText(s.error, width / 2, height / 2);
+       ctx.font = '18px Inter, sans-serif';
+       ctx.fillStyle = isDark ? '#94a3b8' : '#64748b';
+       ctx.fillText('Use Parar Imediatamente e tente novamente após configurar a chave.', width / 2, height / 2 + 42);
+       ctx.textAlign = 'left';
        return;
     }
 
@@ -142,7 +187,7 @@ export const assistedReadingExercise: ExerciseImplementation = {
   },
   onInput: (x, y, context) => {
     const s = context.state;
-    if (s.loading) return;
+    if (s.loading || s.error) return;
     if (s.currentIndex < s.chunks.length) {
        const now = context.timeMs;
        if (s.currentIndex > 0) {
@@ -152,14 +197,9 @@ export const assistedReadingExercise: ExerciseImplementation = {
        s.currentIndex++;
 
        if (s.currentIndex === s.chunks.length) {
-          // Run the experimental webcam saccade estimate over the gaze stream.
-          const saccadeMetrics = analyzeSaccades(s.gazeSamples);
-          context.finishExercise({
-             intervals: s.intervals,
-             textComplexity: context.parameters.textComplexity || 'facil',
-             saccadeMetrics
-          });
+          context.finishExercise(buildReadingResult(context));
        }
     }
-  }
+  },
+  getResultData: (context) => buildReadingResult(context),
 }

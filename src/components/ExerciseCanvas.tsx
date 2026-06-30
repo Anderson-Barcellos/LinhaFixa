@@ -2,10 +2,18 @@ import React, { useRef, useEffect, useState } from 'react';
 import { registry } from '@/exercises/implementations';
 import { ExerciseParameters } from '@/types';
 import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive } from '@/services/faceTracking';
-import { isCalibrated, predictNorm } from '@/services/gazeCalibration';
+import { getCalibrationSignature, isCalibrated, predictNorm } from '@/services/gazeCalibration';
 import { attachStream, getFrontCameraStream } from '@/services/cameraStream';
 import { getMotionQuality } from '@/services/motionSensor';
-import { summarizePosturalStability, type PosturalSample } from '@/exercises/posturalStability';
+import { getPosturalBaseline, summarizePosturalStability, type PosturalSample } from '@/exercises/posturalStability';
+import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
+import {
+  calibrationSignatureMatches,
+  currentOrientation,
+  fullViewportRect,
+  rectFromElement,
+  viewportNormToRectPoint,
+} from '@/services/ocularSignalContract';
 
 interface ExerciseCanvasProps {
   exerciseId: string;
@@ -29,8 +37,12 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
   
   useEffect(() => {
     let animationFrameId: number;
+    let videoFrameLoop: VideoFrameLoopHandle | null = null;
     let startTime = performance.now();
     let isRunning = true;
+    let latestVideoFrameTs = 0;
+    let latestVideoFrameToken = 0;
+    let processedVideoFrameToken = -1;
 
     // We keep track of how many frames head was stable vs unstable
     // Extremely simplified head scoring for this prototype
@@ -50,6 +62,10 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
           const cameraStream = await getFrontCameraStream();
           if (videoRef.current) {
             await attachStream(videoRef.current, cameraStream);
+            videoFrameLoop = startVideoFrameLoop(videoRef.current, ts => {
+              latestVideoFrameTs = ts;
+              latestVideoFrameToken += 1;
+            });
           }
         } catch (e) {
           console.warn("Could not start camera, continuing without face tracking");
@@ -110,8 +126,14 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
            // Exercises that measure performance supply their own score via getResultData.
            const score = extraData && typeof extraData.score === 'number' ? extraData.score : 100;
            // Attach the cervical/postural summary alongside the exercise's own data.
+           const motionQuality = getMotionQuality();
            const posturalStability = summarizePosturalStability(posturalSamples, {
+             baseline: getPosturalBaseline(),
              motionHighMovement: posturalHighMovement,
+             motionStatus: motionQuality.status,
+             motionDeltaDeg: motionQuality.deltaDeg,
+             motionConfidence: motionQuality.confidence,
+             durationMs: exContext.timeMs,
            });
            onFinish(score, stillnessScore, { ...(extraData || {}), posturalStability });
         }
@@ -135,8 +157,15 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
 
         // Face tracking logic. Only count frames where a real face was detected,
         // so the stillness score is not inflated by missing measurements.
-        if (cameraEnabled && isFaceTrackingActive() && videoRef.current && videoRef.current.readyState >= 2) {
-           const detectTs = performance.now();
+        if (
+          cameraEnabled
+          && isFaceTrackingActive()
+          && videoRef.current
+          && videoRef.current.readyState >= 2
+          && latestVideoFrameToken !== processedVideoFrameToken
+        ) {
+           processedVideoFrameToken = latestVideoFrameToken;
+           const detectTs = latestVideoFrameTs || performance.now();
            const headPose = estimateHeadPose(videoRef.current, detectTs);
            if (headPose) {
              framesAnalyzed++;
@@ -153,9 +182,31 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
            if (exContext.isGazeCalibrated) {
              const feat = extractGazeFeatures(videoRef.current, detectTs);
              const norm = feat ? predictNorm(feat) : null;
-             exContext.latestGazePoint = norm
-               ? { x: norm.x * canvas.width, y: norm.y * canvas.height }
-               : null;
+             if (norm) {
+               const viewportWidth = window.innerWidth;
+               const viewportHeight = window.innerHeight;
+               const trackSettings = ((videoRef.current.srcObject as MediaStream | null)?.getVideoTracks()[0])?.getSettings?.();
+               const signatureStatus = calibrationSignatureMatches(getCalibrationSignature(), {
+                 viewportWidth,
+                 viewportHeight,
+                 orientation: currentOrientation(viewportWidth, viewportHeight),
+                 devicePixelRatio: window.devicePixelRatio || 1,
+                 surfaceRect: fullViewportRect(viewportWidth, viewportHeight),
+                 videoWidth: videoRef.current.videoWidth || trackSettings?.width,
+                 videoHeight: videoRef.current.videoHeight || trackSettings?.height,
+                 trackFrameRate: trackSettings?.frameRate,
+               });
+               const localPoint = viewportNormToRectPoint(
+                 norm,
+                 rectFromElement(canvas),
+                 { width: viewportWidth, height: viewportHeight }
+               );
+               exContext.latestGazePoint = signatureStatus.matches && localPoint.inBounds
+                 ? { x: localPoint.x, y: localPoint.y }
+                 : null;
+             } else {
+               exContext.latestGazePoint = null;
+             }
            } else {
              exContext.latestGazePoint = null;
            }
@@ -185,6 +236,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
     return () => {
       isRunning = false;
       cancelAnimationFrame(animationFrameId);
+      videoFrameLoop?.stop();
     };
   }, [exerciseId, parameters, cameraEnabled, onFinish, viewingDistanceCm, fontSizePreference]);
 

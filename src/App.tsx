@@ -48,6 +48,7 @@ export default function App() {
           <Route path="/" element={!hydrated ? <BootScreen /> : consentAccepted ? <HomeScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/player" element={!hydrated ? <BootScreen /> : consentAccepted ? <ExercisePlayerScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/dashboard" element={!hydrated ? <BootScreen /> : consentAccepted ? <DashboardScreen /> : <Navigate to="/consent" replace />} />
+          <Route path="/statistics" element={<Navigate to="/dashboard" replace />} />
           <Route path="/library" element={!hydrated ? <BootScreen /> : consentAccepted ? <ExerciseLibraryScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/settings" element={!hydrated ? <BootScreen /> : consentAccepted ? <SettingsScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/eye-tracking-test" element={!hydrated ? <BootScreen /> : consentAccepted ? <EyeTrackingTestScreen /> : <Navigate to="/consent" replace />} />

@@ -7,10 +7,12 @@
 // screen, at THIS distance. Ridge regression (closed form) is cheap, stable with
 // few samples, and runs fully on-device.
 //
-// Honest limits: a consumer webcam (~30Hz, ~1-2 deg) gives an approximate point of
+// Honest limits: a consumer webcam gives an approximate point of gaze with
+// device/browser-dependent frame rate and limited angular accuracy.
 // gaze. Head movement and lighting changes degrade it; recalibration fixes drift.
 
 import { GAZE_FEATURE_LENGTH } from './faceTracking';
+import type { CalibrationSignature } from './ocularSignalContract';
 
 interface Sample {
   features: number[];
@@ -25,12 +27,14 @@ let samples: Sample[] = [];
 let weightsX: number[] | null = null; // length GAZE_FEATURE_LENGTH + 1 (bias first)
 let weightsY: number[] | null = null;
 let accuracyDeg: number | null = null; // validation accuracy, for display
+let calibrationSignature: CalibrationSignature | null = null;
 
 export function resetCalibration() {
   samples = [];
   weightsX = null;
   weightsY = null;
   accuracyDeg = null;
+  calibrationSignature = null;
 }
 
 // Buffer one labelled calibration sample (a feature vector seen while the user
@@ -137,4 +141,19 @@ export function setAccuracyDeg(deg: number | null) {
 }
 export function getAccuracyDeg(): number | null {
   return accuracyDeg;
+}
+
+export function setCalibrationSignature(signature: CalibrationSignature | null) {
+  calibrationSignature = signature ? cloneSignature(signature) : null;
+}
+
+export function getCalibrationSignature(): CalibrationSignature | null {
+  return calibrationSignature ? cloneSignature(calibrationSignature) : null;
+}
+
+function cloneSignature(signature: CalibrationSignature): CalibrationSignature {
+  return {
+    ...signature,
+    surfaceRect: { ...signature.surfaceRect },
+  };
 }

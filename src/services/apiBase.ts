@@ -9,7 +9,7 @@
 //   base '/'      -> apiUrl('/api/x') === '/api/x'
 //   base '/gaze/' -> apiUrl('/api/x') === '/gaze/api/x'
 export function apiUrl(path: string): string {
-  const base = import.meta.env.BASE_URL || '/';
+  const base = import.meta.env?.BASE_URL || '/';
   const cleanBase = base.endsWith('/') ? base.slice(0, -1) : base; // '' or '/gaze'
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   return `${cleanBase}${cleanPath}`;

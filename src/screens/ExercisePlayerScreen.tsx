@@ -10,6 +10,7 @@ import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { isCalibrated } from '@/services/gazeCalibration';
 import { stopCameraStream } from '@/services/cameraStream';
 import { requestMotionPermissionFromGesture, startMotionSensor, stopMotionSensor } from '@/services/motionSensor';
+import { resetPosturalBaseline } from '@/exercises/posturalStability';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
 import { SymptomRating, TreatmentPlanResponse, SessionResult, ExerciseResult } from '@/types';
 
@@ -41,6 +42,7 @@ export function ExercisePlayerScreen() {
   useEffect(() => () => {
     stopCameraStream();
     stopMotionSensor();
+    resetPosturalBaseline();
   }, []);
 
   // Decide whether to calibrate before the exercise, then enter it.
@@ -104,9 +106,10 @@ export function ExercisePlayerScreen() {
 
   const handleExerciseFinish = (score: number, stillness: number | null, extraData?: any) => {
     const curParam = plan!.exercises[currentExerciseIndex].parameters;
+    const exerciseCompleted = !extraData?.invalidReason;
     const newResult: ExerciseResult = {
       exerciseId: plan!.exercises[currentExerciseIndex].exerciseId,
-      completed: true,
+      completed: exerciseCompleted,
       score,
       headStillnessScore: stillness,
       parametersUsed: curParam,
@@ -116,7 +119,7 @@ export function ExercisePlayerScreen() {
     
     setResults([...results, newResult]);
     
-    if (extraData && extraData.intervals) {
+    if (extraData && !extraData.invalidReason && Array.isArray(extraData.intervals)) {
        setReadingExtraData(extraData);
        setStage('POST_READING_RATING');
        return;
@@ -271,22 +274,37 @@ export function ExercisePlayerScreen() {
                    sacadas, regressões e fixações; não promete palavra exata no texto.
                  </p>
                  {(() => {
-                   const summary = summarizeReadingDynamics(readingExtraData.saccadeMetrics, 100);
+                   const summary = summarizeReadingDynamics(readingExtraData.saccadeMetrics, readingExtraData.signalCoverage ?? null);
                    return (
                      <div className="bg-white/70 rounded-xl border border-indigo-100 p-4 mb-6">
                        <div className="flex flex-wrap gap-2 mb-2">
-                         <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold">
-                           {summary.signalLabel}
+                         <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                           summary.signalQuality.tone === 'emerald'
+                             ? 'bg-emerald-100 text-emerald-700'
+                             : summary.signalQuality.tone === 'rose'
+                               ? 'bg-rose-100 text-rose-700'
+                               : 'bg-amber-100 text-amber-700'
+                         }`}>
+                           {summary.signalQuality.label}
                          </span>
                          <span className="px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">
-                           {summary.positionLabel}
+                           {summary.signalQuality.sourceLabel}
+                         </span>
+                         <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-bold">
+                           {summary.signalQuality.sampleRateLabel}
                          </span>
                        </div>
+                       <p className="text-xs text-indigo-400 font-medium mb-2">{summary.signalLabel} · {summary.positionLabel}</p>
                        <p className="text-sm text-slate-700 font-medium">{summary.primaryInsight}</p>
+                       <p className="text-xs text-slate-500 font-medium mt-2">{summary.confidenceNote}</p>
                      </div>
                    );
                  })()}
-                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                 <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
+                    <div>
+                       <div className="text-xl font-bold text-slate-800">{readingExtraData.saccadeMetrics.sampleRateHz ? `${readingExtraData.saccadeMetrics.sampleRateHz} Hz` : 'N/D'}</div>
+                       <div className="text-slate-500 text-sm font-medium mt-1">Taxa efetiva</div>
+                    </div>
                     <div>
                        <div className="text-xl font-bold text-slate-800">{readingExtraData.saccadeMetrics.saccadeCount}</div>
                        <div className="text-slate-500 text-sm font-medium mt-1">Sacadas</div>
@@ -370,7 +388,8 @@ export function ExercisePlayerScreen() {
                 <div className="bg-indigo-50 p-8 rounded-2xl text-left border border-indigo-100 mb-12">
                    <h3 className="text-sm font-bold text-indigo-500 uppercase tracking-widest mb-2">Métricas oculares — experimental (webcam)</h3>
                    <p className="text-xs text-indigo-400 font-medium mb-6">
-                     Valores aproximados a partir da câmera calibrada (~30Hz, ~1-2°).
+                     Valores aproximados a partir da câmera calibrada, com taxa dependente
+                     do dispositivo/browser e acurácia limitada pela webcam.
                      A posição na tela é apoio; a leitura principal vem do padrão temporal
                      de fixações, sacadas e regressões.
                    </p>
@@ -436,7 +455,7 @@ export function ExercisePlayerScreen() {
                                   <span className="text-sm font-bold text-slate-700">{name(r.exerciseId)}</span>
                                   <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${p.status === 'stable' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{p.label}</span>
                                </div>
-                               <div className="grid grid-cols-3 gap-4">
+                               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                                   <div>
                                      <div className="text-lg font-bold text-slate-800">{p.cervicalStability}%</div>
                                      <div className="text-slate-500 text-xs font-medium mt-1">Estabilidade cervical</div>
@@ -448,6 +467,14 @@ export function ExercisePlayerScreen() {
                                   <div>
                                      <div className="text-lg font-bold text-slate-800">{p.rotationRange.toFixed(1)}</div>
                                      <div className="text-slate-500 text-xs font-medium mt-1">Amplitude de rotação</div>
+                                  </div>
+                                  <div>
+                                     <div className="text-lg font-bold text-slate-800">{p.baselineApplied ? 'Sim' : 'Não'}</div>
+                                     <div className="text-slate-500 text-xs font-medium mt-1">Baseline aplicado</div>
+                                  </div>
+                                  <div>
+                                     <div className="text-lg font-bold text-slate-800">{p.motionDeltaDeg != null ? `${p.motionDeltaDeg.toFixed(1)}°` : 'N/D'}</div>
+                                     <div className="text-slate-500 text-xs font-medium mt-1">Delta aparelho</div>
                                   </div>
                                </div>
                             </div>

@@ -4,7 +4,8 @@ import { FixationMetrics, SaccadeTaskMetrics, PursuitMetrics } from '@/types';
 // All inputs are in canvas pixels; angular outputs use a caller-provided pxPerDeg
 // (pixels subtended by 1 degree at the user's viewing distance).
 //
-// Honest limits: webcam gaze is ~30Hz and ~1-2 deg accurate. These measure coarse
+// Honest limits: webcam gaze has device/browser-dependent frame rate and limited
+// angular accuracy. These measure coarse
 // FIXATION stability, estimate SACCADE latency/accuracy, and pursuit gain. They do
 // not resolve microsaccades and should be read as approximate.
 

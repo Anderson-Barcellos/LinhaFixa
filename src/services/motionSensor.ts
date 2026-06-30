@@ -132,6 +132,7 @@ export async function requestMotionPermissionFromGesture(): Promise<MotionPermis
 
 export function startMotionSensor(): void {
   if (!isMotionSupported() || active) return;
+  resetMotionSensorState();
   window.addEventListener('deviceorientation', handleOrientation);
   window.addEventListener('devicemotion', handleMotion);
   active = true;
@@ -142,7 +143,17 @@ export function stopMotionSensor(): void {
     window.removeEventListener('deviceorientation', handleOrientation);
     window.removeEventListener('devicemotion', handleMotion);
   }
+  resetMotionSensorState();
+}
+
+export function resetMotionSensorState(options: { resetPermission?: boolean } = {}): void {
   active = false;
+  latestOrientation = null;
+  latestTimestamp = null;
+  baselineOrientation = null;
+  accelerationSamples = [];
+  rotationSamples = [];
+  if (options.resetPermission) permissionState = 'prompt';
 }
 
 export function getMotionSnapshot(): MotionSnapshot {
@@ -188,6 +199,24 @@ function handleOrientation(event: DeviceOrientationEvent): void {
     gamma: event.gamma,
   };
   latestTimestamp = performance.now();
+}
+
+export function setMotionSensorTestState(state: {
+  permission?: MotionPermissionState;
+  active?: boolean;
+  orientation?: MotionOrientation | null;
+  baseline?: MotionOrientation | null;
+  timestamp?: number | null;
+  accelerationSamples?: MagnitudeSample[];
+  rotationSamples?: MagnitudeSample[];
+}): void {
+  if (state.permission !== undefined) permissionState = state.permission;
+  if (state.active !== undefined) active = state.active;
+  if (state.orientation !== undefined) latestOrientation = state.orientation ? { ...state.orientation } : null;
+  if (state.baseline !== undefined) baselineOrientation = state.baseline ? { ...state.baseline } : null;
+  if (state.timestamp !== undefined) latestTimestamp = state.timestamp;
+  if (state.accelerationSamples !== undefined) accelerationSamples = state.accelerationSamples.map(s => ({ ...s }));
+  if (state.rotationSamples !== undefined) rotationSamples = state.rotationSamples.map(s => ({ ...s }));
 }
 
 function handleMotion(event: DeviceMotionEvent): void {

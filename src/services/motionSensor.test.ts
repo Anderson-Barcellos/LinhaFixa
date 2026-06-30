@@ -3,7 +3,11 @@ import { test } from 'node:test';
 import {
   classifyMotionQuality,
   computeOrientationDeltaDeg,
+  getMotionSnapshot,
   normalizeAngleDeltaDeg,
+  resetMotionSensorState,
+  setMotionSensorTestState,
+  startMotionSensor,
 } from './motionSensor';
 
 test('normalizeAngleDeltaDeg returns the shortest signed angle delta', () => {
@@ -84,4 +88,56 @@ test('classifyMotionQuality reports stable, moved, and shaking states', () => {
     confidence: 'low',
     deltaDeg: 1.7,
   });
+});
+
+test('resetMotionSensorState clears baseline, samples and active session flags', () => {
+  setMotionSensorTestState({
+    permission: 'granted',
+    active: true,
+    orientation: { alpha: 10, beta: 2, gamma: 1 },
+    baseline: { alpha: 8, beta: 2, gamma: 1 },
+    accelerationSamples: [{ t: 100, value: 1 }],
+    rotationSamples: [{ t: 100, value: 30 }],
+  });
+
+  resetMotionSensorState();
+  const snapshot = getMotionSnapshot();
+
+  assert.equal(snapshot.active, false);
+  assert.equal(snapshot.orientation, null);
+  assert.equal(snapshot.baseline, null);
+  assert.equal(snapshot.timestamp, null);
+  assert.equal(snapshot.recentAcceleration, null);
+  assert.equal(snapshot.recentRotationRate, null);
+});
+
+test('startMotionSensor begins a fresh session without inherited baseline', () => {
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    DeviceMotionEvent: function DeviceMotionEvent() {},
+    DeviceOrientationEvent: function DeviceOrientationEvent() {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  setMotionSensorTestState({
+    permission: 'granted',
+    active: false,
+    orientation: { alpha: 10, beta: 2, gamma: 1 },
+    baseline: { alpha: 8, beta: 2, gamma: 1 },
+    accelerationSamples: [{ t: 100, value: 1 }],
+    rotationSamples: [{ t: 100, value: 30 }],
+  });
+
+  try {
+    startMotionSensor();
+    const snapshot = getMotionSnapshot();
+    assert.equal(snapshot.active, true);
+    assert.equal(snapshot.orientation, null);
+    assert.equal(snapshot.baseline, null);
+    assert.equal(snapshot.recentAcceleration, null);
+    assert.equal(snapshot.recentRotationRate, null);
+  } finally {
+    resetMotionSensorState({ resetPermission: true });
+    (globalThis as any).window = originalWindow;
+  }
 });
