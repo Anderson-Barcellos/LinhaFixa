@@ -29,7 +29,17 @@ Convergencia: #14 do Codex e literalmente o PACK GT ja implementado no worktree 
 
 Frentes novas de alto nivel (sem bundles ainda): repetibilidade teste-reteste com dados ja salvos (#13); painel "sanidade do instrumento" — dt p50/p95, % blink, IQR IPD, % extrapolacao (#15); refinamentos menores #5/#8/#11.
 
-Decisao ABERTA do Anders: ordem proposta por Claude = (1) revisar/mergear PACK GT, (2) PACK Validade de Captura (#1,#9,#6,#10), (3) so entao Fase 0 no iPhone. Aguardando escolha.
+Decisao (2026-07-02): Anders assinou a ordem proposta = (1) mergear/deployar PACK GT (feito em `c613990`, revisao iPhone pendente), (2) PACK Validade de Captura (#1,#9,#6,#10) — PACK ativo abaixo, (3) so entao Fase 0 no iPhone.
+
+## PACK Validade de Captura (active)
+
+Contexto: 4 bugs confirmados da auditoria cega Codex que corrompem a validade dos dados capturados; o #1 contamina a Fase 0 se nao morrer antes.
+Bundles:
+- [ ] BUNDLE VC1 — #1: captura sem mistura de coordenadas. Separar amostras calibradas/brutas (ou descartar brutas quando ha calibracao), `signalSource` honesto (`mixed` ou ratio), sem saltos de unidade na serie do detector. Muda semantica de captura — plano compacto antes de codar.
+- [ ] BUNDLE VC2 — #9: latencia sem sentinela. `meanLatencyMs: null` quando nao ha latencia valida + `validLatencyCount`; UI mostra "sem latencia valida" em vez de 0ms.
+- [ ] BUNDLE VC3 — #6: extrapolacao visivel. `predictNorm` expoe flag de clamp/extrapolacao; consumidor rejeita ou marca amostra extrapolada.
+- [ ] BUNDLE VC4 — #10: visibilitychange/pagehide invalida ou marca captura em background (Safari).
+Notas: frentes futuras fora deste PACK: repetibilidade teste-reteste (#13), painel sanidade do instrumento (#15), px/cm real do iPhone (#4-mitigacao), tiers de metrica (#3), refinamentos #5/#8/#11.
 
 ### 2026-07-01 21:21 - Geometria e consistencia desktop
 
@@ -220,7 +230,7 @@ FASE 0 — Validacao manual (Anders, sem codigo):
 - Acumular 10-15 capturas etiquetadas variando luz/postura/distancia — e o dado que calibra todo o resto.
 
 FASE 1 — PACK GT: ground truth interno via sacadas guiadas (frente de codigo):
-FEITA em 2026-07-02 (aprovacao do Anders no plano compacto; implementada em GT1+GT2+GT3, ver entrada "PACK GT" de 2026-07-02). PRONTA PRA REVISAO no worktree `quirky-euclid-a4dd5e`, NAO commitada.
+FEITA em 2026-07-02 (aprovacao do Anders no plano compacto; implementada em GT1+GT2+GT3, ver entrada "PACK GT" de 2026-07-02). Mergeada no main em `c613990` e deployada (bundle `index-CyptVrBX.js`); revisao manual do Anders no iPhone pendente.
 
 FASE 2 — Tuning com o dado real da Fase 0 (so depois dela):
 - Decidir `BLINK_REJECT_GATE_ENABLED` (distribuicao real do eyeBlink baseline iPhone/desktop).
@@ -231,7 +241,7 @@ FASE 3 — PACKs represados: PACK 3 visual (hierarquia do relatorio) e PACK 4 ex
 
 Ler primeiro na retomada: esta secao; entradas de 2026-07-02; `src/exercises/saccadeAnalysis.ts` (novo contrato lineReturnCount), `src/exercises/oculomotorAnalysis.ts` (base do PACK GT), `src/services/viewingGeometry.ts` (drift/proveniencia), `src/services/faceTracking.ts` (kill-switch blink).
 Validacao padrao: `node --import tsx --test $(rg --files -g '*.test.ts' src)`, `npx tsc --noEmit`, `npm run lint`, `APP_BASE_PATH=/gaze npm run build`; deploy = restart `linhafixa.service` + curl local/publico.
-Nota de higiene: worktree `quirky-euclid-a4dd5e` foi REUTILIZADO em 2026-07-02 para o PACK GT (sincronizado com main via merge) — NAO remover ate o PACK GT ser revisado e mergeado.
+Nota de higiene: worktree `quirky-euclid-a4dd5e` ja mergeado no main (`c613990`) — pode remover (`git worktree remove`) numa sessao fora dele.
 
 ### 2026-07-02 - PACK GT: ground truth interno do detector I-VT (pronto p/ revisao)
 
@@ -242,7 +252,7 @@ Details:
 GT1 — `analyzeSaccades` ganhou `collectEvents?: boolean` (opt-in): quando ligado, retorna `events: SaccadeEvent[]` ({tStart, tEnd, amplitude assinada, kind saccade/regression/line-return}), tipo novo em `types.ts`. Convencao de timestamp: tStart = ultima amostra ANTES do cruzamento de velocidade (consistente com as metricas agregadas). Off por default → payloads persistidos de SaccadeMetrics inalterados; teste de regressao garante agregados identicos com/sem eventos. GT2 — novo `src/exercises/detectorValidation.ts` (puro): `ocSamplesToGazeSamples` (canvas px → h/v normalizado), `extractTargetJumps` (mesmo criterio >1px do `analyzeSaccadeTask`), `validateSaccadeDetector` pareia salto↔evento (janela -50..1000ms, direcao obrigatoria, greedy cronologico, kind IGNORADO de proposito — salto grande pra esquerda e "line-return" na taxonomia de leitura mas e deteccao correta aqui) → `DetectorValidationMetrics`: detectionRate, falsePositives(/min), medianLatencyMs + IQR, meanAmplitudeGain. GT3 — `saccadeExercise.getResultData` injeta `detectorValidation` no extraData (persiste via saveSession, da o "por sessao/condicao"); `ExercisePlayerScreen` mostra bloco "Validacao interna do detector (instrumento, nao usuario)" no card de Sacadas.
 
 Notes:
-Honestidade do metodo: deteccao perdida pode ser falha do detector OU o usuario nao ter feito a sacada — o agregado ainda limita a sensibilidade do instrumento nas condicoes da sessao. Validado com `node --import tsx --test` (87/87; 79 do main + 8 novos), `npx tsc --noEmit`, `npm run lint`, `APP_BASE_PATH=/gaze npm run build` (bundle local `index-CjGg--O-.js`, NAO deployado). NAO commitado — aguarda revisao do Anders. Pendente na revisao: rodar o exercicio de sacadas no iPhone e conferir o bloco novo no resumo da sessao; numeros reais de detectionRate/latencia viram baseline do instrumento.
+Honestidade do metodo: deteccao perdida pode ser falha do detector OU o usuario nao ter feito a sacada — o agregado ainda limita a sensibilidade do instrumento nas condicoes da sessao. Validado com `node --import tsx --test` (87/87; 79 do main + 8 novos), `npx tsc --noEmit`, `npm run lint`, `APP_BASE_PATH=/gaze npm run build`. Commitado em `b3fffec`, mergeado no main em `c613990` e deployado em 2026-07-02 (bundle `index-CyptVrBX.js`). Pendente na revisao do Anders: rodar o exercicio de sacadas no iPhone e conferir o bloco novo no resumo da sessao; numeros reais de detectionRate/latencia viram baseline do instrumento.
 
 ### 2026-06-28 - Estatisticas com resumos reais (pronto p/ revisao)
 
