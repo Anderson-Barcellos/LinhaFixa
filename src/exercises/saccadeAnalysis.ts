@@ -1,4 +1,6 @@
-import { GazeSample, SaccadeMetrics } from '@/types';
+import { GazeSample, SaccadeMetrics, SaccadeEvent } from '@/types';
+
+export type { SaccadeEvent };
 
 // Simplified velocity-threshold (I-VT) saccade detector over webcam gaze samples.
 //
@@ -24,6 +26,11 @@ const MAX_FIXATION_GAP_MS = 200;
 
 export interface AnalyzeSaccadesOptions {
   signalSource?: SaccadeMetrics['signalSource'];
+  // When true, the returned metrics carry the individual detected events with
+  // timestamps. Off by default so persisted SaccadeMetrics payloads stay unchanged;
+  // the ground-truth validation harness opts in to match detections against known
+  // target jumps.
+  collectEvents?: boolean;
 }
 
 // 3-sample median filter over the horizontal channel. MediaPipe occasionally emits
@@ -54,6 +61,7 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
       lineReturnCount: 0,
       meanSaccadeAmplitude: 0,
       meanFixationMs: 0,
+      ...(options.collectEvents ? { events: [] } : {}),
     };
   }
 
@@ -62,6 +70,7 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
 
   let inSaccade = false;
   let saccadeStartH = 0;
+  let saccadeStartT = valid[0].t;
   let lastSaccadeEndT = valid[0].t;
   // True when the interval since lastSaccadeEndT contains a tracking gap.
   let gapInFixation = false;
@@ -70,19 +79,22 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
   const fixationDurations: number[] = [];
   let regressionCount = 0;
   let lineReturnCount = 0;
+  const events: SaccadeEvent[] | undefined = options.collectEvents ? [] : undefined;
 
   // Close a saccade with the given signed amplitude, routing it to the right bucket.
   // Line-return sweeps are counted separately and kept OUT of the reading-saccade
   // amplitudes and regression count.
-  const closeSaccade = (amplitude: number) => {
+  const closeSaccade = (amplitude: number, tStart: number, tEnd: number) => {
     if (Math.abs(amplitude) < MIN_SACCADE_AMPLITUDE) return;
     if (amplitude < 0 && Math.abs(amplitude) >= LINE_RETURN_MIN_AMPLITUDE) {
       lineReturnCount++;
+      events?.push({ tStart, tEnd, amplitude, kind: 'line-return' });
       return;
     }
     amplitudes.push(Math.abs(amplitude));
     // Reading is left-to-right (increasing h): a leftward saccade is a regression.
     if (amplitude < 0) regressionCount++;
+    events?.push({ tStart, tEnd, amplitude, kind: amplitude < 0 ? 'regression' : 'saccade' });
   };
 
   for (let i = 1; i < valid.length; i++) {
@@ -98,12 +110,13 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
       // somewhere inside it.
       inSaccade = true;
       saccadeStartH = h[i - 1];
+      saccadeStartT = prev.t;
       const fixation = prev.t - lastSaccadeEndT;
       if (!gapInFixation && fixation > 0) fixationDurations.push(fixation);
     } else if (inSaccade && velocity <= VELOCITY_THRESHOLD) {
       // Saccade ends.
       inSaccade = false;
-      closeSaccade(h[i] - saccadeStartH);
+      closeSaccade(h[i] - saccadeStartH, saccadeStartT, cur.t);
       lastSaccadeEndT = cur.t;
       gapInFixation = false;
     }
@@ -111,7 +124,7 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
 
   // If we ended while still in a saccade, close it using the last sample.
   if (inSaccade) {
-    closeSaccade(h[h.length - 1] - saccadeStartH);
+    closeSaccade(h[h.length - 1] - saccadeStartH, saccadeStartT, valid[valid.length - 1].t);
   }
 
   const mean = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
@@ -126,6 +139,7 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
     lineReturnCount,
     meanSaccadeAmplitude: mean(amplitudes),
     meanFixationMs: mean(fixationDurations),
+    ...(events ? { events } : {}),
   };
 }
 

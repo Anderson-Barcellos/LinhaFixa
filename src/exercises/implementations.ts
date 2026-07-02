@@ -1,6 +1,7 @@
 import { ExerciseImplementation } from './engine';
 import { assistedReadingExercise } from './assistedReading';
 import { OcSample, analyzeFixation, analyzeSaccadeTask, analyzePursuit } from './oculomotorAnalysis';
+import { validateSaccadeDetector } from './detectorValidation';
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -115,6 +116,13 @@ export const saccadesExercise: ExerciseImplementation = {
   onInput: () => {},
   getResultData: (context) => {
     const metrics = analyzeSaccadeTask(context.state.samples, context.degToPx(1));
+    // Ground-truth check of the I-VT detector against the known target jumps of this
+    // run ("statistical chinrest"): instrument error bar, not a user metric.
+    const detectorValidation = validateSaccadeDetector(
+      context.state.samples,
+      context.width,
+      context.height
+    );
     // Score blends landing accuracy (smaller error better) and gain (near 1 better).
     let score: number | undefined;
     if (metrics.trackingAvailable) {
@@ -122,7 +130,7 @@ export const saccadesExercise: ExerciseImplementation = {
       const gainScore = clamp(100 - Math.abs(1 - metrics.meanGain) * 100, 0, 100);
       score = Math.round(0.6 * accScore + 0.4 * gainScore);
     }
-    return { saccadeTaskMetrics: metrics, score };
+    return { saccadeTaskMetrics: metrics, detectorValidation, score };
   }
 };
 

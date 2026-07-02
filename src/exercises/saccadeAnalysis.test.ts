@@ -107,3 +107,51 @@ test('analyzeSaccades discards fixation intervals that contain a tracking gap', 
   assert.equal(metrics.saccadeCount, 1);
   assert.equal(metrics.lineReturnCount, 1);
 });
+
+test('analyzeSaccades omits events by default and keeps aggregates identical with collectEvents', () => {
+  const samples: GazeSample[] = [
+    { t: 0, h: 0.20, v: 0.5 },
+    { t: 40, h: 0.21, v: 0.5 },
+    { t: 50, h: 0.42, v: 0.5 },
+    { t: 90, h: 0.43, v: 0.5 },
+    { t: 100, h: 0.30, v: 0.5 },
+    { t: 140, h: 0.31, v: 0.5 },
+  ];
+
+  const plain = analyzeSaccades(samples, { signalSource: 'calibrated-mediapipe' });
+  const withEvents = analyzeSaccades(samples, { signalSource: 'calibrated-mediapipe', collectEvents: true });
+
+  assert.equal('events' in plain, false);
+  const { events, ...aggregates } = withEvents;
+  assert.deepEqual(aggregates, plain);
+  assert.ok(events);
+  assert.equal(events.length, plain.saccadeCount + (plain.lineReturnCount ?? 0));
+  assert.equal(events.filter(e => e.kind === 'regression').length, plain.regressionCount);
+});
+
+test('analyzeSaccades events carry timestamps and signed amplitudes per bucket', () => {
+  const samples: GazeSample[] = [
+    { t: 0, h: 0.10, v: 0.5 },
+    { t: 20, h: 0.10, v: 0.5 },
+    { t: 40, h: 0.50, v: 0.5 },  // rightward saccade: 0.10 -> 0.50
+    { t: 60, h: 0.50, v: 0.5 },
+    { t: 80, h: 0.50, v: 0.5 },
+    { t: 100, h: 0.10, v: 0.6 }, // leftward sweep of 0.40 -> line return
+    { t: 120, h: 0.10, v: 0.6 },
+    { t: 140, h: 0.10, v: 0.6 },
+  ];
+
+  const metrics = analyzeSaccades(samples, { collectEvents: true });
+
+  assert.ok(metrics.events);
+  assert.equal(metrics.events.length, 2);
+  const [saccade, lineReturn] = metrics.events;
+  assert.equal(saccade.kind, 'saccade');
+  assert.equal(saccade.tStart, 20);
+  assert.equal(saccade.tEnd, 60);
+  assert.ok(saccade.amplitude > 0);
+  assert.equal(lineReturn.kind, 'line-return');
+  assert.equal(lineReturn.tStart, 80);
+  assert.equal(lineReturn.tEnd, 120);
+  assert.ok(lineReturn.amplitude <= -0.35);
+});
