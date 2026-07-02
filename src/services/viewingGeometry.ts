@@ -63,6 +63,26 @@ export function estimateDistanceCm(
   return clampViewingDistanceCm(raw);
 }
 
+// Fractional distance drift beyond which the calibration model is operating outside
+// the regime it was trained in (iris ratios and pose features change scale with
+// distance, and the ridge mapping is only valid near the anchor distance).
+export const DISTANCE_DRIFT_TOLERANCE = 0.15;
+
+// Whether the live distance estimate is still close enough to the calibration-anchor
+// distance for the calibrated gaze mapping to be trusted. Unusable inputs (missing or
+// non-positive) return true — "cannot tell" must not invalidate the signal, mirroring
+// how the blink gate treats a missing blink score.
+export function distanceWithinAnchorTolerance(
+  currentCm: number | null | undefined,
+  anchorCm: number | null | undefined,
+  tolerance: number = DISTANCE_DRIFT_TOLERANCE,
+): boolean {
+  if (currentCm == null || anchorCm == null) return true;
+  if (!Number.isFinite(currentCm) || !Number.isFinite(anchorCm)) return true;
+  if (currentCm <= 0 || anchorCm <= 0) return true;
+  return Math.abs(currentCm - anchorCm) / anchorCm <= tolerance;
+}
+
 // CSS px subtended by 1° of visual angle at a given distance. Length on screen for 1°
 // is 2·d·tan(0.5°) cm; multiply by px/cm to get CSS px.
 export function cssPxPerDeg(distanceCm: number, pxPerCm: number = CSS_PX_PER_CM): number {

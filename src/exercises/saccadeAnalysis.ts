@@ -12,9 +12,32 @@ import { GazeSample, SaccadeMetrics } from '@/types';
 const VELOCITY_THRESHOLD = 0.0025; // ratio units / ms
 // Ignore tiny saccades that are likely tracking noise.
 const MIN_SACCADE_AMPLITUDE = 0.04; // ratio units
+// Leftward saccades at least this large are line-return sweeps (the eye jumping back
+// to start the next line), not re-reading regressions. Counting them as regressions
+// would inflate the clinical regression ratio by ~1 per line read. Aligned with
+// LINE_RETURN_DH in visualSignal.ts; recalibrate with real PACK 2 capture data.
+const LINE_RETURN_MIN_AMPLITUDE = 0.35; // ratio units
+// A gap between consecutive samples longer than this means tracking dropped out
+// (face lost, tab hidden); any fixation interval containing such a gap is discarded
+// instead of inflating the mean fixation duration.
+const MAX_FIXATION_GAP_MS = 200;
 
 export interface AnalyzeSaccadesOptions {
   signalSource?: SaccadeMetrics['signalSource'];
+}
+
+// 3-sample median filter over the horizontal channel. MediaPipe occasionally emits
+// single-frame landmark spikes that would otherwise register as a pair of fake
+// saccades; a real saccade spans several samples at 30-60Hz, so the median passes it
+// through while removing isolated outliers. Endpoints are left unchanged.
+function medianFilter3(values: number[]): number[] {
+  if (values.length < 3) return values.slice();
+  const out = values.slice();
+  for (let i = 1; i < values.length - 1; i++) {
+    const a = values[i - 1], b = values[i], c = values[i + 1];
+    out[i] = Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
+  }
+  return out;
 }
 
 export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesOptions = {}): SaccadeMetrics {
@@ -28,54 +51,67 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
       sampleRateHz: sampleRateHz(valid),
       saccadeCount: 0,
       regressionCount: 0,
+      lineReturnCount: 0,
       meanSaccadeAmplitude: 0,
       meanFixationMs: 0,
     };
   }
 
   valid.sort((a, b) => a.t - b.t);
+  const h = medianFilter3(valid.map(s => s.h));
 
   let inSaccade = false;
   let saccadeStartH = 0;
   let lastSaccadeEndT = valid[0].t;
+  // True when the interval since lastSaccadeEndT contains a tracking gap.
+  let gapInFixation = false;
 
   const amplitudes: number[] = [];
   const fixationDurations: number[] = [];
   let regressionCount = 0;
+  let lineReturnCount = 0;
+
+  // Close a saccade with the given signed amplitude, routing it to the right bucket.
+  // Line-return sweeps are counted separately and kept OUT of the reading-saccade
+  // amplitudes and regression count.
+  const closeSaccade = (amplitude: number) => {
+    if (Math.abs(amplitude) < MIN_SACCADE_AMPLITUDE) return;
+    if (amplitude < 0 && Math.abs(amplitude) >= LINE_RETURN_MIN_AMPLITUDE) {
+      lineReturnCount++;
+      return;
+    }
+    amplitudes.push(Math.abs(amplitude));
+    // Reading is left-to-right (increasing h): a leftward saccade is a regression.
+    if (amplitude < 0) regressionCount++;
+  };
 
   for (let i = 1; i < valid.length; i++) {
     const prev = valid[i - 1];
     const cur = valid[i];
     const dt = cur.t - prev.t;
     if (dt <= 0) continue;
-    const velocity = Math.abs(cur.h - prev.h) / dt;
+    if (dt > MAX_FIXATION_GAP_MS) gapInFixation = true;
+    const velocity = Math.abs(h[i] - h[i - 1]) / dt;
 
     if (!inSaccade && velocity > VELOCITY_THRESHOLD) {
-      // Saccade begins: close the preceding fixation.
+      // Saccade begins: close the preceding fixation, unless tracking dropped out
+      // somewhere inside it.
       inSaccade = true;
-      saccadeStartH = prev.h;
-      fixationDurations.push(prev.t - lastSaccadeEndT);
+      saccadeStartH = h[i - 1];
+      const fixation = prev.t - lastSaccadeEndT;
+      if (!gapInFixation && fixation > 0) fixationDurations.push(fixation);
     } else if (inSaccade && velocity <= VELOCITY_THRESHOLD) {
       // Saccade ends.
       inSaccade = false;
-      const amplitude = cur.h - saccadeStartH;
-      if (Math.abs(amplitude) >= MIN_SACCADE_AMPLITUDE) {
-        amplitudes.push(Math.abs(amplitude));
-        // Reading is left-to-right (increasing h): a leftward saccade is a regression.
-        if (amplitude < 0) regressionCount++;
-      }
+      closeSaccade(h[i] - saccadeStartH);
       lastSaccadeEndT = cur.t;
+      gapInFixation = false;
     }
   }
 
   // If we ended while still in a saccade, close it using the last sample.
   if (inSaccade) {
-    const last = valid[valid.length - 1];
-    const amplitude = last.h - saccadeStartH;
-    if (Math.abs(amplitude) >= MIN_SACCADE_AMPLITUDE) {
-      amplitudes.push(Math.abs(amplitude));
-      if (amplitude < 0) regressionCount++;
-    }
+    closeSaccade(h[h.length - 1] - saccadeStartH);
   }
 
   const mean = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
@@ -87,8 +123,9 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
     sampleRateHz: sampleRateHz(valid),
     saccadeCount: amplitudes.length,
     regressionCount,
+    lineReturnCount,
     meanSaccadeAmplitude: mean(amplitudes),
-    meanFixationMs: mean(fixationDurations.filter(d => d > 0)),
+    meanFixationMs: mean(fixationDurations),
   };
 }
 

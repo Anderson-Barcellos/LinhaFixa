@@ -40,10 +40,14 @@ export function summarizeReadingDynamics(metrics: SaccadeMetrics, coverage: numb
       ? 'com algumas regressões'
       : 'com poucas regressões';
 
+  const lineReturnNote = metrics.lineReturnCount
+    ? ` (${metrics.lineReturnCount} ${metrics.lineReturnCount === 1 ? 'retorno de linha' : 'retornos de linha'})`
+    : '';
+
   return {
     signalLabel,
     positionLabel: 'Posição textual aproximada',
-    primaryInsight: `${metrics.saccadeCount} sacadas, ${metrics.regressionCount} regressões e fixação média de ${fixation} ms, ${regressionTone}.`,
+    primaryInsight: `${metrics.saccadeCount} sacadas, ${metrics.regressionCount} regressões e fixação média de ${fixation} ms, ${regressionTone}${lineReturnNote}.`,
     confidenceNote: `${signalQuality.label}: ${signalQuality.detail} A leitura prioriza movimento relativo e ritmo temporal, não palavra exata.`,
     signalQuality,
   };

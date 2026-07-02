@@ -8,6 +8,7 @@ import {
 } from '@/services/faceTracking';
 import {
   interpupillaryPx, estimateDistanceCm, getDistanceAnchor, readingFontCssPx, readingFontAngleDeg,
+  cssPxPerDeg, distanceWithinAnchorTolerance,
 } from '@/services/viewingGeometry';
 import { isCalibrated, predictNorm, getAccuracyDeg, getCalibrationSignature } from '@/services/gazeCalibration';
 import { attachStream, getActiveCameraStream, getFrontCameraStream, stopCameraStream } from '@/services/cameraStream';
@@ -141,6 +142,10 @@ export function EyeTrackingTestScreen() {
   const fontAngleRef = useRef(readingFontAngleDeg(profile?.fontSizePreference || 'normal'));
   const profileDistanceRef = useRef(profile?.viewingDistanceCm ?? 40);
   const distanceRef = useRef(profile?.viewingDistanceCm ?? 40);
+  // Font size locked at capture start. Letting the distance-adaptive font change
+  // mid-capture would re-wrap the text and silently change what the h/v samples
+  // mean; the stimulus geometry must be frozen for the whole measurement window.
+  const frozenFontPxRef = useRef<number | null>(null);
 
   // Capture state.
   const capturingRef = useRef(false);
@@ -152,6 +157,14 @@ export function EyeTrackingTestScreen() {
   const captureRawSamplesRef = useRef(0);
   const posturalSamplesRef = useRef<PosturalSample[]>([]);
   const captureShakeRef = useRef(false);
+  // Per-frame IPD-based distance estimates gathered during the capture; their median
+  // becomes the capture's geometric provenance (distanceEstimatedCm).
+  const captureDistanceSamplesRef = useRef<number[]>([]);
+  // The frame loop closure is created once when the camera starts; reading conditions
+  // through a ref keeps the auto-finish path (timer inside the loop) from persisting a
+  // stale condition tag when the user changed lighting/posture after starting.
+  const conditionsRef = useRef(conditions);
+  useEffect(() => { conditionsRef.current = conditions; }, [conditions]);
 
   useEffect(() => { textRef.current = text; layoutRef.current = null; }, [text]);
 
@@ -226,6 +239,7 @@ export function EyeTrackingTestScreen() {
   const stopCamera = () => {
     runningRef.current = false;
     capturingRef.current = false;
+    frozenFontPxRef.current = null;
     setCapturing(false);
     frameLoopRef.current?.stop();
     frameLoopRef.current = null;
@@ -323,10 +337,16 @@ export function EyeTrackingTestScreen() {
 
       // Distance from IPD (detect already ran above) → font sized by visual angle so the
       // apparent text size is stable as the user leans in/out and across devices.
+      const anchor = getDistanceAnchor();
       const ipdPx = interpupillaryPx(getLastLandmarks(), video.videoWidth || 1280, video.videoHeight || 720);
-      const dEst = estimateDistanceCm(ipdPx, getDistanceAnchor(), profileDistanceRef.current);
+      const dEst = estimateDistanceCm(ipdPx, anchor, profileDistanceRef.current);
       distanceRef.current = distanceRef.current * 0.85 + dEst * 0.15; // EMA smoothing
-      const fontPx = Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
+      // Calibrated gaze is only trusted while the user stays near the distance the
+      // model was calibrated at; outside the tolerance the mapping is extrapolating.
+      const distanceOk = distanceWithinAnchorTolerance(distanceRef.current, anchor?.distanceCm ?? null);
+      const fontPx = capturingRef.current && frozenFontPxRef.current != null
+        ? frozenFontPxRef.current
+        : Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
 
       // FPS over the last second.
       const ft = frameTimesRef.current;
@@ -397,7 +417,7 @@ export function EyeTrackingTestScreen() {
             rectFromElement(canvas),
             { width: viewportWidth, height: viewportHeight }
           );
-          if (signatureStatus.matches && localPoint.inBounds) {
+          if (signatureStatus.matches && localPoint.inBounds && distanceOk) {
             dot = { x: localPoint.x, y: localPoint.y };
             dotCalibrated = true;
           }
@@ -437,6 +457,9 @@ export function EyeTrackingTestScreen() {
         if (faceFound) captureFaceRef.current += 1;
         if (pose) posturalSamplesRef.current.push({ yaw: pose.yaw, pitch: pose.pitch, roll: pose.roll });
         if (getMotionQuality().status === 'shaking') captureShakeRef.current = true;
+        // Only real IPD-based estimates enter the provenance median; the profile
+        // fallback would fake a measurement that never happened.
+        if (ipdPx != null && anchor) captureDistanceSamplesRef.current.push(dEst);
         if (!blinking && dotCalibrated && dot) {
           captureSamplesRef.current.push({ t: tMs, h: dot.x / cssW, v: dot.y / cssH });
           captureCalibratedSamplesRef.current += 1;
@@ -470,6 +493,8 @@ export function EyeTrackingTestScreen() {
 
   const startCapture = () => {
     if (readingTextState !== 'ready') return;
+    // Freeze the stimulus geometry for the whole measurement window.
+    frozenFontPxRef.current = Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
     capturingRef.current = true;
     captureStartRef.current = performance.now();
     captureSamplesRef.current = [];
@@ -479,6 +504,7 @@ export function EyeTrackingTestScreen() {
     captureRawSamplesRef.current = 0;
     posturalSamplesRef.current = [];
     captureShakeRef.current = false;
+    captureDistanceSamplesRef.current = [];
     setCaptureResult(null);
     setCaptureRemaining(CAPTURE_MS);
     setCapturing(true);
@@ -487,6 +513,7 @@ export function EyeTrackingTestScreen() {
   const finishCapture = () => {
     if (!capturingRef.current) return;
     capturingRef.current = false;
+    frozenFontPxRef.current = null;
     setCapturing(false);
     const durationMs = performance.now() - captureStartRef.current;
     const signalSource = captureCalibratedSamplesRef.current > 0
@@ -513,10 +540,16 @@ export function EyeTrackingTestScreen() {
 
     // Persist the tagged capture so PACK 1 thresholds can be calibrated on real data.
     const samples = captureSamplesRef.current.slice();
+    const conditionsAtFinish = conditionsRef.current;
+    // Geometric provenance: median of the live distance estimates (robust to blinks
+    // and brief tracking losses) and the px/deg it implies, so normalized amplitudes
+    // stay convertible to degrees offline.
+    const distSamples = captureDistanceSamplesRef.current.slice().sort((a, b) => a - b);
+    const distanceEstimatedCm = distSamples.length ? distSamples[Math.floor(distSamples.length / 2)] : undefined;
     const capture: ValidationCapture = {
       id: Date.now().toString(),
       timestamp: Date.now(),
-      conditions,
+      conditions: conditionsAtFinish,
       coverage,
       calibrated: signalSource === 'calibrated-mediapipe',
       metrics,
@@ -525,6 +558,10 @@ export function EyeTrackingTestScreen() {
       environment,
       sampleCount: samples.length,
       samples,
+      distanceEstimatedCm,
+      pxPerDegAtCapture: cssPxPerDeg(distanceEstimatedCm ?? conditionsAtFinish.distanceCm),
+      canvasWidthPx: canvasRef.current?.clientWidth,
+      orientation: currentOrientation(),
     };
     saveValidationCapture(capture)
       .then(() => setCaptures(prev => [capture, ...prev]))
@@ -924,6 +961,7 @@ export function EyeTrackingTestScreen() {
                   <Metric label="Fonte" value={captureResult.metrics.signalSource === 'calibrated-mediapipe' ? 'Calibrada' : captureResult.metrics.signalSource === 'raw-mediapipe' ? 'Bruta' : 'N/D'} big />
                   <Metric label="Sacadas" value={String(captureResult.metrics.saccadeCount)} big />
                   <Metric label="Regressões" value={String(captureResult.metrics.regressionCount)} big />
+                  <Metric label="Retornos de linha" value={captureResult.metrics.lineReturnCount != null ? String(captureResult.metrics.lineReturnCount) : 'N/D'} big />
                   <Metric label="Amplitude média" value={captureResult.metrics.meanSaccadeAmplitude.toFixed(3)} big />
                   <Metric label="Fixação média" value={`${captureResult.metrics.meanFixationMs.toFixed(0)} ms`} big />
                 </div>
@@ -1054,10 +1092,11 @@ export function EyeTrackingTestScreen() {
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
-                    <div className="grid grid-cols-3 sm:grid-cols-7 gap-2 text-center">
+                    <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 text-center">
                       <CapStat label="Cobertura" value={`${c.coverage.toFixed(0)}%`} />
                       <CapStat label="Taxa" value={c.metrics.sampleRateHz ? `${c.metrics.sampleRateHz} Hz` : 'N/D'} />
                       <CapStat label="Sacadas" value={String(c.metrics.saccadeCount)} />
+                      <CapStat label="Retornos" value={c.metrics.lineReturnCount != null ? String(c.metrics.lineReturnCount) : 'N/D'} />
                       <CapStat label="Cervical" value={`${c.postural.cervicalStability}%`} />
                       <CapStat label="Delta pos." value={c.postural.motionDeltaDeg != null ? `${c.postural.motionDeltaDeg.toFixed(1)}°` : 'N/D'} />
                       <CapStat label="H range" value={c.axis.hRange.toFixed(2)} />
