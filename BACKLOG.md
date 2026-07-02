@@ -1,3 +1,17 @@
+### 2026-07-02 08:56 - Dot azul com vertical travado (display-only)
+
+Context:
+Anders observou que a bolinha ambar (sinal bruto) parece "presa" no eixo horizontal e acompanha bem o olhar, enquanto a azul calibrada flutua verticalmente sobre o texto e atrapalha a leitura durante o proprio teste. Levantamento confirmou: o canal vertical bruto e quase morto por anatomia (iris entre palpebras que acompanham o olhar), e a analise clinica (`analyzeSaccades`) ja consome apenas `s.h` — o vertical da azul era ruido cosmetico no display.
+
+Details:
+Em `EyeTrackingTestScreen`, o dot azul calibrado agora renderiza com `renderY = gaze.v * cssH` (mesmo canal vertical bruto do dot ambar), ficando visualmente estavel na vertical. Mudanca exclusivamente de renderizacao: `captureSamplesRef` (dados de analise) e `visualSignalSamplesRef` (traçado + `summarizeFunctionalVisualSignal`, que usa `v` nas metricas ao vivo) seguem recebendo a predicao 2D verdadeira. `ExerciseCanvas.latestGazePoint` nao foi tocado (e dado consumido pelos exercicios).
+
+Notes:
+Validado com `npx tsc --noEmit`, suite completa `node --import tsx --test $(rg --files -g '*.test.ts' src)` (79/79), `APP_BASE_PATH=/gaze npm run build`, restart de `linhafixa.service`, `/gaze/` publico 200 com bundle `index-AfZvCa7I.js`. Pendente: teste manual do Anders no iPhone confirmando que o dot azul parou de flutuar sobre o texto. NAO commitado.
+
+Follow-up 2026-07-02 (trilho fixo):
+Anders confirmou o horizontal-only mas refinou a intencao: a azul deve andar num trilho fixo — a linha de repouso da laranja — sem a deriva lenta nem os mergulhos de piscada do `v` bruto instantaneo. Trocado `renderY` para EMA lento (~1.5s, alpha 0.02) do `gaze.v` bruto (`rawVEmaRef`), aplicado so ao dot calibrado; ambar segue com `v` instantaneo e os caminhos de dados continuam com a predicao 2D verdadeira. Gate verde: tsc, 79/79, build `/gaze`, restart `linhafixa.service`, bundle `index-BSQVxmyd.js` no ar. NAO commitado.
+
 ### 2026-07-01 21:21 - Geometria e consistencia desktop
 
 Context:

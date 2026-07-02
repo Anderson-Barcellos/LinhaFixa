@@ -135,6 +135,7 @@ export function EyeTrackingTestScreen() {
   const frameTimesRef = useRef<number[]>([]);
   const coverageWindowRef = useRef<{ t: number; face: boolean }[]>([]);
   const visualSignalSamplesRef = useRef<VisualSignalSample[]>([]);
+  const rawVEmaRef = useRef<number | null>(null);
   const textRef = useRef(text);
   const layoutRef = useRef<{ w: number; h: number; font: number; lines: string[] } | null>(null);
   // Reading font is sized by visual angle: target angle (from preference) + the live
@@ -438,14 +439,27 @@ export function EyeTrackingTestScreen() {
         }
         drawFunctionalSignalTrace(ctx, visualSignalSamplesRef.current, cssW, cssH, isDark, dotCalibrated);
       }
+      // Slow EMA (~1.5s) of the raw vertical ratio: the amber dot's resting line,
+      // stripped of frame jitter and blink dips.
+      if (gaze) {
+        rawVEmaRef.current = rawVEmaRef.current == null
+          ? gaze.v
+          : rawVEmaRef.current * 0.98 + gaze.v * 0.02;
+      }
       if (dot && !blinking) {
         const color = dotCalibrated ? '#2563eb' : '#f59e0b';
+        // Display-only: the calibrated dot rides that resting line as a fixed rail —
+        // same track as the amber dot, calibrated horizontal gain. Capture and
+        // live-signal samples keep the true 2D prediction.
+        const renderY = dotCalibrated && rawVEmaRef.current != null
+          ? rawVEmaRef.current * cssH
+          : dot.y;
         ctx.beginPath();
-        ctx.arc(dot.x, dot.y, 9, 0, Math.PI * 2);
+        ctx.arc(dot.x, renderY, 9, 0, Math.PI * 2);
         ctx.fillStyle = color + '33';
         ctx.fill();
         ctx.beginPath();
-        ctx.arc(dot.x, dot.y, 4, 0, Math.PI * 2);
+        ctx.arc(dot.x, renderY, 4, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
       }
