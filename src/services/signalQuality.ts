@@ -21,7 +21,7 @@ const MIN_VALID_SAMPLES = 5;
 const COMPARABLE_SAMPLES = 300;
 const COMPARABLE_COVERAGE = 80;
 const LOW_COVERAGE = 50;
-const COMPARABLE_SAMPLE_RATE_HZ = 45;
+const COMPARABLE_SAMPLE_RATE_HZ = 24;
 
 export function summarizeSaccadeSignalQuality(
   metrics: SaccadeMetrics,

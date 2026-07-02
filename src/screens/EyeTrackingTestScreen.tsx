@@ -4,7 +4,7 @@ import { ArrowLeft, Camera, Eye, Play, Square, RotateCcw, Crosshair, Trash2, Dat
 import { useAppStore } from '@/store/useAppStore';
 import {
   initFaceTracking, isFaceTrackingActive, estimateHeadPose, estimateGaze, extractGazeFeatures, getLastLandmarks,
-  getBlinkScore, isBlinking,
+  getBlinkScore, shouldDropGazeForBlink,
 } from '@/services/faceTracking';
 import {
   interpupillaryPx, estimateDistanceCm, getDistanceAnchor, readingFontCssPx, readingFontAngleDeg,
@@ -28,7 +28,7 @@ import {
   type PosturalStabilityMetrics,
   type PosturalSample,
 } from '@/exercises/posturalStability';
-import { GazeSample, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
+import { CaptureEnvironment, GazeSample, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
 import { saveValidationCapture, getValidationCaptures, deleteValidationCapture } from '@/services/storage';
 import { summarizeAxisSignal, serializeValidationExport } from '@/services/validationCapture';
 import { summarizeSaccadeSignalQuality } from '@/services/signalQuality';
@@ -38,13 +38,16 @@ import {
   type VisualSignalSample,
 } from '@/services/visualSignal';
 import { getReadingContent } from '@/services/contentGenerator';
+import { diagnosticsLayoutMode } from '@/services/deviceProfile';
+import { computeDiagnosticsSurface } from '@/services/captureGeometry';
+import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import {
   calibrationSignatureMatches,
   currentOrientation,
-  fullViewportRect,
   rectFromElement,
   viewportNormToRectPoint,
+  type SurfaceRect,
 } from '@/services/ocularSignalContract';
 
 // Standalone diagnostics screen: shows reading text, runs the front camera and
@@ -53,6 +56,9 @@ import {
 // before relying on the signal inside the exercises.
 
 const CAPTURE_MS = 20000; // measured reading capture window
+const DIAGNOSTICS_PANEL_WIDTH_PX = 288;
+const DIAGNOSTICS_HEADER_HEIGHT_PX = 73;
+const DIAGNOSTICS_DESKTOP_GUTTER_PX = 48; // horizontal padding + gap around canvas/panel
 
 // Phones expose the front camera off-axis in landscape, but we prefer landscape anyway:
 // reading saccades are horizontal, so a wide line gives the webcam a bigger, cleaner
@@ -91,6 +97,12 @@ export function EyeTrackingTestScreen() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const [cameraState, setCameraState] = useState<CameraState>('idle');
+  const [viewportWidth, setViewportWidth] = useState(
+    typeof window !== 'undefined' ? window.innerWidth : 1024
+  );
+  const [viewportHeight, setViewportHeight] = useState(
+    typeof window !== 'undefined' ? window.innerHeight : 768
+  );
   const [isLandscape, setIsLandscape] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= window.innerHeight : true
   );
@@ -100,7 +112,7 @@ export function EyeTrackingTestScreen() {
   const [readingTextState, setReadingTextState] = useState<ReadingTextState>('loading');
   const [capturing, setCapturing] = useState(false);
   const [captureRemaining, setCaptureRemaining] = useState(0);
-  const [captureResult, setCaptureResult] = useState<{ metrics: SaccadeMetrics; coverage: number; postural: PosturalStabilityMetrics } | null>(null);
+  const [captureResult, setCaptureResult] = useState<{ metrics: SaccadeMetrics; coverage: number; postural: PosturalStabilityMetrics; environment?: CaptureEnvironment } | null>(null);
   const [motionQuality, setMotionQuality] = useState<MotionQuality>(() => getMotionQuality());
   const [liveSignal, setLiveSignal] = useState<FunctionalVisualSignalSummary>(EMPTY_VISUAL_SIGNAL);
   const [conditions, setConditions] = useState<ValidationConditions>({
@@ -111,6 +123,7 @@ export function EyeTrackingTestScreen() {
   const [captures, setCaptures] = useState<ValidationCapture[]>([]);
   const [showCaptures, setShowCaptures] = useState(false);
   const [exportNote, setExportNote] = useState<string | null>(null);
+  const [calibrationSurfaceRect, setCalibrationSurfaceRect] = useState<SurfaceRect | null>(null);
 
   // Loop-local mutable state (refs so the rAF loop is created once).
   const streamRef = useRef<MediaStream | null>(null);
@@ -141,6 +154,22 @@ export function EyeTrackingTestScreen() {
   const captureShakeRef = useRef(false);
 
   useEffect(() => { textRef.current = text; layoutRef.current = null; }, [text]);
+
+  useEffect(() => {
+    const updateViewport = () => {
+      setViewportWidth(window.innerWidth);
+      setViewportHeight(window.innerHeight);
+      setIsLandscape(window.innerWidth >= window.innerHeight);
+      layoutRef.current = null;
+    };
+    updateViewport();
+    window.addEventListener('resize', updateViewport);
+    window.addEventListener('orientationchange', updateViewport);
+    return () => {
+      window.removeEventListener('resize', updateViewport);
+      window.removeEventListener('orientationchange', updateViewport);
+    };
+  }, []);
 
   // Load reading content once.
   useEffect(() => {
@@ -175,20 +204,6 @@ export function EyeTrackingTestScreen() {
     fontAngleRef.current = readingFontAngleDeg(profile?.fontSizePreference || 'normal');
     layoutRef.current = null;
   }, [profile?.fontSizePreference]);
-
-  // Track orientation (Safari iOS cannot lock it, so we detect and guide instead).
-  useEffect(() => {
-    const onResize = () => {
-      setIsLandscape(window.innerWidth >= window.innerHeight);
-      layoutRef.current = null; // re-wrap text on size change
-    };
-    window.addEventListener('resize', onResize);
-    window.addEventListener('orientationchange', onResize);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      window.removeEventListener('orientationchange', onResize);
-    };
-  }, []);
 
   // Wrap the paragraph into lines that fit the canvas width.
   const computeLines = (ctx: CanvasRenderingContext2D, content: string, maxWidth: number): string[] => {
@@ -302,9 +317,9 @@ export function EyeTrackingTestScreen() {
       const gaze = estimateGaze(video, ts, ts);
       const faceFound = pose !== null;
       const eyesFound = gaze !== null;
-      // Drop gaze samples captured mid-blink: the iris drops/disappears and would inject
-      // spurious motion into the reading metrics. Coverage still counts the face below.
-      const blinking = isBlinking(getBlinkScore());
+      // Blink score is measured, but hard rejection is disabled by default until tuned
+      // on real iPhone/Safari data. Coverage still counts the face either way.
+      const blinking = shouldDropGazeForBlink(getBlinkScore());
 
       // Distance from IPD (detect already ran above) → font sized by visual angle so the
       // apparent text size is stable as the user leans in/out and across devices.
@@ -367,14 +382,14 @@ export function EyeTrackingTestScreen() {
           const viewportHeight = window.innerHeight;
           const trackSettings = ((video.srcObject as MediaStream | null)?.getVideoTracks()[0])?.getSettings?.();
           const signature = getCalibrationSignature();
-          const signatureStatus = calibrationSignatureMatches(signature, {
-            viewportWidth,
-            viewportHeight,
-            orientation: currentOrientation(viewportWidth, viewportHeight),
-            devicePixelRatio: window.devicePixelRatio || 1,
-            surfaceRect: fullViewportRect(viewportWidth, viewportHeight),
-            videoWidth: video.videoWidth || trackSettings?.width,
-            videoHeight: video.videoHeight || trackSettings?.height,
+              const signatureStatus = calibrationSignatureMatches(signature, {
+                viewportWidth,
+                viewportHeight,
+                orientation: currentOrientation(viewportWidth, viewportHeight),
+                devicePixelRatio: window.devicePixelRatio || 1,
+                surfaceRect: rectFromElement(canvas),
+                videoWidth: video.videoWidth || trackSettings?.width,
+                videoHeight: video.videoHeight || trackSettings?.height,
             trackFrameRate: trackSettings?.frameRate,
           });
           const localPoint = viewportNormToRectPoint(
@@ -480,6 +495,7 @@ export function EyeTrackingTestScreen() {
         ? 'raw-mediapipe'
         : 'unavailable';
     const metrics = analyzeSaccades(captureSamplesRef.current, { signalSource });
+    const environment = buildCaptureEnvironment(metrics);
     const coverage = captureTotalRef.current
       ? (captureFaceRef.current / captureTotalRef.current) * 100
       : 0;
@@ -493,7 +509,7 @@ export function EyeTrackingTestScreen() {
       durationMs,
       faceCoverage: coverage,
     });
-    setCaptureResult({ metrics, coverage, postural });
+    setCaptureResult({ metrics, coverage, postural, environment });
 
     // Persist the tagged capture so PACK 1 thresholds can be calibrated on real data.
     const samples = captureSamplesRef.current.slice();
@@ -506,6 +522,7 @@ export function EyeTrackingTestScreen() {
       metrics,
       postural,
       axis: summarizeAxisSignal(samples),
+      environment,
       sampleCount: samples.length,
       samples,
     };
@@ -545,6 +562,59 @@ export function EyeTrackingTestScreen() {
     }
   };
 
+  const diagnosticsLayout = diagnosticsLayoutMode({ viewportWidth, hasTouch: IS_MOBILE });
+  const isDesktopDiagnosticsLayout = diagnosticsLayout === 'desktop';
+  const diagnosticsSurface = computeDiagnosticsSurface({
+    viewportWidth,
+    viewportHeight,
+    layoutMode: diagnosticsLayout,
+    panelWidth: DIAGNOSTICS_PANEL_WIDTH_PX + DIAGNOSTICS_DESKTOP_GUTTER_PX,
+    headerHeight: DIAGNOSTICS_HEADER_HEIGHT_PX,
+  });
+  const readingSurfaceStyle: React.CSSProperties | undefined = isDesktopDiagnosticsLayout
+    ? {
+      width: `${diagnosticsSurface.width}px`,
+      height: `${diagnosticsSurface.height}px`,
+      maxWidth: '100%',
+      maxHeight: '100%',
+    }
+    : undefined;
+
+  const beginCalibration = () => {
+    setCalibrationSurfaceRect(canvasRef.current ? rectFromElement(canvasRef.current) : null);
+    setShowCalibration(true);
+  };
+
+  const buildCaptureEnvironment = (metrics: SaccadeMetrics): CaptureEnvironment | undefined => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return undefined;
+    const telemetry = readCameraPipelineTelemetry(video, {
+      detectionFps: liveRef.current.fps,
+      ocularSampleRateHz: metrics.sampleRateHz,
+    });
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    return {
+      layoutMode: diagnosticsLayout,
+      viewport: {
+        width,
+        height,
+        devicePixelRatio: window.devicePixelRatio || 1,
+        orientation: currentOrientation(width, height),
+      },
+      surfaceRect: rectFromElement(canvas),
+      video: telemetry.video,
+      camera: {
+        width: telemetry.negotiated.width,
+        height: telemetry.negotiated.height,
+        frameRate: telemetry.negotiated.frameRate,
+        maxFrameRate: telemetry.capabilities?.frameRate?.max,
+      },
+      rates: telemetry.measured,
+    };
+  };
+
   if (showCalibration) {
     return (
       <CalibrationOverlay
@@ -552,6 +622,7 @@ export function EyeTrackingTestScreen() {
         onComplete={() => setShowCalibration(false)}
         onSkip={() => setShowCalibration(false)}
         keepCameraOnClose
+        surfaceRect={calibrationSurfaceRect ?? undefined}
       />
     );
   }
@@ -598,10 +669,27 @@ export function EyeTrackingTestScreen() {
         <span className="ml-auto text-xs text-slate-400 hidden sm:block">taxa medida por dispositivo · foco em sacadas e regressões</span>
       </header>
 
-      {/* Main area: reading canvas + diagnostics panel (stacked on phones, side-by-side on desktop) */}
-      <div className="flex-1 flex flex-col md:flex-row min-h-0">
-        <div className="relative flex-1 min-w-0 min-h-0">
+      {/* Main area: iPhone/touch stays stacked; only wide non-touch desktop gets a side panel. */}
+      <div className={`flex-1 flex min-h-0 ${isDesktopDiagnosticsLayout ? 'flex-row justify-center gap-4 p-4' : 'flex-col'}`}>
+        <div
+          className={`relative min-w-0 min-h-0 ${isDesktopDiagnosticsLayout ? 'self-center shrink-0 overflow-hidden rounded-2xl border-2 border-indigo-300/70 bg-slate-900/30 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_24px_70px_rgba(15,23,42,0.45)]' : 'flex-1'}`}
+          style={readingSurfaceStyle}
+          aria-label="Área fixa de leitura, captura e calibração"
+        >
           <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+          <div className="pointer-events-none absolute inset-0 z-10 rounded-2xl ring-1 ring-indigo-400/40">
+            <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-slate-950/80 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-indigo-100 shadow-lg backdrop-blur">
+              <span className="h-2 w-2 rounded-full bg-indigo-300" />
+              Área fixa de leitura e calibração
+            </div>
+            <div className="absolute right-4 top-4 rounded-full bg-slate-950/70 px-3 py-1.5 text-[11px] font-semibold text-slate-200 backdrop-blur">
+              {Math.round(diagnosticsSurface.width)}×{Math.round(diagnosticsSurface.height)} px
+            </div>
+            <div className="absolute left-3 top-3 h-10 w-10 rounded-tl-2xl border-l-2 border-t-2 border-indigo-300/90" />
+            <div className="absolute right-3 top-3 h-10 w-10 rounded-tr-2xl border-r-2 border-t-2 border-indigo-300/90" />
+            <div className="absolute bottom-3 left-3 h-10 w-10 rounded-bl-2xl border-b-2 border-l-2 border-indigo-300/90" />
+            <div className="absolute bottom-3 right-3 h-10 w-10 rounded-br-2xl border-b-2 border-r-2 border-indigo-300/90" />
+          </div>
           {cameraState !== 'running' && (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-slate-900/80">
               {cameraState === 'idle' && (
@@ -639,7 +727,7 @@ export function EyeTrackingTestScreen() {
         </div>
 
         {/* Diagnostics panel */}
-        <aside className="w-full md:w-72 shrink-0 bg-slate-800/80 border-t md:border-t-0 md:border-l border-white/10 p-4 overflow-y-auto flex flex-col gap-4 max-h-[42vh] md:max-h-none">
+        <aside className={`${isDesktopDiagnosticsLayout ? 'w-72 border-l max-h-none' : 'w-full border-t max-h-[42vh]'} shrink-0 bg-slate-800/80 border-white/10 p-4 overflow-y-auto flex flex-col gap-4`}>
           {/* Mirrored camera preview */}
           <div className="rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center">
             {cameraState === 'running'
@@ -749,7 +837,7 @@ export function EyeTrackingTestScreen() {
 
           <div className="mt-auto flex flex-col gap-2">
             <button
-              onClick={() => setShowCalibration(true)}
+              onClick={beginCalibration}
               disabled={cameraState !== 'running' && cameraState !== 'idle'}
               className="flex items-center justify-center gap-2 px-4 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold"
             >
@@ -839,6 +927,24 @@ export function EyeTrackingTestScreen() {
                   <Metric label="Amplitude média" value={captureResult.metrics.meanSaccadeAmplitude.toFixed(3)} big />
                   <Metric label="Fixação média" value={`${captureResult.metrics.meanFixationMs.toFixed(0)} ms`} big />
                 </div>
+                {captureResult.environment && (
+                  <div className="rounded-2xl bg-slate-900/70 border border-white/10 p-4 mt-4">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide">Ambiente e câmera</h3>
+                      <span className="px-2.5 py-1 rounded-full bg-slate-700 text-slate-200 text-xs font-bold">
+                        {captureResult.environment.layoutMode === 'desktop' ? 'Layout desktop' : 'Layout compacto'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Metric label="Câmera negociada" value={cameraNegotiatedLabel(captureResult.environment)} />
+                      <Metric label="Vídeo recebido" value={videoSizeLabel(captureResult.environment)} />
+                      <Metric label="FPS câmera" value={rateLabel(captureResult.environment.camera.frameRate)} />
+                      <Metric label="FPS detecção" value={rateLabel(captureResult.environment.rates.detectionFps)} />
+                      <Metric label="Taxa ocular" value={rateLabel(captureResult.environment.rates.ocularSampleRateHz)} />
+                      <Metric label="Superfície" value={surfaceSizeLabel(captureResult.environment)} />
+                    </div>
+                  </div>
+                )}
               </>
             ) : (
               <p className="text-amber-300 font-medium">
@@ -939,6 +1045,11 @@ export function EyeTrackingTestScreen() {
                       <span className="px-2 py-0.5 rounded-full bg-slate-700 text-slate-200 text-[11px] font-bold">{quality.sourceLabel}</span>
                       <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${c.postural.status === 'stable' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}`}>{c.postural.label}</span>
                       <span className="px-2 py-0.5 rounded-full bg-slate-700 text-slate-200 text-[11px] font-bold">{c.postural.baselineApplied ? 'Baseline' : 'Sem baseline'}</span>
+                      {c.environment && (
+                        <span className="px-2 py-0.5 rounded-full bg-slate-700 text-slate-200 text-[11px] font-bold">
+                          {c.environment.layoutMode === 'desktop' ? 'Desktop' : 'Compacto'} · câmera {rateLabel(c.environment.camera.frameRate)}
+                        </span>
+                      )}
                       <button onClick={() => removeCapture(c.id)} className="ml-auto p-1.5 text-slate-500 hover:text-rose-400">
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -976,6 +1087,25 @@ export function EyeTrackingTestScreen() {
 
 function fmt(v: number | null): string {
   return v != null ? v.toFixed(2) : '—';
+}
+
+function rateLabel(value: number | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value)} Hz` : 'N/D';
+}
+
+function cameraNegotiatedLabel(environment: CaptureEnvironment): string {
+  const { width, height } = environment.camera;
+  return width && height ? `${Math.round(width)}×${Math.round(height)}` : 'N/D';
+}
+
+function videoSizeLabel(environment: CaptureEnvironment): string {
+  const { width, height } = environment.video;
+  return width && height ? `${Math.round(width)}×${Math.round(height)}` : 'N/D';
+}
+
+function surfaceSizeLabel(environment: CaptureEnvironment): string {
+  const { width, height } = environment.surfaceRect;
+  return width && height ? `${Math.round(width)}×${Math.round(height)}` : 'N/D';
 }
 
 function drawFunctionalSignalTrace(

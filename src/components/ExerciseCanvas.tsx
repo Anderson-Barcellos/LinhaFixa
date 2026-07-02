@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { registry } from '@/exercises/implementations';
 import { ExerciseParameters } from '@/types';
-import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive, getBlinkScore, isBlinking } from '@/services/faceTracking';
+import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive, getBlinkScore, shouldDropGazeForBlink } from '@/services/faceTracking';
 import { getCalibrationSignature, isCalibrated, predictNorm } from '@/services/gazeCalibration';
 import { attachStream, getFrontCameraStream } from '@/services/cameraStream';
 import { getMotionQuality } from '@/services/motionSensor';
@@ -176,9 +176,10 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
              setHeadStable(isStable);
              if (isStable) framesStable++;
            }
-           // Drop gaze captured mid-blink (iris drops/disappears → spurious motion). The
-           // postural/coverage counting above still uses the detected head pose.
-           const blinking = isBlinking(getBlinkScore());
+           // Blink score is measured, but hard rejection is disabled by default until
+           // tuned on real iPhone/Safari data. Postural/coverage counting above still
+           // uses the detected head pose either way.
+           const blinking = shouldDropGazeForBlink(getBlinkScore());
            // Capture gaze for exercises that consume it (e.g. assisted reading).
            exContext.latestGaze = blinking ? null : estimateGaze(videoRef.current, detectTs, exContext.timeMs);
            // Project the calibrated point of gaze into canvas pixels, if calibrated.
