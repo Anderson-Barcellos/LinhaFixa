@@ -31,7 +31,7 @@ import {
 } from '@/exercises/posturalStability';
 import { CaptureEnvironment, GazeSample, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
 import { saveValidationCapture, getValidationCaptures, deleteValidationCapture } from '@/services/storage';
-import { summarizeAxisSignal, serializeValidationExport } from '@/services/validationCapture';
+import { summarizeAxisSignal, serializeValidationExport, selectCaptureSeries } from '@/services/validationCapture';
 import { summarizeSaccadeSignalQuality } from '@/services/signalQuality';
 import {
   summarizeFunctionalVisualSignal,
@@ -113,7 +113,7 @@ export function EyeTrackingTestScreen() {
   const [readingTextState, setReadingTextState] = useState<ReadingTextState>('loading');
   const [capturing, setCapturing] = useState(false);
   const [captureRemaining, setCaptureRemaining] = useState(0);
-  const [captureResult, setCaptureResult] = useState<{ metrics: SaccadeMetrics; coverage: number; postural: PosturalStabilityMetrics; environment?: CaptureEnvironment } | null>(null);
+  const [captureResult, setCaptureResult] = useState<{ metrics: SaccadeMetrics; coverage: number; postural: PosturalStabilityMetrics; environment?: CaptureEnvironment; calibratedSampleCount?: number; rawSampleCount?: number } | null>(null);
   const [motionQuality, setMotionQuality] = useState<MotionQuality>(() => getMotionQuality());
   const [liveSignal, setLiveSignal] = useState<FunctionalVisualSignalSummary>(EMPTY_VISUAL_SIGNAL);
   const [conditions, setConditions] = useState<ValidationConditions>({
@@ -151,11 +151,14 @@ export function EyeTrackingTestScreen() {
   // Capture state.
   const capturingRef = useRef(false);
   const captureStartRef = useRef(0);
-  const captureSamplesRef = useRef<GazeSample[]>([]);
+  // Calibrated predictions and raw iris ratios use different units/gains, so each
+  // source accumulates in its own buffer; finishCapture analyzes the majority buffer
+  // only (selectCaptureSeries) — mixing them creates unit jumps the detector reads
+  // as fake saccades.
+  const captureCalSamplesRef = useRef<GazeSample[]>([]);
+  const captureRawSamplesRef = useRef<GazeSample[]>([]);
   const captureFaceRef = useRef(0);
   const captureTotalRef = useRef(0);
-  const captureCalibratedSamplesRef = useRef(0);
-  const captureRawSamplesRef = useRef(0);
   const posturalSamplesRef = useRef<PosturalSample[]>([]);
   const captureShakeRef = useRef(false);
   // Per-frame IPD-based distance estimates gathered during the capture; their median
@@ -475,11 +478,9 @@ export function EyeTrackingTestScreen() {
         // fallback would fake a measurement that never happened.
         if (ipdPx != null && anchor) captureDistanceSamplesRef.current.push(dEst);
         if (!blinking && dotCalibrated && dot) {
-          captureSamplesRef.current.push({ t: tMs, h: dot.x / cssW, v: dot.y / cssH });
-          captureCalibratedSamplesRef.current += 1;
+          captureCalSamplesRef.current.push({ t: tMs, h: dot.x / cssW, v: dot.y / cssH });
         } else if (!blinking && gaze) {
-          captureSamplesRef.current.push({ t: tMs, h: gaze.h, v: gaze.v });
-          captureRawSamplesRef.current += 1;
+          captureRawSamplesRef.current.push({ t: tMs, h: gaze.h, v: gaze.v });
         }
         const remaining = Math.max(0, CAPTURE_MS - tMs);
         if (remaining <= 0) {
@@ -511,11 +512,10 @@ export function EyeTrackingTestScreen() {
     frozenFontPxRef.current = Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
     capturingRef.current = true;
     captureStartRef.current = performance.now();
-    captureSamplesRef.current = [];
+    captureCalSamplesRef.current = [];
+    captureRawSamplesRef.current = [];
     captureFaceRef.current = 0;
     captureTotalRef.current = 0;
-    captureCalibratedSamplesRef.current = 0;
-    captureRawSamplesRef.current = 0;
     posturalSamplesRef.current = [];
     captureShakeRef.current = false;
     captureDistanceSamplesRef.current = [];
@@ -530,12 +530,8 @@ export function EyeTrackingTestScreen() {
     frozenFontPxRef.current = null;
     setCapturing(false);
     const durationMs = performance.now() - captureStartRef.current;
-    const signalSource = captureCalibratedSamplesRef.current > 0
-      ? 'calibrated-mediapipe'
-      : captureRawSamplesRef.current > 0
-        ? 'raw-mediapipe'
-        : 'unavailable';
-    const metrics = analyzeSaccades(captureSamplesRef.current, { signalSource });
+    const series = selectCaptureSeries(captureCalSamplesRef.current, captureRawSamplesRef.current);
+    const metrics = analyzeSaccades(series.samples, { signalSource: series.signalSource });
     const environment = buildCaptureEnvironment(metrics);
     const coverage = captureTotalRef.current
       ? (captureFaceRef.current / captureTotalRef.current) * 100
@@ -550,10 +546,14 @@ export function EyeTrackingTestScreen() {
       durationMs,
       faceCoverage: coverage,
     });
-    setCaptureResult({ metrics, coverage, postural, environment });
+    setCaptureResult({
+      metrics, coverage, postural, environment,
+      calibratedSampleCount: series.calibratedSampleCount,
+      rawSampleCount: series.rawSampleCount,
+    });
 
     // Persist the tagged capture so PACK 1 thresholds can be calibrated on real data.
-    const samples = captureSamplesRef.current.slice();
+    const samples = series.samples.slice();
     const conditionsAtFinish = conditionsRef.current;
     // Geometric provenance: median of the live distance estimates (robust to blinks
     // and brief tracking losses) and the px/deg it implies, so normalized amplitudes
@@ -565,7 +565,7 @@ export function EyeTrackingTestScreen() {
       timestamp: Date.now(),
       conditions: conditionsAtFinish,
       coverage,
-      calibrated: signalSource === 'calibrated-mediapipe',
+      calibrated: series.signalSource === 'calibrated-mediapipe',
       metrics,
       postural,
       axis: summarizeAxisSignal(samples),
@@ -576,6 +576,8 @@ export function EyeTrackingTestScreen() {
       pxPerDegAtCapture: cssPxPerDeg(distanceEstimatedCm ?? conditionsAtFinish.distanceCm),
       canvasWidthPx: canvasRef.current?.clientWidth,
       orientation: currentOrientation(),
+      calibratedSampleCount: series.calibratedSampleCount,
+      rawSampleCount: series.rawSampleCount,
     };
     saveValidationCapture(capture)
       .then(() => setCaptures(prev => [capture, ...prev]))
@@ -972,7 +974,7 @@ export function EyeTrackingTestScreen() {
                   <Metric label="Cobertura (rosto)" value={`${captureResult.coverage.toFixed(0)}%`} big />
                   <Metric label="Amostras válidas" value={String(captureResult.metrics.samplesValid)} big />
                   <Metric label="Taxa efetiva" value={captureResult.metrics.sampleRateHz ? `${captureResult.metrics.sampleRateHz} Hz` : 'N/D'} big />
-                  <Metric label="Fonte" value={captureResult.metrics.signalSource === 'calibrated-mediapipe' ? 'Calibrada' : captureResult.metrics.signalSource === 'raw-mediapipe' ? 'Bruta' : 'N/D'} big />
+                  <Metric label="Fonte" value={sourceConsistencyLabel(captureResult.metrics.signalSource, captureResult.calibratedSampleCount, captureResult.rawSampleCount)} big />
                   <Metric label="Sacadas" value={String(captureResult.metrics.saccadeCount)} big />
                   <Metric label="Regressões" value={String(captureResult.metrics.regressionCount)} big />
                   <Metric label="Retornos de linha" value={captureResult.metrics.lineReturnCount != null ? String(captureResult.metrics.lineReturnCount) : 'N/D'} big />
@@ -1094,7 +1096,11 @@ export function EyeTrackingTestScreen() {
                       <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${quality.tone === 'emerald' ? 'bg-emerald-500/15 text-emerald-300' : quality.tone === 'rose' ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>
                         {quality.label}
                       </span>
-                      <span className="px-2 py-0.5 rounded-full bg-slate-700 text-slate-200 text-[11px] font-bold">{quality.sourceLabel}</span>
+                      <span className="px-2 py-0.5 rounded-full bg-slate-700 text-slate-200 text-[11px] font-bold">
+                        {c.calibratedSampleCount != null || c.rawSampleCount != null
+                          ? sourceConsistencyLabel(c.metrics.signalSource, c.calibratedSampleCount, c.rawSampleCount)
+                          : quality.sourceLabel}
+                      </span>
                       <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${c.postural.status === 'stable' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}`}>{c.postural.label}</span>
                       <span className="px-2 py-0.5 rounded-full bg-slate-700 text-slate-200 text-[11px] font-bold">{c.postural.baselineApplied ? 'Baseline' : 'Sem baseline'}</span>
                       {c.environment && (
@@ -1144,6 +1150,20 @@ function fmt(v: number | null): string {
 
 function rateLabel(value: number | undefined): string {
   return typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value)} Hz` : 'N/D';
+}
+
+// "Calibrada (92%)": which single-source series fed the analysis and how consistently
+// that source held during the capture (the minority buffer was dropped, not mixed in).
+function sourceConsistencyLabel(
+  source: SaccadeMetrics['signalSource'],
+  calibratedCount: number | undefined,
+  rawCount: number | undefined,
+): string {
+  const base = source === 'calibrated-mediapipe' ? 'Calibrada' : source === 'raw-mediapipe' ? 'Bruta' : 'N/D';
+  const total = (calibratedCount ?? 0) + (rawCount ?? 0);
+  if (base === 'N/D' || total === 0) return base;
+  const chosen = source === 'calibrated-mediapipe' ? (calibratedCount ?? 0) : (rawCount ?? 0);
+  return `${base} (${Math.round((chosen / total) * 100)}%)`;
 }
 
 function cameraNegotiatedLabel(environment: CaptureEnvironment): string {

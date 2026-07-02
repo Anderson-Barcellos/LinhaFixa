@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { summarizeAxisSignal, serializeValidationExport } from './validationCapture';
+import { summarizeAxisSignal, serializeValidationExport, selectCaptureSeries } from './validationCapture';
 import { GazeSample, ValidationCapture } from '@/types';
 
 test('summarizeAxisSignal returns zeroed dispersion for an empty signal', () => {
@@ -21,6 +21,56 @@ test('summarizeAxisSignal separates a wide horizontal sweep from a steady vertic
   assert.equal(axis.vRange, 0);
   assert.ok(axis.hStd > axis.vStd, 'horizontal dispersion should exceed vertical');
   assert.equal(axis.vStd, 0);
+});
+
+const sample = (t: number, h = 0.5, v = 0.5): GazeSample => ({ t, h, v });
+
+test('selectCaptureSeries returns unavailable when both buffers are empty', () => {
+  const sel = selectCaptureSeries([], []);
+  assert.equal(sel.signalSource, 'unavailable');
+  assert.deepEqual(sel.samples, []);
+  assert.equal(sel.calibratedSampleCount, 0);
+  assert.equal(sel.rawSampleCount, 0);
+});
+
+test('selectCaptureSeries uses the calibrated buffer when it is the only source', () => {
+  const cal = [sample(0), sample(16)];
+  const sel = selectCaptureSeries(cal, []);
+  assert.equal(sel.signalSource, 'calibrated-mediapipe');
+  assert.equal(sel.samples, cal);
+});
+
+test('selectCaptureSeries uses the raw buffer when it is the only source', () => {
+  const raw = [sample(0), sample(16)];
+  const sel = selectCaptureSeries([], raw);
+  assert.equal(sel.signalSource, 'raw-mediapipe');
+  assert.equal(sel.samples, raw);
+});
+
+test('selectCaptureSeries never mixes: a few calibrated samples do not label a mostly-raw capture', () => {
+  const cal = [sample(0), sample(16), sample(32)];
+  const raw = Array.from({ length: 900 }, (_, i) => sample(48 + i * 16));
+  const sel = selectCaptureSeries(cal, raw);
+  assert.equal(sel.signalSource, 'raw-mediapipe');
+  assert.equal(sel.samples, raw);
+  assert.equal(sel.calibratedSampleCount, 3);
+  assert.equal(sel.rawSampleCount, 900);
+});
+
+test('selectCaptureSeries picks the calibrated majority and reports the dropped raw count', () => {
+  const cal = Array.from({ length: 800 }, (_, i) => sample(i * 16));
+  const raw = Array.from({ length: 100 }, (_, i) => sample(12800 + i * 16));
+  const sel = selectCaptureSeries(cal, raw);
+  assert.equal(sel.signalSource, 'calibrated-mediapipe');
+  assert.equal(sel.samples, cal);
+  assert.equal(sel.rawSampleCount, 100);
+});
+
+test('selectCaptureSeries breaks a tie in favor of the calibrated buffer', () => {
+  const cal = [sample(0)];
+  const raw = [sample(16)];
+  const sel = selectCaptureSeries(cal, raw);
+  assert.equal(sel.signalSource, 'calibrated-mediapipe');
 });
 
 test('serializeValidationExport produces a self-describing, parseable payload', () => {

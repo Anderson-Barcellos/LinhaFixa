@@ -35,7 +35,7 @@ Decisao (2026-07-02): Anders assinou a ordem proposta = (1) mergear/deployar PAC
 
 Contexto: 4 bugs confirmados da auditoria cega Codex que corrompem a validade dos dados capturados; o #1 contamina a Fase 0 se nao morrer antes.
 Bundles:
-- [ ] BUNDLE VC1 — #1: captura sem mistura de coordenadas. Separar amostras calibradas/brutas (ou descartar brutas quando ha calibracao), `signalSource` honesto (`mixed` ou ratio), sem saltos de unidade na serie do detector. Muda semantica de captura — plano compacto antes de codar.
+- [x] BUNDLE VC1 — #1: captura sem mistura de coordenadas. FEITO 2026-07-02 (pronto p/ revisao): dois buffers separados (calibrado/bruto) no loop de captura; `selectCaptureSeries()` pura em `validationCapture.ts` escolhe o buffer MAJORITARIO como serie de analise (empate favorece calibrado; ambos vazios = `unavailable`) — nunca concatena, fim dos saltos de unidade e do rotulo "calibrada" com 1 amostra. `ValidationCapture` ganhou `calibratedSampleCount`/`rawSampleCount` (proveniencia persistida); relatorio e drawer mostram "Calibrada (92%)" via `sourceConsistencyLabel`. Sem tocar `saccadeAnalysis.ts` nem o tipo `signalSource` (sem valor `mixed` — serie nunca mistura). Gate: 93/93 testes (6 novos), tsc, lint, build `/gaze`; deployado bundle `index-CnswrC_y.js`. NAO commitado — aguarda revisao do Anders.
 - [ ] BUNDLE VC2 — #9: latencia sem sentinela. `meanLatencyMs: null` quando nao ha latencia valida + `validLatencyCount`; UI mostra "sem latencia valida" em vez de 0ms.
 - [ ] BUNDLE VC3 — #6: extrapolacao visivel. `predictNorm` expoe flag de clamp/extrapolacao; consumidor rejeita ou marca amostra extrapolada.
 - [ ] BUNDLE VC4 — #10: visibilitychange/pagehide invalida ou marca captura em background (Safari).
@@ -218,30 +218,21 @@ Auditoria de robustez (frente paralela) FEITA com 5 agentes em paralelo — sint
 
 ## KICKOFF
 
-Kickoff executado em 2026-07-02 como PACK V (validade do sinal ocular) — ver entradas de 2026-07-02. Rotacionado para o plano abaixo.
+Rotacionado em 2026-07-02 (fim de tarde) apos deploy do BUNDLE VC1. Proxima sessao: VALIDACAO DO ANDERS → commit VC1 → BUNDLE VC2.
 
-Proxima sessao: COLETA DE DADO REAL + PACK GT (ground truth interno). Ordem pensada: primeiro o dado, depois o codigo que o consome.
+Estado publicado: bundle `index-CnswrC_y.js` no ar (93/93 testes, tsc/lint/build ok). Working tree SUJA de proposito: VC1 implementado mas NAO commitado (aguarda revisao). Dois itens aguardando o iPhone do Anders:
+- PACK GT (ja commitado/mergeado em `c613990`): rodar exercicio de sacadas e conferir bloco "Validacao interna do detector" no resumo — detectionRate/latencia reais viram baseline do instrumento. Fecha o PACK GT.
+- BUNDLE VC1 (nao commitado): fazer captura de 20s no diagnostico e conferir "Fonte" com % de consistencia (ex.: "Calibrada (92%)") no relatorio e no drawer. Aprovou → commitar VC1 (regra da maioria em `selectCaptureSeries`; ver entrada VC1 no PACK acima).
 
-Estado publicado: main `4560d11`, bundle `index-N1c8cMnW.js` no ar (79/79 testes, tsc/lint/build ok). PACK V + bundle Codex desktop mergeados; blink gate unificado atras de `BLINK_REJECT_GATE_ENABLED=false` em `faceTracking.ts`.
+Depois da validacao, sequencia do PACK Validade de Captura (active, ver bundles acima):
+- BUNDLE VC2 — #9: `meanLatencyMs: null` quando sem latencia valida + `validLatencyCount`; UI mostra "sem latencia valida" em vez de 0ms impossivel. Arquivo: `src/exercises/oculomotorAnalysis.ts:18,140-146`.
+- BUNDLE VC3 — #6: `predictNorm` expoe flag de clamp/extrapolacao (`gazeCalibration.ts:177-178`); consumidor rejeita ou marca amostra extrapolada.
+- BUNDLE VC4 — #10: listener `visibilitychange`/`pagehide` invalida ou marca captura em background (Safari corrompe silenciosamente).
+- Fase 0 (Anders, capturas etiquetadas manuais) SO depois do PACK fechar — senao os dados nascem contaminados.
 
-FASE 0 — Validacao manual (Anders, sem codigo):
-- iPhone Pro Max: calibrar piscando de proposito (acuracia nao deve degradar; numero pode subir por ser honesto agora), captura 20s aproximando/afastando (texto NAO re-flui; drift >15% derruba bolinha pra ambar), conferir "Retornos de linha" e campos geometricos (`distanceEstimatedCm`, `pxPerDegAtCapture`) no export JSON.
-- Desktop: conferir moldura "Area fixa de leitura e calibracao" x "Area calibrada do teste" e bloco "Ambiente e camera" (pendencia do bundle Codex).
-- Acumular 10-15 capturas etiquetadas variando luz/postura/distancia — e o dado que calibra todo o resto.
-
-FASE 1 — PACK GT: ground truth interno via sacadas guiadas (frente de codigo):
-FEITA em 2026-07-02 (aprovacao do Anders no plano compacto; implementada em GT1+GT2+GT3, ver entrada "PACK GT" de 2026-07-02). Mergeada no main em `c613990` e deployada (bundle `index-CyptVrBX.js`); revisao manual do Anders no iPhone pendente.
-
-FASE 2 — Tuning com o dado real da Fase 0 (so depois dela):
-- Decidir `BLINK_REJECT_GATE_ENABLED` (distribuicao real do eyeBlink baseline iPhone/desktop).
-- Recalibrar `LINE_RETURN_MIN_AMPLITUDE` (0.35) e tolerancia de drift (15%) com as capturas.
-- Normalizacao yaw/pitch postural pelo `scale` do rosto (decisao 2026-07-02: aguardava dado real).
-
-FASE 3 — PACKs represados: PACK 3 visual (hierarquia do relatorio) e PACK 4 exportacao clinica (destravado: pxPerDegAtCapture permete converter amplitudes pra graus).
-
-Ler primeiro na retomada: esta secao; entradas de 2026-07-02; `src/exercises/saccadeAnalysis.ts` (novo contrato lineReturnCount), `src/exercises/oculomotorAnalysis.ts` (base do PACK GT), `src/services/viewingGeometry.ts` (drift/proveniencia), `src/services/faceTracking.ts` (kill-switch blink).
-Validacao padrao: `node --import tsx --test $(rg --files -g '*.test.ts' src)`, `npx tsc --noEmit`, `npm run lint`, `APP_BASE_PATH=/gaze npm run build`; deploy = restart `linhafixa.service` + curl local/publico.
-Nota de higiene: worktree `quirky-euclid-a4dd5e` ja mergeado no main (`c613990`) — pode remover (`git worktree remove`) numa sessao fora dele.
+Ler primeiro na retomada: esta secao; entrada "BUNDLE VC1" no PACK acima; `src/services/validationCapture.ts` (selectCaptureSeries); pro VC2, `src/exercises/oculomotorAnalysis.ts` (mean([]) → 0).
+Validacao padrao: `node --import tsx --test $(rg --files -g '*.test.ts' src)`, `npx tsc --noEmit`, `npm run lint`, `APP_BASE_PATH=/gaze npm run build`; deploy = restart `linhafixa.service` + curl local/publico. NAO usar vitest (41 fails falsos).
+Higiene pendente: worktree `quirky-euclid-a4dd5e` ja mergeado — remover numa sessao fora dele; `.gitignore` sujo (adiciona `.claude/`) — decidir com Anders se entra no commit do VC1 ou reverte.
 
 ### 2026-07-02 - PACK GT: ground truth interno do detector I-VT (pronto p/ revisao)
 

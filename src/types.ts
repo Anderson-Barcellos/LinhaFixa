@@ -210,6 +210,11 @@ export interface ValidationCapture {
   pxPerDegAtCapture?: number;    // CSS px per degree of visual angle at capture time
   canvasWidthPx?: number;        // reading-canvas width in CSS px at capture time
   orientation?: 'portrait' | 'landscape';
+  // Source provenance (absent on legacy captures). The analysis series is single-source
+  // (the majority buffer); these counts expose how consistent that source really was
+  // during the capture instead of a binary calibrated/raw label.
+  calibratedSampleCount?: number; // frames that produced a calibrated sample
+  rawSampleCount?: number;        // frames that fell back to the raw iris ratio
 }
 
 export interface TreatmentPlanResponse {

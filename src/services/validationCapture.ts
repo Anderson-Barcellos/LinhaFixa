@@ -1,4 +1,31 @@
-import { AxisSignalSummary, GazeSample, ValidationCapture } from '@/types';
+import { AxisSignalSummary, GazeSample, SaccadeMetrics, ValidationCapture } from '@/types';
+
+export interface CaptureSeriesSelection {
+  samples: GazeSample[];
+  signalSource: NonNullable<SaccadeMetrics['signalSource']>;
+  calibratedSampleCount: number;
+  rawSampleCount: number;
+}
+
+// Calibrated predictions (canvas-projected positions) and raw iris ratios live in
+// different units with different gains, so they must never share one analysis series:
+// a mid-capture source flip would create a unit jump the I-VT detector reads as a fake
+// saccade. The analysis series is the majority buffer — it reflects what the capture
+// mostly was — and the minority buffer is discarded from analysis but kept as counts
+// for honest provenance. Ties favor the calibrated buffer.
+export function selectCaptureSeries(
+  calibrated: GazeSample[],
+  raw: GazeSample[],
+): CaptureSeriesSelection {
+  const counts = { calibratedSampleCount: calibrated.length, rawSampleCount: raw.length };
+  if (calibrated.length === 0 && raw.length === 0) {
+    return { samples: [], signalSource: 'unavailable', ...counts };
+  }
+  if (calibrated.length >= raw.length) {
+    return { samples: calibrated, signalSource: 'calibrated-mediapipe', ...counts };
+  }
+  return { samples: raw, signalSource: 'raw-mediapipe', ...counts };
+}
 
 // Per-axis dispersion of a captured gaze signal. Horizontal is the reading axis;
 // comparing hStd/hRange against vStd/vRange across conditions shows when the vertical
