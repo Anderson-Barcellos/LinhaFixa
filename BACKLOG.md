@@ -10,7 +10,26 @@ Notes:
 Validado com `npx tsc --noEmit`, suite completa `node --import tsx --test $(rg --files -g '*.test.ts' src)` (79/79), `APP_BASE_PATH=/gaze npm run build`, restart de `linhafixa.service`, `/gaze/` publico 200 com bundle `index-AfZvCa7I.js`. Pendente: teste manual do Anders no iPhone confirmando que o dot azul parou de flutuar sobre o texto. NAO commitado.
 
 Follow-up 2026-07-02 (trilho fixo):
-Anders confirmou o horizontal-only mas refinou a intencao: a azul deve andar num trilho fixo — a linha de repouso da laranja — sem a deriva lenta nem os mergulhos de piscada do `v` bruto instantaneo. Trocado `renderY` para EMA lento (~1.5s, alpha 0.02) do `gaze.v` bruto (`rawVEmaRef`), aplicado so ao dot calibrado; ambar segue com `v` instantaneo e os caminhos de dados continuam com a predicao 2D verdadeira. Gate verde: tsc, 79/79, build `/gaze`, restart `linhafixa.service`, bundle `index-BSQVxmyd.js` no ar. NAO commitado.
+Anders confirmou o horizontal-only mas refinou a intencao: a azul deve andar num trilho fixo — a linha de repouso da laranja — sem a deriva lenta nem os mergulhos de piscada do `v` bruto instantaneo. Trocado `renderY` para EMA lento (~1.5s, alpha 0.02) do `gaze.v` bruto (`rawVEmaRef`), aplicado so ao dot calibrado; ambar segue com `v` instantaneo e os caminhos de dados continuam com a predicao 2D verdadeira. Gate verde: tsc, 79/79, build `/gaze`, restart `linhafixa.service`, bundle `index-BSQVxmyd.js` no ar. Anders aprovou no iPhone; commitado em `be9b4ba`.
+
+### 2026-07-02 — Auditoria cega Codex (triagem Claude)
+
+Context:
+Anders pediu auditoria cega ao Codex (15 achados) e Claude cruzou com o historico de decisoes. Relatorio cru em `/root/.codex/attachments/8fdf3a5d-1d49-4c15-a892-677b760e7835/pasted-text.txt`.
+
+Bugs novos confirmados no codigo (candidatos a PACK Validade de Captura):
+- #1 `EyeTrackingTestScreen.tsx:523-527` — captura mistura coordenadas calibradas e razoes brutas na mesma serie; 1 amostra calibrada rotula tudo `calibrated-mediapipe`; transicoes criam sacadas falsas. O MAIS GRAVE: contamina dados da Fase 0 se nao corrigir antes.
+- #9 `oculomotorAnalysis.ts:18,140-146` — `mean([])` retorna 0: latencia media 0ms (impossivel) quando nenhuma latencia valida.
+- #6 `gazeCalibration.ts:177-178` — `predictNorm` clampa [0,1]; extrapolacao vira ponto de borda "valido".
+- #10 — sem listener de `visibilitychange/pagehide`; Safari em background corrompe captura silenciosamente.
+
+Redescobertas de decisoes conscientes (nao acao imediata): #2 blink gate off (aguarda dados Fase 0), #7 tolerancia permissiva (comentada no codigo), #12 renderY (pedido do Anders), #4 px/cm CSS (pixels-not-angles, Glass) — mitigacao barata single-user: perfil com px/cm real do iPhone do Anders. #3 unidades/subamostragem: conhecido em espirito; ideia de tiers (evento grosso a 30Hz vs metrica temporal) e boa articulacao.
+
+Convergencia: #14 do Codex e literalmente o PACK GT ja implementado no worktree — validacao independente do design.
+
+Frentes novas de alto nivel (sem bundles ainda): repetibilidade teste-reteste com dados ja salvos (#13); painel "sanidade do instrumento" — dt p50/p95, % blink, IQR IPD, % extrapolacao (#15); refinamentos menores #5/#8/#11.
+
+Decisao ABERTA do Anders: ordem proposta por Claude = (1) revisar/mergear PACK GT, (2) PACK Validade de Captura (#1,#9,#6,#10), (3) so entao Fase 0 no iPhone. Aguardando escolha.
 
 ### 2026-07-01 21:21 - Geometria e consistencia desktop
 
