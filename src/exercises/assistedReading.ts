@@ -1,17 +1,8 @@
 import { ExerciseImplementation } from './engine';
 import { getReadingContent } from '../services/contentGenerator';
 import { analyzeSaccades } from './saccadeAnalysis';
+import { readingFontAngleDeg } from '../services/viewingGeometry';
 import { GazeSample } from '@/types';
-
-// Maps the user's font preference to a reading font size in px.
-function readingFontPx(pref: string): number {
-  switch (pref) {
-    case 'small': return 26;
-    case 'large': return 40;
-    case 'huge': return 48;
-    default: return 32; // 'normal'
-  }
-}
 
 // roundRect isn't available in every browser; fall back to a plain rect.
 function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -50,7 +41,10 @@ function buildReadingResult(context: Parameters<ExerciseImplementation['update']
 export const assistedReadingExercise: ExerciseImplementation = {
   id: 'assistedReading',
   init: (context) => {
-    const fontPx = readingFontPx(context.fontSizePreference);
+    // Size the reading font by visual angle (same geometry as the diagnostics
+    // screen), so saccade amplitudes are comparable between the exercise and the
+    // diagnostic capture instead of depending on device-specific fixed px.
+    const fontPx = Math.round(context.degToPx(readingFontAngleDeg(context.fontSizePreference)));
     context.state = {
       text: "Aguarde, gerando texto adaptado...",
       chunks: [],
@@ -98,7 +92,7 @@ export const assistedReadingExercise: ExerciseImplementation = {
          chunks.push(rawWords.slice(i, i+2).join(' '));
       }
 
-      const margin = 100;
+      const margin = Math.max(24, width * 0.06);
       let currX = margin;
       let currY = height / 3;
       const lineHeight = (s.fontPx * 1.875) * (context.parameters.lineSpacingMultiplier || 1.5);

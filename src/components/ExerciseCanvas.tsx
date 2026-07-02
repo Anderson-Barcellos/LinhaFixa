@@ -1,8 +1,9 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { registry } from '@/exercises/implementations';
 import { ExerciseParameters } from '@/types';
-import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive, getBlinkScore, isBlinking } from '@/services/faceTracking';
+import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive, getBlinkScore, isBlinking, getLastLandmarks } from '@/services/faceTracking';
 import { getCalibrationSignature, isCalibrated, predictNorm } from '@/services/gazeCalibration';
+import { interpupillaryPx, estimateDistanceCm, getDistanceAnchor, distanceWithinAnchorTolerance } from '@/services/viewingGeometry';
 import { attachStream, getFrontCameraStream } from '@/services/cameraStream';
 import { getMotionQuality } from '@/services/motionSensor';
 import { getPosturalBaseline, summarizePosturalStability, type PosturalSample } from '@/exercises/posturalStability';
@@ -53,6 +54,10 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
     // high-movement flag. Summarized into extraData.posturalStability on finish.
     const posturalSamples: PosturalSample[] = [];
     let posturalHighMovement = false;
+
+    // Live distance estimate (EMA-smoothed), used to invalidate the calibrated gaze
+    // point when the user drifts away from the distance the model was calibrated at.
+    let emaDistanceCm = viewingDistanceCm;
 
     const setup = async () => {
       // 1. Camera setup if enabled
@@ -176,6 +181,14 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
              setHeadStable(isStable);
              if (isStable) framesStable++;
            }
+           // Distance drift gate: landmarks are fresh from the detect above. Outside
+           // the tolerance vs. the calibration anchor, the calibrated mapping is
+           // extrapolating and the point must not be trusted.
+           const anchor = getDistanceAnchor();
+           const ipdPx = interpupillaryPx(getLastLandmarks(), videoRef.current.videoWidth || 1280, videoRef.current.videoHeight || 720);
+           const dEst = estimateDistanceCm(ipdPx, anchor, viewingDistanceCm);
+           emaDistanceCm = emaDistanceCm * 0.85 + dEst * 0.15;
+           const distanceOk = distanceWithinAnchorTolerance(emaDistanceCm, anchor?.distanceCm ?? null);
            // Drop gaze captured mid-blink (iris drops/disappears → spurious motion). The
            // postural/coverage counting above still uses the detected head pose.
            const blinking = isBlinking(getBlinkScore());
@@ -204,7 +217,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
                  rectFromElement(canvas),
                  { width: viewportWidth, height: viewportHeight }
                );
-               exContext.latestGazePoint = signatureStatus.matches && localPoint.inBounds
+               exContext.latestGazePoint = signatureStatus.matches && localPoint.inBounds && distanceOk
                  ? { x: localPoint.x, y: localPoint.y }
                  : null;
              } else {

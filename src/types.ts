@@ -66,9 +66,10 @@ export interface SaccadeMetrics {
   samplesValid: number;       // number of usable gaze samples
   signalSource?: 'calibrated-mediapipe' | 'raw-mediapipe' | 'unavailable';
   sampleRateHz?: number;
-  saccadeCount: number;
-  regressionCount: number;        // saccades against the reading direction (re-reading)
-  meanSaccadeAmplitude: number;   // mean |Δh| of detected saccades (gaze-ratio units, approx.)
+  saccadeCount: number;           // reading saccades (progressive + regressions), excludes line returns
+  regressionCount: number;        // saccades against the reading direction (re-reading), excludes line returns
+  lineReturnCount?: number;       // large leftward sweeps back to the next line start (absent on legacy captures)
+  meanSaccadeAmplitude: number;   // mean |Δh| of detected reading saccades (gaze-ratio units, approx.)
   meanFixationMs: number;         // mean duration between saccades
 }
 
@@ -157,6 +158,13 @@ export interface ValidationCapture {
   axis: AxisSignalSummary;
   sampleCount: number;
   samples: GazeSample[]; // raw signal kept for offline per-axis analysis
+  // Geometric provenance (absent on legacy captures). These make the normalized h/v
+  // amplitudes convertible to degrees of visual angle offline, so captures can be
+  // compared across devices and sessions.
+  distanceEstimatedCm?: number;  // median IPD-based distance estimate during the capture
+  pxPerDegAtCapture?: number;    // CSS px per degree of visual angle at capture time
+  canvasWidthPx?: number;        // reading-canvas width in CSS px at capture time
+  orientation?: 'portrait' | 'landscape';
 }
 
 export interface TreatmentPlanResponse {

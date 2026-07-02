@@ -6,6 +6,7 @@ import {
   cssPxPerDeg,
   readingFontCssPx,
   readingFontAngleDeg,
+  distanceWithinAnchorTolerance,
   IRIS_LEFT,
   IRIS_RIGHT,
   type DistanceAnchor,
@@ -82,4 +83,26 @@ test('readingFontCssPx reproduces the legacy fixed sizes at the 40 cm reference'
 
 test('readingFontAngleDeg falls back to normal for unknown prefs', () => {
   assert.equal(readingFontAngleDeg('bogus'), readingFontAngleDeg('normal'));
+});
+
+test('distanceWithinAnchorTolerance accepts drift up to 15% and rejects beyond it', () => {
+  assert.equal(distanceWithinAnchorTolerance(40, 40), true);
+  assert.equal(distanceWithinAnchorTolerance(46, 40), true);   // exactly 15%
+  assert.equal(distanceWithinAnchorTolerance(34, 40), true);   // -15%
+  assert.equal(distanceWithinAnchorTolerance(47, 40), false);  // >15% farther
+  assert.equal(distanceWithinAnchorTolerance(33, 40), false);  // >15% closer
+});
+
+test('distanceWithinAnchorTolerance treats unusable inputs as within tolerance', () => {
+  // "Cannot tell" must not invalidate the signal (same policy as the blink gate).
+  assert.equal(distanceWithinAnchorTolerance(null, 40), true);
+  assert.equal(distanceWithinAnchorTolerance(40, null), true);
+  assert.equal(distanceWithinAnchorTolerance(0, 40), true);
+  assert.equal(distanceWithinAnchorTolerance(40, -5), true);
+  assert.equal(distanceWithinAnchorTolerance(NaN, 40), true);
+});
+
+test('distanceWithinAnchorTolerance honours a custom tolerance', () => {
+  assert.equal(distanceWithinAnchorTolerance(50, 40, 0.3), true);
+  assert.equal(distanceWithinAnchorTolerance(60, 40, 0.3), false);
 });

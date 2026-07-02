@@ -46,6 +46,16 @@ function makeContext(overrides: Record<string, unknown> = {}) {
   return { context, getFinished: () => finished };
 }
 
+test('assisted reading sizes the font by visual angle via degToPx, matching the diagnostics screen', () => {
+  const { context } = makeContext({ degToPx: (deg: number) => deg * 50, fontSizePreference: 'normal' });
+  context.state = {};
+
+  assistedReadingExercise.init(context);
+
+  // 'normal' preference = 1.2 degrees of visual angle (viewingGeometry.READING_ANGLE_DEG).
+  assert.equal(context.state.fontPx, 60);
+});
+
 test('assisted reading ignores raw MediaPipe gaze when calculating reading saccades', () => {
   const { context, getFinished } = makeContext();
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLandmarks, estimateHeadPose } from '@/services/faceTracking';
+import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLandmarks, estimateHeadPose, getBlinkScore, isBlinking } from '@/services/faceTracking';
 import {
   resetCalibration, addCalibrationSample, fitCalibration, predictNorm, setAccuracyDeg, setCalibrationSignature,
 } from '@/services/gazeCalibration';
@@ -56,7 +56,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   const pointStartRef = useRef(0);
   const collectedRef = useRef(0);
   const validErrorsRef = useRef<number[]>([]);
-  const validAccumRef = useRef<{ x: number; y: number; n: number }>({ x: 0, y: 0, n: 0 });
+  // Per-point accumulator of PER-SAMPLE prediction errors (deg). Averaging errors —
+  // not predictions — keeps the reported accuracy honest: averaging predictions first
+  // would cancel noise and understate the real per-frame error.
+  const validAccumRef = useRef<{ errSum: number; n: number }>({ errSum: 0, n: 0 });
   // IPD (px) samples gathered across the routine; their median anchors distance estimation.
   const ipdSamplesRef = useRef<number[]>([]);
   const posturalSamplesRef = useRef<PosturalSample[]>([]);
@@ -76,7 +79,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     const startPoint = () => {
       pointStartRef.current = performance.now();
       collectedRef.current = 0;
-      validAccumRef.current = { x: 0, y: 0, n: 0 };
+      validAccumRef.current = { errSum: 0, n: 0 };
     };
 
     const setup = async () => {
@@ -126,7 +129,11 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           if (pose) {
             posturalSamplesRef.current.push({ yaw: pose.yaw, pitch: pose.pitch, roll: pose.roll });
           }
-          if (feat) {
+          // During a blink the iris drops/disappears: both the gaze features and the
+          // iris-based IPD are corrupted, so the frame must not feed the ridge fit,
+          // the validation error, or the distance anchor. Head pose (mesh-wide) stays.
+          const blinking = isBlinking(getBlinkScore());
+          if (feat && !blinking) {
             // detect() just ran inside extractGazeFeatures, so the landmarks are fresh.
             const ipd = interpupillaryPx(getLastLandmarks(), video.videoWidth || 1280, video.videoHeight || 720);
             if (ipd) ipdSamplesRef.current.push(ipd);
@@ -135,8 +142,11 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
             } else {
               const pred = predictNorm(feat);
               if (pred) {
-                validAccumRef.current.x += pred.x;
-                validAccumRef.current.y += pred.y;
+                const errPx = Math.hypot(
+                  (pred.x - target.x) * window.innerWidth,
+                  (pred.y - target.y) * window.innerHeight
+                );
+                validAccumRef.current.errSum += errPx / pxPerDeg;
                 validAccumRef.current.n += 1;
               }
             }
@@ -148,15 +158,9 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           const timedOutWithSignal = collectedRef.current > 0 && collectionElapsed >= MAX_POINT_MS;
 
           if (hasEnoughSamples || timedOutWithSignal) {
-            // Close out validation point: record its mean prediction error.
+            // Close out validation point: record its mean PER-SAMPLE error (deg).
             if (phaseNow === 'validating' && validAccumRef.current.n > 0) {
-              const mx = validAccumRef.current.x / validAccumRef.current.n;
-              const my = validAccumRef.current.y / validAccumRef.current.n;
-              const errPx = Math.hypot(
-                (mx - target.x) * window.innerWidth,
-                (my - target.y) * window.innerHeight
-              );
-              validErrorsRef.current.push(errPx / pxPerDeg);
+              validErrorsRef.current.push(validAccumRef.current.errSum / validAccumRef.current.n);
             }
 
             const nextIdx = idxRef.current + 1;
@@ -236,7 +240,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     idxRef.current = 0;
     pointStartRef.current = performance.now();
     collectedRef.current = 0;
-    validAccumRef.current = { x: 0, y: 0, n: 0 };
+    validAccumRef.current = { errSum: 0, n: 0 };
     setAccuracy(null);
     setMode('calib');
     setIndex(0);
