@@ -175,6 +175,7 @@ export function estimateGaze(videoElement: HTMLVideoElement, timestamp: number, 
 // gaze sample is dropped. Tuned for the MediaPipe eyeBlink* blendshapes, which run
 // ~0 when the eye is open and approach 1 during a full blink.
 export const BLINK_REJECT_THRESHOLD = 0.5;
+export const BLINK_REJECT_GATE_ENABLED = false;
 
 // Max of the left/right eyeBlink blendshapes for the most recent frame, or null when
 // no blendshapes are available. During a blink the iris drops/disappears and would
@@ -190,6 +191,14 @@ export function getBlinkScore(): number | null {
 // (no blendshapes) is treated as "not blinking" — we don't reject when we can't tell.
 export function isBlinking(score: number | null, threshold: number = BLINK_REJECT_THRESHOLD): boolean {
   return score != null && score > threshold;
+}
+
+// Emergency-safe gate for dropping gaze samples because of blink score. We keep the
+// blink measurement available, but the hard rejection is disabled by default until it
+// is tuned on real iPhone/Safari data; otherwise a high eyeBlink baseline can make the
+// live blue dot and reading metrics look dead even though gaze is flowing.
+export function shouldDropGazeForBlink(score: number | null, enabled: boolean = BLINK_REJECT_GATE_ENABLED): boolean {
+  return enabled && isBlinking(score);
 }
 
 // Names of the eyeLook blendshapes used as gaze features, in a fixed order so the

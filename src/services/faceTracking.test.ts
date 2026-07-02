@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isBlinking, BLINK_REJECT_THRESHOLD } from './faceTracking';
+import { isBlinking, shouldDropGazeForBlink, BLINK_REJECT_THRESHOLD } from './faceTracking';
 
 test('isBlinking treats a null score as "cannot tell" and does not reject', () => {
   assert.equal(isBlinking(null), false);
@@ -16,4 +16,10 @@ test('isBlinking rejects only scores strictly above the threshold', () => {
 test('isBlinking honors a custom threshold', () => {
   assert.equal(isBlinking(0.4, 0.3), true);
   assert.equal(isBlinking(0.4, 0.8), false);
+});
+
+test('blink rejection gate is disabled by default for direct gaze fallback', () => {
+  assert.equal(shouldDropGazeForBlink(0.95), false);
+  assert.equal(shouldDropGazeForBlink(0.95, true), true);
+  assert.equal(shouldDropGazeForBlink(null, true), false);
 });

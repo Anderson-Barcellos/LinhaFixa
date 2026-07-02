@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLandmarks, estimateHeadPose, getBlinkScore, isBlinking } from '@/services/faceTracking';
+import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLandmarks, estimateHeadPose, getBlinkScore, shouldDropGazeForBlink } from '@/services/faceTracking';
 import {
   resetCalibration, addCalibrationSample, fitCalibration, predictNorm, setAccuracyDeg, setCalibrationSignature,
 } from '@/services/gazeCalibration';
@@ -13,13 +13,14 @@ import {
   type PosturalSample,
 } from '@/exercises/posturalStability';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
-import { currentOrientation, fullViewportRect } from '@/services/ocularSignalContract';
+import { currentOrientation, fullViewportRect, type SurfaceRect } from '@/services/ocularSignalContract';
 
 interface CalibrationOverlayProps {
   viewingDistanceCm: number;
   onComplete: () => void; // calibrated successfully and user chose to continue
   onSkip: () => void;      // proceed without eye metrics
   keepCameraOnClose?: boolean;
+  surfaceRect?: SurfaceRect;
 }
 
 // Normalized screen positions (0..1) for the calibration grid and validation checks.
@@ -41,7 +42,7 @@ const PX_PER_CM = 37.8;         // CSS reference (~96 dpi); used only for the de
 
 type Phase = 'warmup' | 'calibrating' | 'validating' | 'done' | 'unavailable';
 
-export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keepCameraOnClose = false }: CalibrationOverlayProps) {
+export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keepCameraOnClose = false, surfaceRect }: CalibrationOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [phase, setPhase] = useState<Phase>('warmup');
   const [mode, setMode] = useState<'calib' | 'valid'>('calib');
@@ -120,6 +121,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
       if (video && video.readyState >= 2 && (phaseNow === 'calibrating' || phaseNow === 'validating')) {
         const points = phaseNow === 'calibrating' ? CALIB_POINTS : VALID_POINTS;
         const target = points[idxRef.current];
+        const targetAbs = targetToViewportNorm(target, activeSurfaceRect());
         const elapsed = performance.now() - pointStartRef.current;
 
         if (elapsed >= SETTLE_MS) {
@@ -132,19 +134,24 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           // During a blink the iris drops/disappears: both the gaze features and the
           // iris-based IPD are corrupted, so the frame must not feed the ridge fit,
           // the validation error, or the distance anchor. Head pose (mesh-wide) stays.
-          const blinking = isBlinking(getBlinkScore());
+          // Rejection sits behind the shared BLINK_REJECT_GATE_ENABLED kill-switch
+          // (off until tuned on real data): with a high eyeBlink baseline a hard
+          // gate would collect zero samples and hang the calibration on point 1.
+          const blinking = shouldDropGazeForBlink(getBlinkScore());
           if (feat && !blinking) {
             // detect() just ran inside extractGazeFeatures, so the landmarks are fresh.
             const ipd = interpupillaryPx(getLastLandmarks(), video.videoWidth || 1280, video.videoHeight || 720);
             if (ipd) ipdSamplesRef.current.push(ipd);
             if (phaseNow === 'calibrating') {
-              addCalibrationSample(feat, target);
+              addCalibrationSample(feat, targetAbs);
             } else {
               const pred = predictNorm(feat);
               if (pred) {
+                // pred and targetAbs are both viewport-normalized (the model is
+                // trained on surface targets projected to viewport coords).
                 const errPx = Math.hypot(
-                  (pred.x - target.x) * window.innerWidth,
-                  (pred.y - target.y) * window.innerHeight
+                  (pred.x - targetAbs.x) * window.innerWidth,
+                  (pred.y - targetAbs.y) * window.innerHeight
                 );
                 validAccumRef.current.errSum += errPx / pxPerDeg;
                 validAccumRef.current.n += 1;
@@ -195,12 +202,13 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
               const trackSettings = ((video.srcObject as MediaStream | null)?.getVideoTracks()[0])?.getSettings?.();
               const viewportWidth = window.innerWidth;
               const viewportHeight = window.innerHeight;
+              const surface = activeSurfaceRect();
               setCalibrationSignature({
                 viewportWidth,
                 viewportHeight,
                 orientation: currentOrientation(viewportWidth, viewportHeight),
                 devicePixelRatio: window.devicePixelRatio || 1,
-                surfaceRect: fullViewportRect(viewportWidth, viewportHeight),
+                surfaceRect: surface,
                 videoWidth: video.videoWidth || trackSettings?.width,
                 videoHeight: video.videoHeight || trackSettings?.height,
                 trackFrameRate: trackSettings?.frameRate,
@@ -225,7 +233,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
         stopMotionSensor();
       }
     };
-  }, [keepCameraOnClose, pxPerDeg]);
+  }, [keepCameraOnClose, pxPerDeg, surfaceRect]);
 
   const restart = () => {
     // Re-run the whole flow by remounting the loop via a phase reset.
@@ -250,6 +258,8 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   const points = mode === 'calib' ? CALIB_POINTS : VALID_POINTS;
   const target = points[Math.min(index, points.length - 1)];
   const totalThisMode = points.length;
+  const surface = activeSurfaceRect();
+  const targetPx = targetToViewportPx(target, surface);
 
   return (
     <div
@@ -267,10 +277,27 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
 
       {(phase === 'calibrating' || phase === 'validating') && (
         <>
+          <div
+            className="pointer-events-none absolute rounded-2xl border-2 border-blue-300/80 bg-slate-950/20 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_24px_70px_rgba(15,23,42,0.55)]"
+            style={surfaceRectStyle(surface)}
+            aria-hidden="true"
+          >
+            <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-slate-950/85 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-blue-100 shadow-lg backdrop-blur">
+              <span className="h-2 w-2 rounded-full bg-blue-300" />
+              Área calibrada do teste
+            </div>
+            <div className="absolute right-4 top-4 rounded-full bg-slate-950/75 px-3 py-1.5 text-[11px] font-semibold text-slate-200 backdrop-blur">
+              {Math.round(surface.width)}×{Math.round(surface.height)} px
+            </div>
+            <div className="absolute left-3 top-3 h-10 w-10 rounded-tl-2xl border-l-2 border-t-2 border-blue-200/90" />
+            <div className="absolute right-3 top-3 h-10 w-10 rounded-tr-2xl border-r-2 border-t-2 border-blue-200/90" />
+            <div className="absolute bottom-3 left-3 h-10 w-10 rounded-bl-2xl border-b-2 border-l-2 border-blue-200/90" />
+            <div className="absolute bottom-3 right-3 h-10 w-10 rounded-br-2xl border-b-2 border-r-2 border-blue-200/90" />
+          </div>
           {/* The moving dot the user must follow with their eyes. */}
           <div
             className="absolute w-5 h-5 md:w-6 md:h-6 rounded-full bg-blue-400 ring-4 ring-blue-400/30 -translate-x-1/2 -translate-y-1/2 transition-all duration-300"
-            style={{ left: `${target.x * 100}%`, top: `${target.y * 100}%` }}
+            style={{ left: `${targetPx.x}px`, top: `${targetPx.y}px` }}
           >
             <div className="absolute inset-0 rounded-full bg-blue-200 animate-ping opacity-60" />
           </div>
@@ -278,8 +305,8 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
             <p className="text-base md:text-xl font-semibold mb-1">
               {phase === 'calibrating' ? 'Calibrando posição do olhar' : 'Verificando mapeamento'}
             </p>
-            <p className="text-slate-400 text-xs md:text-sm whitespace-nowrap">
-              Olhe para o ponto azul e siga-o sem mover a cabeça · {index + 1}/{totalThisMode}
+            <p className="text-slate-300 text-xs md:text-sm">
+              Olhe para o ponto azul dentro da área marcada · {index + 1}/{totalThisMode}
             </p>
           </div>
         </>
@@ -340,4 +367,44 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
       )}
     </div>
   );
+
+  function activeSurfaceRect(): SurfaceRect {
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const full = fullViewportRect(viewportWidth, viewportHeight);
+    if (!surfaceRect) return full;
+    const left = clamp(surfaceRect.left, 0, viewportWidth);
+    const top = clamp(surfaceRect.top, 0, viewportHeight);
+    const width = clamp(surfaceRect.width, 1, viewportWidth - left);
+    const height = clamp(surfaceRect.height, 1, viewportHeight - top);
+    return { left, top, width, height };
+  }
+}
+
+function targetToViewportPx(target: { x: number; y: number }, rect: SurfaceRect): { x: number; y: number } {
+  return {
+    x: rect.left + target.x * rect.width,
+    y: rect.top + target.y * rect.height,
+  };
+}
+
+function surfaceRectStyle(rect: SurfaceRect): React.CSSProperties {
+  return {
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+  };
+}
+
+function targetToViewportNorm(target: { x: number; y: number }, rect: SurfaceRect): { x: number; y: number } {
+  const point = targetToViewportPx(target, rect);
+  return {
+    x: point.x / window.innerWidth,
+    y: point.y / window.innerHeight,
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }

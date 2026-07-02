@@ -1,3 +1,61 @@
+### 2026-07-01 21:21 - Geometria e consistencia desktop
+
+Context:
+Anders confirmou que no desktop os indicadores de movimento ocular fazem sentido mesmo quando a camera fica em 30 Hz, e aprovou deixar o layout decidir na pratica: desktop com superficie mais estavel; mobile/touch ainda acessivel em modo compacto, sem texto proibitivo.
+
+Details:
+Criados `src/services/cameraTelemetry.ts` e `src/services/captureGeometry.ts` com testes. A tela de diagnostico agora calcula uma superficie desktop limitada/estavel, descontando painel lateral, padding e gap; a calibracao pode receber o retangulo real dessa superficie e grava a assinatura usando esse alvo, em vez de assumir sempre viewport inteiro. Cada `ValidationCapture` pode salvar `environment` com layout, viewport/DPR/orientacao, superficie, video, camera negociada e taxas medidas. O relatorio de captura ganhou secao "Ambiente e camera" separando camera negociada, video recebido, FPS camera, FPS deteccao e taxa ocular. `signalQuality` deixou de exigir 45 Hz como gate duro: capturas calibradas e consistentes a 30 Hz podem ser `Comparavel`.
+
+Notes:
+Nao alterou `saccadeAnalysis.ts`. Validado com `npx tsc --noEmit`, `node --import tsx --test $(rg --files -g '*.test.ts' src)` (71/71), `APP_BASE_PATH=/gaze npm run build`, restart de `linhafixa.service`, `/gaze/` publico 200 com bundle `index-BCxKpD76.js` e CSS `index-BYOuQ-L6.css`, assets com MIME correto, `git diff --check` limpo, smoke Playwright/Chrome desktop confirmando tela de diagnostico montada com canvas `1028x577` dentro do viewport e painel lateral `288x684`.
+
+Follow-up 2026-07-02 (moldura de calibracao):
+Anders apontou que nao ficava claro qual area seria calibrada e que o layout de calibracao parecia solto. `EyeTrackingTestScreen` agora mostra uma moldura rigida nomeada ("Area fixa de leitura e calibracao"), cantos de referencia e dimensao da superficie. `CalibrationOverlay` mostra a mesma moldura como "Area calibrada do teste" e instrui a seguir o ponto azul dentro dela. Publicado com bundle `index-Ct7H63IR.js` e CSS `index-dVU1oPdu.css`; smoke Chrome confirmou rótulos no diagnostico e na calibracao, com ponto azul dentro da area marcada. Validado com `npx tsc --noEmit`, suite completa 71/71, build `/gaze`, restart de `linhafixa.service`, assets com MIME correto e `git diff --check`.
+
+### 2026-07-01 09:56 - Diagnostico separado iPhone/touch vs desktop
+
+Context:
+Anders observou que a bolinha azul calibrada sumia frequentemente no iPhone, enquanto a linha/bolinha laranja bruta acompanhava quase tao bem. A causa mais provavel no codigo era geometrica: em iPhone landscape o breakpoint `md` ativava layout desktop (`canvas + painel lateral`), reduzindo o canvas para ~644px de largura apesar da calibracao/projecao operar em viewport inteiro; pontos calibrados fora do canvas eram descartados, fazendo o azul desaparecer.
+
+Details:
+Criado `src/services/deviceProfile.ts` com `diagnosticsLayoutMode()`: dispositivos touch/iPhone ficam em modo `compact`; desktop lateral so entra para viewport largo sem touch (`>=1024px`). `EyeTrackingTestScreen` agora usa esse perfil para escolher layout: iPhone/touch empilha canvas em largura total e painel embaixo; desktop largo preserva painel lateral. O listener de resize/orientacao foi consolidado para atualizar largura, orientacao e rewrap do texto sem duplicidade.
+
+Notes:
+Validado com teste novo `deviceProfile.test.ts`, `npm run lint`, suite completa `node --import tsx --test $(rg --files -g '*.test.ts' src)` (67/67), `APP_BASE_PATH=/gaze npm run build`, restart de `linhafixa.service`, `/gaze/` publico 200 com bundle `index-CXDr7TU4.js`, medicao Playwright confirmando iPhone landscape touch com canvas `932px` + painel abaixo e desktop `1366px` com canvas `1078px` + painel lateral `288px`. Smoke iPhone fake carregou MediaPipe local sem CDN externo. Falta teste manual no iPhone/Safari com calibracao real para confirmar se a bolinha azul para de sumir.
+
+### 2026-06-30 17:04 - Fallback direto sem gate duro de piscada
+
+Context:
+Anders reportou regressao perceptivel no iPhone: a bolinha azul calibrada nao acompanhava mais apos o hardening ocular A/E. Hipotese operacional mais forte: o novo gate `eyeBlink* > 0.5` podia estar rejeitando frames demais no Safari/iPhone, fazendo o feedback ao vivo e a leitura parecerem mortos apesar de haver sinal de olhar.
+
+Details:
+Mantido `isBlinking()` como medidor testavel, mas criado `shouldDropGazeForBlink()` com gate desligado por padrao (`BLINK_REJECT_GATE_ENABLED=false`). `EyeTrackingTestScreen` e `ExerciseCanvas` agora usam esse gate, voltando ao fallback direto sem filtro duro de piscada. O caminho continua reversivel: quando houver dado real de blink score no iPhone, o gate pode ser reativado/tunado sem reescrever consumidores.
+
+Notes:
+Validado com teste vermelho/verde em `faceTracking.test.ts`, depois `node --import tsx --test $(rg --files -g '*.test.ts' src)` (65/65), `npm run lint`, `APP_BASE_PATH=/gaze npm run build`, restart de `linhafixa.service`, `/gaze/` publico 200 com bundle `index-BliLTDbA.js`, e smoke Playwright no diagnostico com camera fake carregando MediaPipe apenas de `/gaze/vendor/mediapipe/...`. Precisa teste manual no iPhone/Safari com camera real; se a bolinha azul ainda nao acompanhar, proxima frente e separar assinatura/layout iPhone vs desktop e revisar z-score/calibracao.
+
+### 2026-06-30 16:21 - Hardening ocular A/E puxado e publicado
+
+Context:
+Rodada da nuvem `claude/eye-detection-review-jtcde2` foi mergeada em `origin/main` e puxada localmente preservando a nota Codex do incidente `/gaze`.
+
+Details:
+Commit publicado localmente: `78b927d` (`Merge pull request #3 ... Harden ocular signal pipeline`). Confere com o plano: gate de piscada (`getBlinkScore`/`isBlinking`), z-score no ridge de `gazeCalibration`, `@mediapipe/tasks-vision` pinado em `0.10.35`, wasm copiado por `scripts/copy-mediapipe.mjs`, modelo `face_landmarker.task` vendorizado e URLs MediaPipe locais via `import.meta.env.BASE_URL`.
+
+Notes:
+Validado em produção com 64/64 testes (`node --import tsx --test $(rg --files -g '*.test.ts' src)`), `npm run lint`, `APP_BASE_PATH=/gaze npm run build`, restart de `linhafixa.service`, `/gaze/` público 200, `/gaze/vendor/mediapipe/face_landmarker.task` 200, wasm 200, `dist` sem strings `cdn.jsdelivr`/`storage.googleapis`, e smoke Playwright com câmera fake no diagnóstico carregando MediaPipe apenas de `/gaze/vendor/mediapipe/...`. Resta validação manual no iPhone/Safari com câmera real e calibração.
+
+### 2026-06-30 14:14 - Incidente publico /gaze restaurado
+
+Context:
+Anders reportou que o app Gaze estava sem acesso. O backend `linhafixa.service` estava ativo em `3060`, mas `https://ultrassom.ai/gaze/` retornava `404` direto do Apache.
+
+Details:
+Causa raiz: o bloco `ProxyPass /gaze -> 127.0.0.1:3060/gaze` tinha sumido da config principal `/etc/apache2/sites-available/ultrassom.ai-optimized.conf` apesar de ainda existir no backup `ultrassom.ai-optimized.conf.bak.vertex3-20260630`. O bloco foi restaurado, `apachectl configtest` passou, Apache foi recarregado e a trava `chattr +i` foi recolocada. Em seguida foi corrigido o segundo sintoma: o build em `dist/index.html` apontava assets para `/assets/...`; foi refeito `APP_BASE_PATH=/gaze npm run build` e reiniciado `linhafixa.service`.
+
+Notes:
+Validado com `npm run lint`, `APP_BASE_PATH=/gaze npm run build`, `systemctl restart linhafixa.service`, `curl https://ultrassom.ai/gaze/` retornando 200, HTML referenciando `/gaze/assets/...` e JS/CSS públicos retornando 200 com MIME correto. Smoke com Playwright usando Chrome do sistema confirmou React montado no consentimento (`#root` com conteúdo). `/etc/apache2/APACHE.md` atualizado para registrar a restauração do proxy.
+
 ### 2026-06-18 19:05 - Linha Fixa em /gaze
 
 Context:
@@ -249,3 +307,6 @@ V1 (detector) — `saccadeAnalysis.ts`: filtro mediano de 3 amostras no canal H 
 
 Notes:
 Validado com `node --import tsx --test` (72/72; 64 antigos + 8 novos), `npx tsc --noEmit`, `npm run lint`, `APP_BASE_PATH=/gaze npm run build`. Teste sintetico de 4 linhas de leitura limpa: 20 sacadas progressivas, 0 regressoes (antes: 3 falsas), 3 retornos de linha. Trabalho feito em worktree `quirky-euclid-a4dd5e`, NAO commitado — aguarda revisao do Anders. Pendente validacao manual no iPhone: calibrar piscando de proposito (acuracia nao deve degradar; numero exibido pode subir um pouco por ser agora honesto), capturar aproximando/afastando (texto nao re-flui durante captura; >15% derruba bolinha pra ambar), conferir campos geometricos no export JSON. Fora de escopo registrado: normalizacao yaw/pitch postural por scale, protocolo de validacao interna via sacadas guiadas (ground truth do detector), PACK 3 visual.
+
+Follow-up 2026-07-02 (merge + deploy):
+Anders aprovou o PACK V; commit `0f524c1` na branch do worktree. Ao preparar o deploy, o main tinha o bundle Codex "Geometria e consistencia desktop" JA PUBLICADO mas nao commitado — Anders decidiu: commitar o Codex verbatim (`67f58e1`, preserva estado de producao) e mergear o PACK V por cima (`a1c0ecd`). Duas resolucoes semanticas no merge: (1) erro de validacao por amostra agora compara predicao com `targetAbs` (alvo projetado na superficie do Codex), nao com o alvo relativo; (2) POLITICA DE BLINK unificada — os tres consumidores (CalibrationOverlay, EyeTrackingTestScreen, ExerciseCanvas) usam `shouldDropGazeForBlink()` atras do kill-switch `BLINK_REJECT_GATE_ENABLED=false` do Codex (baseline alto de eyeBlink travaria a calibracao no ponto 1 e mataria sinal fluindo); apos tunar com dado real, UMA flag ativa o gate em todo lugar. Gate pos-merge: 79/79 testes (64 base + 7 Codex + 8 PACK V), tsc, lint, build. Publicado: restart `linhafixa.service`, bundle `index-N1c8cMnW.js`, curl local/publico 200, JS/CSS com MIME correto, MediaPipe vendor 200. Pendencias inalteradas: smoke manual do Anders (iPhone + desktop com moldura), ground truth via sacadas guiadas como proxima frente sugerida.

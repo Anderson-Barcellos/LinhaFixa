@@ -25,6 +25,17 @@ test('summarizeSaccadeSignalQuality marks dense calibrated signal as comparable'
   assert.match(quality.detail, /92% cobertura/);
 });
 
+test('summarizeSaccadeSignalQuality accepts stable 30 Hz desktop captures as comparable', () => {
+  const quality = summarizeSaccadeSignalQuality(
+    { ...baseMetrics, samplesValid: 601, sampleRateHz: 30 },
+    { coverage: 100, calibrated: true }
+  );
+
+  assert.equal(quality.grade, 'comparavel');
+  assert.equal(quality.label, 'Comparável');
+  assert.equal(quality.sampleRateLabel, '30 Hz');
+});
+
 test('summarizeSaccadeSignalQuality keeps raw signal exploratory even with many samples', () => {
   const quality = summarizeSaccadeSignalQuality(
     { ...baseMetrics, signalSource: 'raw-mediapipe' },

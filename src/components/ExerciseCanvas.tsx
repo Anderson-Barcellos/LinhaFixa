@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { registry } from '@/exercises/implementations';
 import { ExerciseParameters } from '@/types';
-import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive, getBlinkScore, isBlinking, getLastLandmarks } from '@/services/faceTracking';
+import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive, getBlinkScore, shouldDropGazeForBlink, getLastLandmarks } from '@/services/faceTracking';
 import { getCalibrationSignature, isCalibrated, predictNorm } from '@/services/gazeCalibration';
 import { interpupillaryPx, estimateDistanceCm, getDistanceAnchor, distanceWithinAnchorTolerance } from '@/services/viewingGeometry';
 import { attachStream, getFrontCameraStream } from '@/services/cameraStream';
@@ -189,9 +189,10 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
            const dEst = estimateDistanceCm(ipdPx, anchor, viewingDistanceCm);
            emaDistanceCm = emaDistanceCm * 0.85 + dEst * 0.15;
            const distanceOk = distanceWithinAnchorTolerance(emaDistanceCm, anchor?.distanceCm ?? null);
-           // Drop gaze captured mid-blink (iris drops/disappears → spurious motion). The
-           // postural/coverage counting above still uses the detected head pose.
-           const blinking = isBlinking(getBlinkScore());
+           // Blink score is measured, but hard rejection sits behind the shared
+           // BLINK_REJECT_GATE_ENABLED kill-switch (off until tuned on real data —
+           // a high eyeBlink baseline would otherwise kill a flowing signal).
+           const blinking = shouldDropGazeForBlink(getBlinkScore());
            // Capture gaze for exercises that consume it (e.g. assisted reading).
            exContext.latestGaze = blinking ? null : estimateGaze(videoRef.current, detectTs, exContext.timeMs);
            // Project the calibrated point of gaze into canvas pixels, if calibrated.

@@ -147,6 +147,36 @@ export interface AxisSignalSummary {
   vRange: number;
 }
 
+export interface CaptureEnvironment {
+  layoutMode: 'compact' | 'desktop';
+  viewport: {
+    width: number;
+    height: number;
+    devicePixelRatio: number;
+    orientation: 'portrait' | 'landscape';
+  };
+  surfaceRect: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+  video: {
+    width: number;
+    height: number;
+  };
+  camera: {
+    width?: number;
+    height?: number;
+    frameRate?: number;
+    maxFrameRate?: number;
+  };
+  rates: {
+    detectionFps?: number;
+    ocularSampleRateHz?: number;
+  };
+}
+
 export interface ValidationCapture {
   id: string;
   timestamp: number;
@@ -156,6 +186,7 @@ export interface ValidationCapture {
   metrics: SaccadeMetrics;
   postural: PosturalStabilityMetrics;
   axis: AxisSignalSummary;
+  environment?: CaptureEnvironment;
   sampleCount: number;
   samples: GazeSample[]; // raw signal kept for offline per-axis analysis
   // Geometric provenance (absent on legacy captures). These make the normalized h/v
