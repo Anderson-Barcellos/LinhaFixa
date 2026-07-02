@@ -58,6 +58,17 @@ export interface GazeSample {
   v: number; // vertical gaze ratio (0 = up, 1 = down)
 }
 
+// One detected velocity-threshold crossing from the I-VT detector, closed and routed
+// to its bucket. Timestamps follow the aggregate-metric convention: tStart is the last
+// sample before velocity crossed above threshold, tEnd the sample where it fell back
+// below (or the last sample for a saccade still open at the end of the signal).
+export interface SaccadeEvent {
+  tStart: number;    // ms, same clock as GazeSample.t
+  tEnd: number;      // ms
+  amplitude: number; // signed Δh in gaze-ratio units (negative = leftward)
+  kind: 'saccade' | 'regression' | 'line-return';
+}
+
 // Experimental, webcam-based saccade estimate produced from a stream of GazeSamples.
 // NOTE: consumer webcam gaze is noisy and device/browser frame-rate dependent.
 // These are coarse saccade/fixation estimates only; they cannot resolve microsaccades.
@@ -71,6 +82,9 @@ export interface SaccadeMetrics {
   lineReturnCount?: number;       // large leftward sweeps back to the next line start (absent on legacy captures)
   meanSaccadeAmplitude: number;   // mean |Δh| of detected reading saccades (gaze-ratio units, approx.)
   meanFixationMs: number;         // mean duration between saccades
+  // Individual detected events, present only when analyzeSaccades ran with
+  // collectEvents: true (ground-truth validation); not persisted by default.
+  events?: SaccadeEvent[];
 }
 
 // A gaze point projected into screen/canvas space (pixels) by the calibration model.

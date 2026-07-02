@@ -220,7 +220,7 @@ FASE 0 — Validacao manual (Anders, sem codigo):
 - Acumular 10-15 capturas etiquetadas variando luz/postura/distancia — e o dado que calibra todo o resto.
 
 FASE 1 — PACK GT: ground truth interno via sacadas guiadas (frente de codigo):
-Usar o exercicio de sacadas (alvo pula em momentos conhecidos, `oculomotorAnalysis.ts` ja detecta os jumps) como verdade-terreno do detector I-VT: rodar `analyzeSaccades` sobre o mesmo sinal e comparar contra os jumps do alvo -> taxa de deteccao, falsos positivos, erro de latencia POR SESSAO/CONDICAO. Isso da a barra de erro do instrumento sem hardware externo ("chinrest estatistico"). Plano compacto + aprovacao antes de codar (trabalho novo).
+FEITA em 2026-07-02 (aprovacao do Anders no plano compacto; implementada em GT1+GT2+GT3, ver entrada "PACK GT" de 2026-07-02). PRONTA PRA REVISAO no worktree `quirky-euclid-a4dd5e`, NAO commitada.
 
 FASE 2 — Tuning com o dado real da Fase 0 (so depois dela):
 - Decidir `BLINK_REJECT_GATE_ENABLED` (distribuicao real do eyeBlink baseline iPhone/desktop).
@@ -231,7 +231,18 @@ FASE 3 — PACKs represados: PACK 3 visual (hierarquia do relatorio) e PACK 4 ex
 
 Ler primeiro na retomada: esta secao; entradas de 2026-07-02; `src/exercises/saccadeAnalysis.ts` (novo contrato lineReturnCount), `src/exercises/oculomotorAnalysis.ts` (base do PACK GT), `src/services/viewingGeometry.ts` (drift/proveniencia), `src/services/faceTracking.ts` (kill-switch blink).
 Validacao padrao: `node --import tsx --test $(rg --files -g '*.test.ts' src)`, `npx tsc --noEmit`, `npm run lint`, `APP_BASE_PATH=/gaze npm run build`; deploy = restart `linhafixa.service` + curl local/publico.
-Nota de higiene: worktree `quirky-euclid-a4dd5e` ja mergeado no main — pode remover (`git worktree remove`) numa sessao fora dele.
+Nota de higiene: worktree `quirky-euclid-a4dd5e` foi REUTILIZADO em 2026-07-02 para o PACK GT (sincronizado com main via merge) — NAO remover ate o PACK GT ser revisado e mergeado.
+
+### 2026-07-02 - PACK GT: ground truth interno do detector I-VT (pronto p/ revisao)
+
+Context:
+Fase 1 do KICKOFF. Anders aprovou o plano compacto (incluindo liberacao explicita pra tocar `saccadeAnalysis.ts` de forma aditiva) e deixou a sessao rodar autonoma. Ideia-mestra: o exercicio de sacadas ja e um experimento controlado — cada pulo do alvo (a cada 1500ms, amplitude conhecida) e verdade-terreno; parear os pulos com os eventos do detector I-VT da a barra de erro do instrumento sem hardware externo ("chinrest estatistico").
+
+Details:
+GT1 — `analyzeSaccades` ganhou `collectEvents?: boolean` (opt-in): quando ligado, retorna `events: SaccadeEvent[]` ({tStart, tEnd, amplitude assinada, kind saccade/regression/line-return}), tipo novo em `types.ts`. Convencao de timestamp: tStart = ultima amostra ANTES do cruzamento de velocidade (consistente com as metricas agregadas). Off por default → payloads persistidos de SaccadeMetrics inalterados; teste de regressao garante agregados identicos com/sem eventos. GT2 — novo `src/exercises/detectorValidation.ts` (puro): `ocSamplesToGazeSamples` (canvas px → h/v normalizado), `extractTargetJumps` (mesmo criterio >1px do `analyzeSaccadeTask`), `validateSaccadeDetector` pareia salto↔evento (janela -50..1000ms, direcao obrigatoria, greedy cronologico, kind IGNORADO de proposito — salto grande pra esquerda e "line-return" na taxonomia de leitura mas e deteccao correta aqui) → `DetectorValidationMetrics`: detectionRate, falsePositives(/min), medianLatencyMs + IQR, meanAmplitudeGain. GT3 — `saccadeExercise.getResultData` injeta `detectorValidation` no extraData (persiste via saveSession, da o "por sessao/condicao"); `ExercisePlayerScreen` mostra bloco "Validacao interna do detector (instrumento, nao usuario)" no card de Sacadas.
+
+Notes:
+Honestidade do metodo: deteccao perdida pode ser falha do detector OU o usuario nao ter feito a sacada — o agregado ainda limita a sensibilidade do instrumento nas condicoes da sessao. Validado com `node --import tsx --test` (87/87; 79 do main + 8 novos), `npx tsc --noEmit`, `npm run lint`, `APP_BASE_PATH=/gaze npm run build` (bundle local `index-CjGg--O-.js`, NAO deployado). NAO commitado — aguarda revisao do Anders. Pendente na revisao: rodar o exercicio de sacadas no iPhone e conferir o bloco novo no resumo da sessao; numeros reais de detectionRate/latencia viram baseline do instrumento.
 
 ### 2026-06-28 - Estatisticas com resumos reais (pronto p/ revisao)
 

@@ -398,6 +398,7 @@ export function ExercisePlayerScreen() {
                          const fx = r.extraData?.fixationMetrics;
                          const sc = r.extraData?.saccadeTaskMetrics;
                          const pu = r.extraData?.pursuitMetrics;
+                         const dv = r.extraData?.detectorValidation;
                          const stat = (label: string, value: string) => (
                             <div key={label}>
                                <div className="text-lg font-bold text-slate-800">{value}</div>
@@ -424,6 +425,19 @@ export function ExercisePlayerScreen() {
                                      stat('Tempo no alvo', `${Math.round(pu.percentOnTarget)}%`),
                                   ]}
                                </div>
+                               {dv?.trackingAvailable && (
+                                  <div className="mt-4 pt-4 border-t border-indigo-100">
+                                     <div className="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3">
+                                        Validação interna do detector (instrumento, não usuário)
+                                     </div>
+                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                        {stat('Detecção dos saltos', `${dv.matchedJumps}/${dv.targetJumps} (${Math.round(dv.detectionRate * 100)}%)`)}
+                                        {stat('Falsos positivos/min', dv.falsePositivesPerMin.toFixed(1))}
+                                        {stat('Latência mediana', `${Math.round(dv.medianLatencyMs)} ms`)}
+                                        {stat('Ganho de amplitude', dv.meanAmplitudeGain.toFixed(2))}
+                                     </div>
+                                  </div>
+                               )}
                             </div>
                          );
                       })}
