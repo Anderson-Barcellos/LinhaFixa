@@ -117,15 +117,30 @@ Auditoria de robustez (frente paralela) FEITA com 5 agentes em paralelo — sint
 
 ## KICKOFF
 
-Proxima sessao sugerida: AUDITORIA DO PIPELINE OCULAR, nao nova feature de estatisticas.
-Objetivo: vasculhar se a implementacao esta coerente de ponta a ponta e se algum trecho herdado/feito pelo Claude esta conceitualmente errado.
-Ler primeiro: `BACKLOG.md` desta secao ate o fim; depois `src/exercises/saccadeAnalysis.ts`, `src/exercises/readingDynamics.ts`, `src/services/statisticsSummary.ts`, `src/screens/DashboardScreen.tsx`, `src/screens/EyeTrackingTestScreen.tsx`, `src/components/ExerciseCanvas.tsx`.
-Validar caminho real: captura do olhar -> `SaccadeMetrics`/fixacoes -> persistencia em `sessions` e `validationCaptures` -> `buildStatisticsSummary()`/`buildOcularReadingSeries()` -> dashboard.
-Atencao conceitual: toque na leitura e apenas avanco manual; nao usar como sacada/fixacao. Sacadas, regressoes e fixacoes devem vir do sinal ocular.
-Estado publicado: `APP_BASE_PATH=/gaze npm run build` + restart de `linhafixa.service`; ultimo bundle confirmado `index-DE5cHAmy.js`; rota publica `/gaze/dashboard`.
-Validacao recente: 34/34 testes, `npm run lint`, build prod, smoke Playwright com dados temporarios mostrando graficos de sacadas/regressoes e fixacao media.
-Risco conhecido: Recharts emite warning de dimensao no primeiro calculo headless, mas os graficos renderizam. Nao tratar como bloqueio antes de reproduzir em browser real.
-Trabalho em aberto do PACK G ainda existe em paralelo (G1/G-Landscape nao commitados, teste de campo no iPhone pendente), mas a proxima conversa pedida por Anders deve priorizar auditoria de coerencia antes de seguir feature nova.
+Kickoff executado em 2026-07-02 como PACK V (validade do sinal ocular) — ver entradas de 2026-07-02. Rotacionado para o plano abaixo.
+
+Proxima sessao: COLETA DE DADO REAL + PACK GT (ground truth interno). Ordem pensada: primeiro o dado, depois o codigo que o consome.
+
+Estado publicado: main `4560d11`, bundle `index-N1c8cMnW.js` no ar (79/79 testes, tsc/lint/build ok). PACK V + bundle Codex desktop mergeados; blink gate unificado atras de `BLINK_REJECT_GATE_ENABLED=false` em `faceTracking.ts`.
+
+FASE 0 — Validacao manual (Anders, sem codigo):
+- iPhone Pro Max: calibrar piscando de proposito (acuracia nao deve degradar; numero pode subir por ser honesto agora), captura 20s aproximando/afastando (texto NAO re-flui; drift >15% derruba bolinha pra ambar), conferir "Retornos de linha" e campos geometricos (`distanceEstimatedCm`, `pxPerDegAtCapture`) no export JSON.
+- Desktop: conferir moldura "Area fixa de leitura e calibracao" x "Area calibrada do teste" e bloco "Ambiente e camera" (pendencia do bundle Codex).
+- Acumular 10-15 capturas etiquetadas variando luz/postura/distancia — e o dado que calibra todo o resto.
+
+FASE 1 — PACK GT: ground truth interno via sacadas guiadas (frente de codigo):
+Usar o exercicio de sacadas (alvo pula em momentos conhecidos, `oculomotorAnalysis.ts` ja detecta os jumps) como verdade-terreno do detector I-VT: rodar `analyzeSaccades` sobre o mesmo sinal e comparar contra os jumps do alvo -> taxa de deteccao, falsos positivos, erro de latencia POR SESSAO/CONDICAO. Isso da a barra de erro do instrumento sem hardware externo ("chinrest estatistico"). Plano compacto + aprovacao antes de codar (trabalho novo).
+
+FASE 2 — Tuning com o dado real da Fase 0 (so depois dela):
+- Decidir `BLINK_REJECT_GATE_ENABLED` (distribuicao real do eyeBlink baseline iPhone/desktop).
+- Recalibrar `LINE_RETURN_MIN_AMPLITUDE` (0.35) e tolerancia de drift (15%) com as capturas.
+- Normalizacao yaw/pitch postural pelo `scale` do rosto (decisao 2026-07-02: aguardava dado real).
+
+FASE 3 — PACKs represados: PACK 3 visual (hierarquia do relatorio) e PACK 4 exportacao clinica (destravado: pxPerDegAtCapture permete converter amplitudes pra graus).
+
+Ler primeiro na retomada: esta secao; entradas de 2026-07-02; `src/exercises/saccadeAnalysis.ts` (novo contrato lineReturnCount), `src/exercises/oculomotorAnalysis.ts` (base do PACK GT), `src/services/viewingGeometry.ts` (drift/proveniencia), `src/services/faceTracking.ts` (kill-switch blink).
+Validacao padrao: `node --import tsx --test $(rg --files -g '*.test.ts' src)`, `npx tsc --noEmit`, `npm run lint`, `APP_BASE_PATH=/gaze npm run build`; deploy = restart `linhafixa.service` + curl local/publico.
+Nota de higiene: worktree `quirky-euclid-a4dd5e` ja mergeado no main — pode remover (`git worktree remove`) numa sessao fora dele.
 
 ### 2026-06-28 - Estatisticas com resumos reais (pronto p/ revisao)
 
