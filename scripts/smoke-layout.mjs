@@ -23,8 +23,8 @@ const BASE_URL = (process.argv[2] ?? 'http://localhost:3060/gaze').replace(/\/$/
 const CHROME = process.env.CHROME_PATH ?? '/usr/bin/google-chrome';
 
 const VIEWPORTS = [
-  { name: 'iphone-portrait', width: 390, height: 844, touch: true, expectDesktopPanel: false, checkCalibration: true },
-  { name: 'iphone-landscape', width: 844, height: 390, touch: true, expectDesktopPanel: false, checkCalibration: false },
+  { name: 'iphone-portrait', width: 390, height: 844, touch: true, expectDesktopPanel: false, drawer: 'sheet', checkCalibration: true },
+  { name: 'iphone-landscape', width: 844, height: 390, touch: true, expectDesktopPanel: false, drawer: 'side', checkCalibration: false },
   { name: 'desktop', width: 1440, height: 860, touch: false, expectDesktopPanel: true, checkCalibration: true },
   // Vertical monitor (Anders' desktop): the reading surface must fill the column
   // instead of collapsing into the landscape 16:9 strip.
@@ -137,18 +137,62 @@ async function runViewport(browser, profile) {
     const panel = await panelRows(page);
     check(profile.name, 'painel de diagnóstico presente', !!panel);
     if (panel) {
-      const sidePanel = panel.aside.x > profile.width * 0.6 && panel.aside.width < profile.width * 0.4;
-      check(profile.name, profile.expectDesktopPanel ? 'painel lateral (desktop)' : 'painel empilhado (compacto)',
-        profile.expectDesktopPanel ? sidePanel : !sidePanel,
-        `aside x=${Math.round(panel.aside.x)} w=${Math.round(panel.aside.width)}`);
+      if (profile.drawer === 'sheet') {
+        check(profile.name, 'gaveta sheet colapsada no rodapé (faixa fina, largura total)',
+          panel.aside.y > profile.height * 0.7 && panel.aside.width > profile.width * 0.9 && panel.aside.height < 120,
+          `aside y=${Math.round(panel.aside.y)} w=${Math.round(panel.aside.width)} h=${Math.round(panel.aside.height)}`);
+      } else if (profile.drawer === 'side') {
+        check(profile.name, 'gaveta side colapsada à direita (coluna fina, altura total)',
+          panel.aside.x > profile.width * 0.8 && panel.aside.width < 80 && panel.aside.height > profile.height * 0.7,
+          `aside x=${Math.round(panel.aside.x)} w=${Math.round(panel.aside.width)} h=${Math.round(panel.aside.height)}`);
+      } else {
+        const sidePanel = panel.aside.x > profile.width * 0.6 && panel.aside.width < profile.width * 0.4;
+        check(profile.name, 'painel lateral (desktop)', sidePanel,
+          `aside x=${Math.round(panel.aside.x)} w=${Math.round(panel.aside.width)}`);
 
-      // Card alignment: every visible row shares the same left/right edges.
-      const lefts = panel.rows.map(r => r.left);
-      const rights = panel.rows.map(r => r.right);
-      const spreadL = Math.max(...lefts) - Math.min(...lefts);
-      const spreadR = Math.max(...rights) - Math.min(...rights);
-      check(profile.name, 'cartões do painel alinhados (sem estreitamento)', spreadL <= 1.5 && spreadR <= 1.5,
-        `spread esq=${spreadL.toFixed(1)}px dir=${spreadR.toFixed(1)}px em ${panel.rows.length} fileiras`);
+        // Card alignment: every visible row shares the same left/right edges.
+        const lefts = panel.rows.map(r => r.left);
+        const rights = panel.rows.map(r => r.right);
+        const spreadL = Math.max(...lefts) - Math.min(...lefts);
+        const spreadR = Math.max(...rights) - Math.min(...rights);
+        check(profile.name, 'cartões do painel alinhados (sem estreitamento)', spreadL <= 1.5 && spreadR <= 1.5,
+          `spread esq=${spreadL.toFixed(1)}px dir=${spreadR.toFixed(1)}px em ${panel.rows.length} fileiras`);
+      }
+    }
+
+    // --- Drawer: expand/collapse must never move the reading surface (overlay, not reflow) ---
+    if (profile.drawer) {
+      const canvasBefore = await page.locator('canvas').first().boundingBox();
+      await page.getByRole('button', { name: 'Expandir diagnóstico' }).click();
+      const drawerPanel = page.getByTestId('drawer-panel');
+      await drawerPanel.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {});
+      const panelBox = await drawerPanel.boundingBox();
+      check(profile.name, 'painel expandido visível', !!panelBox && panelBox.height > 100 && panelBox.width > 100,
+        panelBox ? `${Math.round(panelBox.width)}×${Math.round(panelBox.height)}` : 'ausente');
+
+      const canvasAfter = await page.locator('canvas').first().boundingBox();
+      const stable = !!(canvasBefore && canvasAfter &&
+        Math.abs(canvasBefore.x - canvasAfter.x) <= 1 && Math.abs(canvasBefore.y - canvasAfter.y) <= 1 &&
+        Math.abs(canvasBefore.width - canvasAfter.width) <= 1 && Math.abs(canvasBefore.height - canvasAfter.height) <= 1);
+      check(profile.name, 'superfície estável com gaveta expandida (overlay, não reflow)', stable,
+        canvasBefore && canvasAfter ? `antes ${Math.round(canvasBefore.width)}×${Math.round(canvasBefore.height)} depois ${Math.round(canvasAfter.width)}×${Math.round(canvasAfter.height)}` : 'geometria indisponível');
+
+      // Card alignment inside the expanded panel (the mobile "cartão estreitando").
+      const spread = await page.evaluate(() => {
+        const p = document.querySelector('[data-testid="drawer-panel"]');
+        if (!p) return null;
+        const rows = [...p.children].map(el => el.getBoundingClientRect()).filter(r => r.width > 0 && r.height > 0);
+        if (!rows.length) return null;
+        const lefts = rows.map(r => r.left);
+        const rights = rows.map(r => r.right);
+        return { l: Math.max(...lefts) - Math.min(...lefts), r: Math.max(...rights) - Math.min(...rights), n: rows.length };
+      });
+      check(profile.name, 'cartões da gaveta alinhados', !!spread && spread.l <= 1.5 && spread.r <= 1.5,
+        spread ? `spread esq=${spread.l.toFixed(1)}px dir=${spread.r.toFixed(1)}px em ${spread.n} fileiras` : 'painel não medido');
+
+      await page.getByRole('button', { name: 'Recolher diagnóstico' }).click();
+      await drawerPanel.waitFor({ state: 'hidden', timeout: 3_000 }).catch(() => {});
+      check(profile.name, 'gaveta recolhe de volta', !(await drawerPanel.isVisible().catch(() => false)));
     }
 
     // --- Camera preview and px badge: desktop-only elements ---
@@ -168,14 +212,18 @@ async function runViewport(browser, profile) {
       check(profile.name, 'câmera fake ativa (chip "Câmera")', await cameraChip.isVisible().catch(() => false));
 
       await page.getByRole('button', { name: 'Calibrar' }).click();
-      const calibrating = page.getByText('Calibrando posição do olhar');
+      // The frame exists in both chrome modes; the "Calibrando..." headline is
+      // desktop-only now (mobile shows the single-line guide instead).
+      const calibrating = page.getByTestId('calibration-frame');
       // MediaPipe init (local wasm + model) can take a few seconds on first hit.
       await calibrating.waitFor({ state: 'visible', timeout: 30_000 }).catch(() => {});
       const overlayUp = await calibrating.isVisible().catch(() => false);
       check(profile.name, 'overlay de calibração ativo', overlayUp);
 
       if (overlayUp) {
-        const frame = await page.getByText('Área calibrada do teste').locator('..').boundingBox();
+        // The badge text is hidden on mobile (compactChrome), so the frame is
+        // located by testid instead of by its former label.
+        const frame = await page.getByTestId('calibration-frame').boundingBox();
         const dot = await page.locator('.animate-ping').locator('..').boundingBox();
         const dotInside = !!(frame && dot &&
           dot.x + dot.width / 2 >= frame.x - 1 && dot.x + dot.width / 2 <= frame.x + frame.width + 1 &&
@@ -185,6 +233,14 @@ async function runViewport(browser, profile) {
         check(profile.name, 'moldura de calibração dentro do viewport',
           !!frame && frame.x >= -1 && frame.y >= -1 &&
           frame.x + frame.width <= profile.width + 1 && frame.y + frame.height <= profile.height + 1);
+
+        // Chrome per mode: badge/headline on desktop, single-line guide on mobile.
+        const calibBadge = await page.getByText('Área calibrada do teste').isVisible().catch(() => false);
+        check(profile.name, profile.expectDesktopPanel ? 'badge de calibração presente (desktop)' : 'badge de calibração oculto (compacto)',
+          calibBadge === profile.expectDesktopPanel);
+        const compactGuide = await page.getByText(/^Olhe para o ponto azul · \d+\/\d+$/).isVisible().catch(() => false);
+        check(profile.name, profile.expectDesktopPanel ? 'guia compacto ausente (desktop)' : 'guia de uma linha presente (compacto)',
+          compactGuide !== profile.expectDesktopPanel);
       }
       await page.getByText('Pular calibração').click().catch(() => {});
     }
