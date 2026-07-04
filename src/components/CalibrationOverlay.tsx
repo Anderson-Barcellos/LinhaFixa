@@ -10,6 +10,7 @@ import {
   resetPosturalBaseline,
   setPosturalBaseline,
   summarizePosturalBaseline,
+  toPosturalSample,
   type PosturalSample,
 } from '@/exercises/posturalStability';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
@@ -129,7 +130,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           const feat = extractGazeFeatures(video, now);
           const pose = estimateHeadPose(video, now);
           if (pose) {
-            posturalSamplesRef.current.push({ yaw: pose.yaw, pitch: pose.pitch, roll: pose.roll });
+            posturalSamplesRef.current.push(toPosturalSample(pose));
           }
           // During a blink the iris drops/disappears: both the gaze features and the
           // iris-based IPD are corrupted, so the frame must not feed the ridge fit,

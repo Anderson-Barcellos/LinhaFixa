@@ -70,6 +70,32 @@ test('analyzeSaccades keeps small leftward saccades as regressions', () => {
   assert.equal(metrics.lineReturnCount, 0);
 });
 
+test('analyzeSaccades adapts the line-return threshold to compressed signals', () => {
+  // Raw iris-ratio series: the whole line spans a fraction of the calibrated
+  // range, so a real line-return sweep (-0.24) sits below the fixed 0.35 cap.
+  // Relative to the reading saccades (~0.06) it is clearly a sweep, not a
+  // re-reading regression.
+  const plateau = (t0: number, h: number): GazeSample[] => [
+    { t: t0, h, v: 0.5 },
+    { t: t0 + 20, h, v: 0.5 },
+    { t: t0 + 40, h, v: 0.5 },
+  ];
+  const samples: GazeSample[] = [
+    ...plateau(0, 0.40),
+    ...plateau(60, 0.46),   // +0.06 progressive
+    ...plateau(120, 0.52),  // +0.06 progressive
+    ...plateau(180, 0.46),  // -0.06 true regression (re-reading)
+    ...plateau(240, 0.52),  // +0.06 progressive
+    ...plateau(300, 0.28),  // -0.24 line-return sweep (below the 0.35 cap)
+  ];
+
+  const metrics = analyzeSaccades(samples);
+
+  assert.equal(metrics.saccadeCount, 4);
+  assert.equal(metrics.regressionCount, 1);
+  assert.equal(metrics.lineReturnCount, 1);
+});
+
 test('analyzeSaccades suppresses an isolated single-frame landmark spike', () => {
   const samples: GazeSample[] = [
     { t: 0, h: 0.20, v: 0.5 },

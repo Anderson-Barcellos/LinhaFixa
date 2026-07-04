@@ -5,7 +5,7 @@ import { apiUrl } from '@/services/apiBase';
 import { buildOcularReadingSeries, buildStatisticsSummary, StatisticSectionSummary } from '@/services/statisticsSummary';
 import { summarizeSaccadeSignalQuality } from '@/services/signalQuality';
 import { SessionResult, ValidationCapture } from '@/types';
-import { Activity, ArrowLeft, Clock, Eye, AlertTriangle, Sparkles, Download, BookOpen, ClipboardCheck, TrendingDown, BarChart3 } from 'lucide-react';
+import { Activity, ArrowLeft, Clock, Eye, AlertTriangle, Smile, Sparkles, Download, BookOpen, ClipboardCheck, TrendingDown, BarChart3 } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ZAxis } from 'recharts';
 
 export function DashboardScreen() {
@@ -88,8 +88,10 @@ export function DashboardScreen() {
       const summaryPayload = sessions.map(s => ({
          date: new Date(s.timestamp).toISOString(),
          durationMins: Math.round(s.durationSec / 60),
-         maxSymptomBefore: Math.max(...(Object.values(s.symptomsBefore) as number[])),
-         maxSymptomAfter: Math.max(...(Object.values(s.symptomsAfter) as number[])),
+         maxSymptomBefore: s.symptomsBefore ? Math.max(...(Object.values(s.symptomsBefore) as number[])) : null,
+         maxSymptomAfter: s.symptomsAfter ? Math.max(...(Object.values(s.symptomsAfter) as number[])) : null,
+         contextBefore: s.contextBefore ?? null,
+         contextAfter: s.contextAfter ?? null,
          avgHeadStillness: (() => {
             const scores = s.exercises.map(e => e.headStillnessScore).filter((v): v is number => v !== null);
             return scores.length ? scores.reduce((acc, v) => acc + v, 0) / scores.length : null;
@@ -117,6 +119,7 @@ export function DashboardScreen() {
               sampleCount: c.sampleCount,
               saccades: c.metrics.saccadeCount,
               regressions: c.metrics.regressionCount,
+              lineReturns: c.metrics.lineReturnCount ?? null,
               meanFixationMs: c.metrics.meanFixationMs,
               signalQuality: summarizeSaccadeSignalQuality(c.metrics, { coverage: c.coverage, calibrated: c.calibrated }).label,
               signalSource: c.metrics.signalSource,
@@ -222,7 +225,7 @@ export function DashboardScreen() {
                 <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 min-w-0">
                   <h3 className="text-xl font-bold text-slate-800 mb-2">Sacadas e regressões pelo olhar</h3>
                   <p className="text-slate-500 font-medium mb-6">
-                    Contagem estimada por sinal ocular. Regressões são sacadas contra a direção esperada de leitura.
+                    Contagem estimada por sinal ocular. Regressões são sacadas contra a direção esperada de leitura; retornos de linha (a volta ampla para começar a próxima linha) ficam fora da contagem de regressões.
                   </p>
                   <div className="h-72 w-full min-w-0">
                     <ResponsiveContainer width="100%" height="100%" minWidth={280} minHeight={200}>
@@ -234,6 +237,7 @@ export function DashboardScreen() {
                         <Legend verticalAlign="top" height={36} iconType="circle" />
                         <Bar dataKey="saccades" name="Sacadas" fill="#4f46e5" radius={[6, 6, 0, 0]} />
                         <Bar dataKey="regressions" name="Regressões" fill="#f59e0b" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="lineReturns" name="Retornos de linha" fill="#94a3b8" radius={[6, 6, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -313,11 +317,12 @@ export function DashboardScreen() {
                             </span>
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                           <CapStat label="Cobertura rosto" value={`${Math.round(c.coverage)}%`} />
                           <CapStat label="Taxa" value={c.metrics.sampleRateHz ? `${c.metrics.sampleRateHz} Hz` : 'N/D'} />
                           <CapStat label="Sacadas" value={String(c.metrics.saccadeCount)} />
                           <CapStat label="Regressões" value={String(c.metrics.regressionCount)} />
+                          <CapStat label="Retornos linha" value={c.metrics.lineReturnCount != null ? String(c.metrics.lineReturnCount) : 'N/D'} />
                           <CapStat label="Postura" value={`${c.postural.cervicalStability}%`} />
                           <CapStat label="Delta pos." value={c.postural.motionDeltaDeg != null ? `${c.postural.motionDeltaDeg.toFixed(1)}°` : 'N/D'} />
                         </div>
@@ -332,9 +337,9 @@ export function DashboardScreen() {
                const dt = new Date(s.timestamp);
                const stillnessScores = s.exercises.map(e => e.headStillnessScore).filter((v): v is number => v !== null);
                const avgStillness = stillnessScores.length ? stillnessScores.reduce((acc, v) => acc + v, 0) / stillnessScores.length : null;
-               const symptomBefore = Math.max(...(Object.values(s.symptomsBefore) as number[]));
-               const symptomAfter = Math.max(...(Object.values(s.symptomsAfter) as number[]));
-               const symptomDelta = symptomBefore - symptomAfter;
+               const feelingBefore = s.contextBefore?.feeling ?? null;
+               const feelingAfter = s.contextAfter?.feeling ?? null;
+               const legacySymptomBefore = s.symptomsBefore ? Math.max(...(Object.values(s.symptomsBefore) as number[])) : null;
                return (
                  <div key={s.id} className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
                     <div>
@@ -346,7 +351,7 @@ export function DashboardScreen() {
                          <div className="flex items-center gap-2"><Activity className="w-5 h-5 text-emerald-500"/> {s.exercises.length} ex.</div>
                       </div>
                       <p className="text-sm text-slate-500 font-medium mt-3 max-w-xl">
-                        {sessionInsight(s.exercises, avgStillness, symptomDelta)}
+                        {sessionInsight(s.exercises, avgStillness, wellbeingChangeText(s))}
                       </p>
                     </div>
                     
@@ -360,10 +365,14 @@ export function DashboardScreen() {
                       </div>
                       <div className="w-px h-12 bg-slate-200"></div>
                       <div>
-                         <p className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-1">Pior Sintoma (Inicial)</p>
+                         <p className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-1">
+                           {feelingBefore != null ? 'Sensação (pré→pós)' : 'Pior Sintoma (Inicial)'}
+                         </p>
                          <p className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                           <AlertTriangle className="w-5 h-5 text-amber-500" />
-                           {symptomBefore}
+                           {feelingBefore != null
+                             ? <Smile className="w-5 h-5 text-emerald-500" />
+                             : <AlertTriangle className="w-5 h-5 text-amber-500" />}
+                           {feelingBefore != null ? `${feelingBefore}→${feelingAfter ?? '–'}` : legacySymptomBefore ?? 'N/D'}
                          </p>
                       </div>
                     </div>
@@ -416,6 +425,7 @@ function OcularTooltip({ active, payload }: { active?: boolean; payload?: any[] 
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">
         <span>Sacadas</span><strong className="text-right text-slate-800">{point.saccades}</strong>
         <span>Regressões</span><strong className="text-right text-slate-800">{point.regressions}</strong>
+        <span>Retornos linha</span><strong className="text-right text-slate-800">{point.lineReturns ?? 'N/D'}</strong>
         <span>Fixação</span><strong className="text-right text-slate-800">{point.meanFixationMs} ms</strong>
         <span>Amostras</span><strong className="text-right text-slate-800">{point.samplesValid}</strong>
         <span>Cobertura</span><strong className="text-right text-slate-800">{point.coverage != null ? `${point.coverage}%` : 'N/D'}</strong>
@@ -424,18 +434,36 @@ function OcularTooltip({ active, payload }: { active?: boolean; payload?: any[] 
   );
 }
 
-function sessionInsight(exercises: SessionResult['exercises'], avgStillness: number | null, symptomDelta: number): string {
+// Pre→post wellbeing change: quick context (1-5 feeling) when present, otherwise the
+// legacy max-symptom delta for old sessions; null when neither pair exists.
+function wellbeingChangeText(s: SessionResult): string | null {
+  const fb = s.contextBefore?.feeling;
+  const fa = s.contextAfter?.feeling;
+  if (fb != null && fa != null) {
+    const d = fa - fb;
+    if (d > 0) return `sensação subiu ${d} ponto${d === 1 ? '' : 's'}`;
+    if (d < 0) return `sensação caiu ${-d} ponto${d === -1 ? '' : 's'}`;
+    return 'sensação estável';
+  }
+  const sb = s.symptomsBefore ? Math.max(...(Object.values(s.symptomsBefore) as number[])) : null;
+  const sa = s.symptomsAfter ? Math.max(...(Object.values(s.symptomsAfter) as number[])) : null;
+  if (sb != null && sa != null) {
+    const d = sb - sa;
+    if (d > 0) return `pior sintoma caiu ${d} ponto${d === 1 ? '' : 's'}`;
+    if (d < 0) return `pior sintoma subiu ${-d} ponto${d === -1 ? '' : 's'}`;
+    return 'pior sintoma ficou estável';
+  }
+  return null;
+}
+
+function sessionInsight(exercises: SessionResult['exercises'], avgStillness: number | null, wellbeingText: string | null): string {
   const reading = exercises.find(e => e.exerciseId === 'assistedReading');
-  const saccades = reading?.extraData?.saccadeMetrics?.trackingAvailable
-    ? `${reading.extraData.saccadeMetrics.saccadeCount} sacadas e ${reading.extraData.saccadeMetrics.regressionCount} regressões na leitura`
+  const readingMetrics = reading?.extraData?.saccadeMetrics;
+  const saccades = readingMetrics?.trackingAvailable
+    ? `${readingMetrics.saccadeCount} sacadas, ${readingMetrics.regressionCount} regressões${readingMetrics.lineReturnCount != null ? ` e ${readingMetrics.lineReturnCount} retornos de linha` : ''} na leitura`
     : null;
-  const symptomText = symptomDelta > 0
-    ? `pior sintoma caiu ${symptomDelta} ponto${symptomDelta === 1 ? '' : 's'}`
-    : symptomDelta < 0
-      ? `pior sintoma subiu ${Math.abs(symptomDelta)} ponto${Math.abs(symptomDelta) === 1 ? '' : 's'}`
-      : 'pior sintoma ficou estável';
   const postureText = avgStillness !== null ? `estabilidade média ${Math.round(avgStillness)}%` : 'sem estabilidade mensurável';
-  return [saccades, postureText, symptomText].filter(Boolean).join(' · ');
+  return [saccades, postureText, wellbeingText].filter(Boolean).join(' · ');
 }
 
 function lightingLabel(value: ValidationCapture['conditions']['lighting']): string {

@@ -113,6 +113,44 @@ test('builds dynamic section summaries from sessions and validation captures', (
   assert.match(summary.sections.posture.insight, /91%/);
 });
 
+test('summarizes wellbeing from quick-context sessions (feeling delta on the 1-5 scale)', () => {
+  const sessions: SessionResult[] = [
+    {
+      id: 's2',
+      timestamp: 1700000300000,
+      durationSec: 300,
+      contextBefore: { venvanseTakenAt: '08:00', sleepHours: 7, mood: 3, feeling: 3 },
+      contextAfter: { feeling: 4, fatigue: 2, mood: 4 },
+      exercises: [],
+    },
+  ];
+
+  const summary = buildStatisticsSummary(sessions, []);
+
+  assert.equal(summary.overview.wellbeingDelta, 1);
+  assert.equal(summary.sections.symptoms.label, 'Bem-estar');
+  assert.match(summary.sections.symptoms.insight, /melhora media de 1,0 ponto/);
+});
+
+test('falls back to the legacy symptom delta when only old sessions exist', () => {
+  const sessions: SessionResult[] = [
+    {
+      id: 's3',
+      timestamp: 1700000400000,
+      durationSec: 300,
+      symptomsBefore: { ...baseSymptoms, fadigaVisual: 6 },
+      symptomsAfter: { ...baseSymptoms, fadigaVisual: 4 },
+      exercises: [],
+    },
+  ];
+
+  const summary = buildStatisticsSummary(sessions, []);
+
+  assert.equal(summary.overview.wellbeingDelta, null);
+  assert.match(summary.sections.symptoms.insight, /escala antiga/);
+  assert.match(summary.sections.symptoms.insight, /queda media de 2,0 pontos/);
+});
+
 test('keeps empty states specific instead of repeating generic text', () => {
   const summary = buildStatisticsSummary([], []);
 
@@ -179,6 +217,7 @@ test('buildOcularReadingSeries extracts eye-derived saccades and fixations in ch
         sampleRateHz: 58,
         saccadeCount: 21,
         regressionCount: 4,
+        lineReturnCount: 3,
         meanSaccadeAmplitude: 0.13,
         meanFixationMs: 390,
       },
@@ -208,11 +247,13 @@ test('buildOcularReadingSeries extracts eye-derived saccades and fixations in ch
   assert.equal(series[0].sampleRateHz, 58);
   assert.equal(series[0].saccades, 21);
   assert.equal(series[0].regressions, 4);
+  assert.equal(series[0].lineReturns, 3);
   assert.equal(series[0].meanFixationMs, 390);
   assert.equal(series[1].sourceKind, 'reading-session');
   assert.equal(series[1].signalQuality.grade, 'exploratorio');
   assert.equal(series[1].sourceLabel, 'Leitura calibrada');
   assert.equal(series[1].sampleRateHz, 62);
   assert.equal(series[1].saccades, 14);
+  assert.equal(series[1].lineReturns, null);
   assert.equal(series[1].meanFixationMs, 420);
 });

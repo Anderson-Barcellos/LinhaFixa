@@ -14,11 +14,23 @@ export type { SaccadeEvent };
 const VELOCITY_THRESHOLD = 0.0025; // ratio units / ms
 // Ignore tiny saccades that are likely tracking noise.
 const MIN_SACCADE_AMPLITUDE = 0.04; // ratio units
-// Leftward saccades at least this large are line-return sweeps (the eye jumping back
-// to start the next line), not re-reading regressions. Counting them as regressions
-// would inflate the clinical regression ratio by ~1 per line read. Aligned with
-// LINE_RETURN_DH in visualSignal.ts; recalibrate with real PACK 2 capture data.
-const LINE_RETURN_MIN_AMPLITUDE = 0.35; // ratio units
+// Leftward saccades large enough are line-return sweeps (the eye jumping back to
+// start the next line), not re-reading regressions. Counting them as regressions
+// would inflate the clinical regression ratio by ~1 per line read.
+//
+// The threshold is ADAPTIVE: a sweep spans roughly the whole line while reading
+// saccades and true regressions span a word or two, but the absolute scale of both
+// depends on the signal (calibrated canvas ratios vs raw iris ratios, calibration
+// gain, viewing distance). A fixed cut in ratio units misclassifies sweeps whenever
+// the signal is compressed — raw iris ratios squeeze a full line into ~0.2. So the
+// cut is derived per capture from the median progressive (rightward) amplitude,
+// bounded by an absolute floor (noise guard) and by the historical 0.35 cap (a
+// leftward jump that big is always a sweep). With no progressive saccades to anchor
+// on, the cap alone applies. visualSignal.ts keeps its own fixed LINE_RETURN_DH for
+// the live candidate hint; this clinical classification is the source of truth.
+const LINE_RETURN_RELATIVE_FACTOR = 3;      // × median progressive amplitude
+const LINE_RETURN_THRESHOLD_FLOOR = 0.08;   // ratio units (2× MIN_SACCADE_AMPLITUDE)
+const LINE_RETURN_THRESHOLD_CAP = 0.35;     // ratio units (previous fixed threshold)
 // A gap between consecutive samples longer than this means tracking dropped out
 // (face lost, tab hidden); any fixation interval containing such a gap is discarded
 // instead of inflating the mean fixation duration.
@@ -75,26 +87,14 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
   // True when the interval since lastSaccadeEndT contains a tracking gap.
   let gapInFixation = false;
 
-  const amplitudes: number[] = [];
   const fixationDurations: number[] = [];
-  let regressionCount = 0;
-  let lineReturnCount = 0;
-  const events: SaccadeEvent[] | undefined = options.collectEvents ? [] : undefined;
+  // Detected saccade candidates, classified in a second pass once the whole
+  // capture's progressive amplitudes are known (the line-return cut is relative).
+  const candidates: { amplitude: number; tStart: number; tEnd: number }[] = [];
 
-  // Close a saccade with the given signed amplitude, routing it to the right bucket.
-  // Line-return sweeps are counted separately and kept OUT of the reading-saccade
-  // amplitudes and regression count.
   const closeSaccade = (amplitude: number, tStart: number, tEnd: number) => {
     if (Math.abs(amplitude) < MIN_SACCADE_AMPLITUDE) return;
-    if (amplitude < 0 && Math.abs(amplitude) >= LINE_RETURN_MIN_AMPLITUDE) {
-      lineReturnCount++;
-      events?.push({ tStart, tEnd, amplitude, kind: 'line-return' });
-      return;
-    }
-    amplitudes.push(Math.abs(amplitude));
-    // Reading is left-to-right (increasing h): a leftward saccade is a regression.
-    if (amplitude < 0) regressionCount++;
-    events?.push({ tStart, tEnd, amplitude, kind: amplitude < 0 ? 'regression' : 'saccade' });
+    candidates.push({ amplitude, tStart, tEnd });
   };
 
   for (let i = 1; i < valid.length; i++) {
@@ -127,6 +127,33 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
     closeSaccade(h[h.length - 1] - saccadeStartH, saccadeStartT, valid[valid.length - 1].t);
   }
 
+  // Second pass: derive the line-return cut from this capture's own progressive
+  // amplitudes, then route each candidate to its bucket. Line-return sweeps stay
+  // OUT of the reading-saccade amplitudes and regression count.
+  const progressive = candidates.filter(c => c.amplitude > 0).map(c => c.amplitude);
+  const lineReturnThreshold = progressive.length
+    ? Math.min(
+        LINE_RETURN_THRESHOLD_CAP,
+        Math.max(LINE_RETURN_THRESHOLD_FLOOR, LINE_RETURN_RELATIVE_FACTOR * median(progressive))
+      )
+    : LINE_RETURN_THRESHOLD_CAP;
+
+  const amplitudes: number[] = [];
+  let regressionCount = 0;
+  let lineReturnCount = 0;
+  const events: SaccadeEvent[] | undefined = options.collectEvents ? [] : undefined;
+  for (const { amplitude, tStart, tEnd } of candidates) {
+    if (amplitude < 0 && Math.abs(amplitude) >= lineReturnThreshold) {
+      lineReturnCount++;
+      events?.push({ tStart, tEnd, amplitude, kind: 'line-return' });
+      continue;
+    }
+    amplitudes.push(Math.abs(amplitude));
+    // Reading is left-to-right (increasing h): a leftward saccade is a regression.
+    if (amplitude < 0) regressionCount++;
+    events?.push({ tStart, tEnd, amplitude, kind: amplitude < 0 ? 'regression' : 'saccade' });
+  }
+
   const mean = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
 
   return {
@@ -141,6 +168,12 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
     meanFixationMs: mean(fixationDurations),
     ...(events ? { events } : {}),
   };
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 function sampleRateHz(samples: GazeSample[]): number {

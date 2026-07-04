@@ -1,5 +1,5 @@
 import { openDB, DBSchema } from 'idb';
-import { UserProfile, SessionResult, ValidationCapture } from '@/types';
+import { UserProfile, SessionResult, ValidationCapture, PreTestContext, RecallTestResult } from '@/types';
 
 interface LinhaFixaDB extends DBSchema {
   profile: {
@@ -20,10 +20,15 @@ interface LinhaFixaDB extends DBSchema {
     value: ValidationCapture;
     indexes: { 'by-date': number };
   };
+  recallTests: {
+    key: string;
+    value: RecallTestResult;
+    indexes: { 'by-date': number };
+  };
 }
 
 const DB_NAME = 'linhafixa_db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export async function initDB() {
   return openDB<LinhaFixaDB>(DB_NAME, DB_VERSION, {
@@ -41,6 +46,10 @@ export async function initDB() {
       if (!db.objectStoreNames.contains('validationCaptures')) {
         const captureStore = db.createObjectStore('validationCaptures', { keyPath: 'id' });
         captureStore.createIndex('by-date', 'timestamp');
+      }
+      if (!db.objectStoreNames.contains('recallTests')) {
+        const recallStore = db.createObjectStore('recallTests', { keyPath: 'id' });
+        recallStore.createIndex('by-date', 'timestamp');
       }
     },
   });
@@ -77,6 +86,20 @@ export async function getSessions(): Promise<SessionResult[]> {
   return db.getAllFromIndex('sessions', 'by-date');
 }
 
+// Prefill helper: the latest pre-test context saved today, so a second test in the
+// same day starts from the morning's answers instead of asking everything again.
+export async function getTodayPreContext(): Promise<PreTestContext | null> {
+  const sessions = await getSessions();
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  for (let i = sessions.length - 1; i >= 0; i--) {
+    const s = sessions[i];
+    if (s.timestamp < startOfDay.getTime()) break; // by-date index: older from here on
+    if (s.contextBefore) return s.contextBefore;
+  }
+  return null;
+}
+
 export async function saveValidationCapture(capture: ValidationCapture) {
   const db = await initDB();
   await db.put('validationCaptures', capture);
@@ -92,4 +115,16 @@ export async function getValidationCaptures(): Promise<ValidationCapture[]> {
 export async function deleteValidationCapture(id: string) {
   const db = await initDB();
   await db.delete('validationCaptures', id);
+}
+
+export async function saveRecallTest(result: RecallTestResult) {
+  const db = await initDB();
+  await db.put('recallTests', result);
+}
+
+// Most-recent-first, matching the captures listing.
+export async function getRecallTests(): Promise<RecallTestResult[]> {
+  const db = await initDB();
+  const tests = await db.getAllFromIndex('recallTests', 'by-date');
+  return tests.reverse();
 }

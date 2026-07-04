@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  createLiveStabilityTracker,
   getPosturalBaseline,
   resetPosturalBaseline,
   setPosturalBaseline,
   summarizePosturalBaseline,
   summarizePosturalStability,
+  toPosturalSample,
+  REFERENCE_FACE_SCALE,
   PosturalSample,
 } from './posturalStability';
 
@@ -112,4 +115,72 @@ test('summarizePosturalStability reports insufficient signal with too few sample
   assert.equal(m.status, 'insufficient');
   assert.equal(m.samples, 1);
   assert.match(m.insight, /amostras de cabeça suficientes/);
+});
+
+test('toPosturalSample yields the same values for the same head angle at different camera distances', () => {
+  // Same physical head rotation seen closer to the camera: the face doubles in
+  // frame size and the raw landmark-based yaw/pitch double with it.
+  const far = toPosturalSample({ yaw: 3, pitch: 12, roll: 4, scale: REFERENCE_FACE_SCALE });
+  const near = toPosturalSample({ yaw: 6, pitch: 24, roll: 4, scale: REFERENCE_FACE_SCALE * 2 });
+
+  assert.ok(Math.abs(far.yaw - near.yaw) < 1e-9);
+  assert.ok(Math.abs(far.pitch - near.pitch) < 1e-9);
+  assert.equal(far.roll, near.roll, 'roll is already in degrees and must not be rescaled');
+});
+
+test('toPosturalSample falls back to raw values when the face scale is missing or degenerate', () => {
+  assert.deepEqual(toPosturalSample({ yaw: 3, pitch: 12, roll: 4 }), { yaw: 3, pitch: 12, roll: 4 });
+  assert.deepEqual(toPosturalSample({ yaw: 3, pitch: 12, roll: 4, scale: 0 }), { yaw: 3, pitch: 12, roll: 4 });
+});
+
+test('summarizePosturalStability does not count slow reading drift as tremor', () => {
+  // Long read down a tall page: pitch drifts steadily 0..20 while the actual
+  // tremor stays tiny (alternating ±0.5). Raw std of the ramp alone is ~5.8,
+  // which used to sink cervical stability for a perfectly healthy read.
+  const samples = buildSamples(200, i => ({
+    yaw: i % 2 === 0 ? 0.5 : -0.5,
+    pitch: (i / 199) * 20 + (i % 2 === 0 ? 0.5 : -0.5),
+  }));
+  const m = summarizePosturalStability(samples);
+
+  assert.equal(m.cervicalStability, 100);
+  assert.equal(m.status, 'stable');
+});
+
+test('createLiveStabilityTracker tolerates an anatomically biased but steady pose', () => {
+  // The nose tip sits below the eye line, so a neutral face reports a large
+  // positive pitch. The old absolute |pitch| < 5 check flagged this as movement.
+  const tracker = createLiveStabilityTracker(null);
+  let stable = true;
+  for (let i = 0; i < 120; i++) {
+    stable = tracker.update({ yaw: 1, pitch: 12, roll: 0 });
+  }
+  assert.equal(stable, true);
+});
+
+test('createLiveStabilityTracker flags a sustained deviation and recovers with hysteresis', () => {
+  const tracker = createLiveStabilityTracker(null);
+  for (let i = 0; i < 60; i++) tracker.update({ yaw: 1, pitch: 12, roll: 0 });
+
+  // Head turns away and stays there: must flip to unstable after the debounce.
+  let stable = true;
+  for (let i = 0; i < 20; i++) stable = tracker.update({ yaw: 11, pitch: 12, roll: 0 });
+  assert.equal(stable, false);
+
+  // A single frame back near baseline is not enough to clear the warning...
+  assert.equal(tracker.update({ yaw: 1, pitch: 12, roll: 0 }), false);
+  // ...but a sustained return is.
+  for (let i = 0; i < 20; i++) stable = tracker.update({ yaw: 1, pitch: 12, roll: 0 });
+  assert.equal(stable, true);
+});
+
+test('createLiveStabilityTracker uses the calibration baseline immediately when provided', () => {
+  const baseline = summarizePosturalBaseline(buildSamples(20, () => ({ yaw: 4, pitch: -2, roll: 0 })));
+  const tracker = createLiveStabilityTracker(baseline);
+
+  // First frames already compare against the calibrated neutral pose (no warmup):
+  // a large sustained deviation flips to unstable within the debounce window.
+  let stable = true;
+  for (let i = 0; i < 20; i++) stable = tracker.update({ yaw: 14, pitch: -2, roll: 0 });
+  assert.equal(stable, false);
 });

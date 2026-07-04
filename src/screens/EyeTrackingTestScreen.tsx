@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Camera, Eye, Play, Square, RotateCcw, Crosshair, Trash2, Database } from 'lucide-react';
+import { ArrowLeft, BookOpen, Camera, Check, Eye, Play, RotateCcw, Crosshair, Trash2, Database } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import {
   initFaceTracking, isFaceTrackingActive, estimateHeadPose, estimateGaze, extractGazeFeatures, getLastLandmarks,
@@ -26,11 +26,15 @@ import {
   getPosturalBaseline,
   resetPosturalBaseline,
   summarizePosturalStability,
+  toPosturalSample,
   type PosturalStabilityMetrics,
   type PosturalSample,
 } from '@/exercises/posturalStability';
-import { CaptureEnvironment, GazeSample, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
-import { saveValidationCapture, getValidationCaptures, deleteValidationCapture } from '@/services/storage';
+import { CaptureEnvironment, GazeSample, PreTestContext, RecallQuestion, RecallTestResult, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
+import { saveValidationCapture, getValidationCaptures, deleteValidationCapture, getTodayPreContext, saveRecallTest } from '@/services/storage';
+import { PreContextForm } from '@/components/QuickContextForm';
+import { RecallQuiz } from '@/components/RecallQuiz';
+import { getRecallText, getRecallQuestions, type RecallContent } from '@/services/recallService';
 import { summarizeAxisSignal, serializeValidationExport, selectCaptureSeries } from '@/services/validationCapture';
 import { summarizeSaccadeSignalQuality } from '@/services/signalQuality';
 import {
@@ -56,7 +60,9 @@ import {
 // actually being detected/tracked on the target device (iPhone Pro Max, landscape)
 // before relying on the signal inside the exercises.
 
-const CAPTURE_MS = 20000; // measured reading capture window
+// Safety ceiling only: the capture normally ends when the reader clicks
+// "Terminei de ler", so the reading pace (not a fixed timer) sets the duration.
+const CAPTURE_SAFETY_CAP_MS = 120000;
 const DIAGNOSTICS_PANEL_WIDTH_PX = 288;
 const DIAGNOSTICS_HEADER_HEIGHT_PX = 73;
 const DIAGNOSTICS_DESKTOP_GUTTER_PX = 48; // horizontal padding + gap around canvas/panel
@@ -112,8 +118,8 @@ export function EyeTrackingTestScreen() {
   const [text, setText] = useState('Carregando texto de leitura…');
   const [readingTextState, setReadingTextState] = useState<ReadingTextState>('loading');
   const [capturing, setCapturing] = useState(false);
-  const [captureRemaining, setCaptureRemaining] = useState(0);
-  const [captureResult, setCaptureResult] = useState<{ metrics: SaccadeMetrics; coverage: number; postural: PosturalStabilityMetrics; environment?: CaptureEnvironment; calibratedSampleCount?: number; rawSampleCount?: number } | null>(null);
+  const [captureElapsed, setCaptureElapsed] = useState(0);
+  const [captureResult, setCaptureResult] = useState<{ metrics: SaccadeMetrics; coverage: number; postural: PosturalStabilityMetrics; environment?: CaptureEnvironment; calibratedSampleCount?: number; rawSampleCount?: number; extrapolatedSampleCount?: number } | null>(null);
   const [motionQuality, setMotionQuality] = useState<MotionQuality>(() => getMotionQuality());
   const [liveSignal, setLiveSignal] = useState<FunctionalVisualSignalSummary>(EMPTY_VISUAL_SIGNAL);
   const [conditions, setConditions] = useState<ValidationConditions>({
@@ -124,6 +130,32 @@ export function EyeTrackingTestScreen() {
   const [captures, setCaptures] = useState<ValidationCapture[]>([]);
   const [showCaptures, setShowCaptures] = useState(false);
   const [exportNote, setExportNote] = useState<string | null>(null);
+  // Quick pre-test context: asked once per session (prefilled from today's first
+  // test), tagged onto every capture saved afterwards. Unlike the exercise player
+  // this screen never blocks — it's instrument validation, the context is provenance.
+  const [preContext, setPreContext] = useState<PreTestContext | null>(null);
+  const [contextDraft, setContextDraft] = useState<PreTestContext>({ venvanseTakenAt: null, sleepHours: 7, mood: 3, feeling: 3 });
+  const [contextFormOpen, setContextFormOpen] = useState(false);
+  const preContextRef = useRef<PreTestContext | null>(null);
+  useEffect(() => { preContextRef.current = preContext; }, [preContext]);
+  useEffect(() => {
+    getTodayPreContext()
+      .then(ctx => { if (ctx) setContextDraft(ctx); })
+      .catch(() => {/* keep defaults */});
+  }, []);
+
+  // --- Leitura + Recall mode ---
+  // 'capture' shows the short AI text and just records gaze; 'recall' swaps in an
+  // intermediate factual text and, after "Terminei de ler", runs a 6-question quiz.
+  const [testMode, setTestMode] = useState<'capture' | 'recall'>('capture');
+  const testModeRef = useRef<'capture' | 'recall'>('capture');
+  const [recallContent, setRecallContent] = useState<RecallContent | null>(null);
+  const recallContentRef = useRef<RecallContent | null>(null);
+  const shortTextRef = useRef<string | null>(null);
+  const [recallQuiz, setRecallQuiz] = useState<RecallQuestion[] | null>(null);
+  const [recallGenState, setRecallGenState] = useState<'idle' | 'generating' | 'error'>('idle');
+  const [recallOutcome, setRecallOutcome] = useState<{ score: number; total: number; topic: string } | null>(null);
+  const lastRecallCaptureRef = useRef<{ captureId: string; readingDurationMs: number } | null>(null);
   const [calibrationSurfaceRect, setCalibrationSurfaceRect] = useState<SurfaceRect | null>(null);
 
   // Loop-local mutable state (refs so the rAF loop is created once).
@@ -157,6 +189,9 @@ export function EyeTrackingTestScreen() {
   // as fake saccades.
   const captureCalSamplesRef = useRef<GazeSample[]>([]);
   const captureRawSamplesRef = useRef<GazeSample[]>([]);
+  // Frames whose calibrated prediction was rejected for extrapolation (clamped
+  // outside [0,1]); provenance for how often the model left its fitted region.
+  const captureExtrapolatedRef = useRef(0);
   const captureFaceRef = useRef(0);
   const captureTotalRef = useRef(0);
   const posturalSamplesRef = useRef<PosturalSample[]>([]);
@@ -194,6 +229,7 @@ export function EyeTrackingTestScreen() {
       .then(generatedText => {
         const cleanText = generatedText.trim();
         if (!cleanText) throw new Error('empty generated reading text');
+        shortTextRef.current = cleanText;
         setText(cleanText);
         setReadingTextState('ready');
       })
@@ -202,6 +238,60 @@ export function EyeTrackingTestScreen() {
         setReadingTextState('error');
       });
   }, []);
+
+  const loadRecallText = () => {
+    setReadingTextState('loading');
+    setText('Gerando texto de leitura para recall…');
+    setRecallContent(null);
+    recallContentRef.current = null;
+    getRecallText()
+      .then(content => {
+        setRecallContent(content);
+        recallContentRef.current = content;
+        setText(content.text);
+        setReadingTextState('ready');
+      })
+      .catch(() => {
+        setText('Não foi possível gerar o texto de recall por IA.');
+        setReadingTextState('error');
+      });
+  };
+
+  const switchMode = (mode: 'capture' | 'recall') => {
+    if (mode === testMode || capturingRef.current) return;
+    setTestMode(mode);
+    testModeRef.current = mode;
+    setRecallOutcome(null);
+    if (mode === 'recall') {
+      loadRecallText();
+    } else if (shortTextRef.current) {
+      setText(shortTextRef.current);
+      setReadingTextState('ready');
+    }
+  };
+
+  const handleQuizDone = (answers: number[], score: number) => {
+    const content = recallContentRef.current;
+    if (content && recallQuiz) {
+      const result: RecallTestResult = {
+        id: Date.now().toString(),
+        timestamp: Date.now(),
+        topic: content.topic,
+        text: content.text,
+        questions: recallQuiz,
+        answers,
+        score,
+        readingDurationMs: lastRecallCaptureRef.current?.readingDurationMs ?? 0,
+        captureId: lastRecallCaptureRef.current?.captureId,
+        context: preContextRef.current ?? undefined,
+      };
+      saveRecallTest(result).catch(() => {/* keep the on-screen result */});
+      setRecallOutcome({ score, total: recallQuiz.length, topic: content.topic });
+    }
+    setRecallQuiz(null);
+    // Fresh text for the next run — rereading the same passage would inflate recall.
+    loadRecallText();
+  };
 
   // Load saved validation captures once.
   useEffect(() => {
@@ -398,6 +488,7 @@ export function EyeTrackingTestScreen() {
       const calibrated = isCalibrated();
       let dot: { x: number; y: number } | null = null;
       let dotCalibrated = false;
+      let dotExtrapolated = false;
       if (calibrated) {
         const feat = extractGazeFeatures(video, ts);
         const norm = feat ? predictNorm(feat) : null;
@@ -421,7 +512,12 @@ export function EyeTrackingTestScreen() {
             rectFromElement(canvas),
             { width: viewportWidth, height: viewportHeight }
           );
-          if (signatureStatus.matches && localPoint.inBounds && distanceOk) {
+          // An extrapolated prediction is clamped to the border — a fabricated
+          // position, rejected like an out-of-bounds/stale-signature point (the
+          // amber raw dot takes over). It is still counted during captures as a
+          // provenance signal of how often the model left its calibrated region.
+          dotExtrapolated = norm.extrapolated;
+          if (signatureStatus.matches && localPoint.inBounds && distanceOk && !norm.extrapolated) {
             dot = { x: localPoint.x, y: localPoint.y };
             dotCalibrated = true;
           }
@@ -472,21 +568,21 @@ export function EyeTrackingTestScreen() {
         const tMs = ts - captureStartRef.current;
         captureTotalRef.current += 1;
         if (faceFound) captureFaceRef.current += 1;
-        if (pose) posturalSamplesRef.current.push({ yaw: pose.yaw, pitch: pose.pitch, roll: pose.roll });
+        if (pose) posturalSamplesRef.current.push(toPosturalSample(pose));
         if (getMotionQuality().status === 'shaking') captureShakeRef.current = true;
         // Only real IPD-based estimates enter the provenance median; the profile
         // fallback would fake a measurement that never happened.
         if (ipdPx != null && anchor) captureDistanceSamplesRef.current.push(dEst);
+        if (!blinking && dotExtrapolated) captureExtrapolatedRef.current += 1;
         if (!blinking && dotCalibrated && dot) {
           captureCalSamplesRef.current.push({ t: tMs, h: dot.x / cssW, v: dot.y / cssH });
         } else if (!blinking && gaze) {
           captureRawSamplesRef.current.push({ t: tMs, h: gaze.h, v: gaze.v });
         }
-        const remaining = Math.max(0, CAPTURE_MS - tMs);
-        if (remaining <= 0) {
+        if (tMs >= CAPTURE_SAFETY_CAP_MS) {
           finishCapture();
         } else if (ts - lastLivePushRef.current > 200) {
-          setCaptureRemaining(remaining);
+          setCaptureElapsed(tMs);
         }
       }
 
@@ -508,19 +604,25 @@ export function EyeTrackingTestScreen() {
 
   const startCapture = () => {
     if (readingTextState !== 'ready') return;
+    // First capture of the session: collect the quick context before recording.
+    if (!preContextRef.current) {
+      setContextFormOpen(true);
+      return;
+    }
     // Freeze the stimulus geometry for the whole measurement window.
     frozenFontPxRef.current = Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
     capturingRef.current = true;
     captureStartRef.current = performance.now();
     captureCalSamplesRef.current = [];
     captureRawSamplesRef.current = [];
+    captureExtrapolatedRef.current = 0;
     captureFaceRef.current = 0;
     captureTotalRef.current = 0;
     posturalSamplesRef.current = [];
     captureShakeRef.current = false;
     captureDistanceSamplesRef.current = [];
     setCaptureResult(null);
-    setCaptureRemaining(CAPTURE_MS);
+    setCaptureElapsed(0);
     setCapturing(true);
   };
 
@@ -550,6 +652,7 @@ export function EyeTrackingTestScreen() {
       metrics, coverage, postural, environment,
       calibratedSampleCount: series.calibratedSampleCount,
       rawSampleCount: series.rawSampleCount,
+      extrapolatedSampleCount: captureExtrapolatedRef.current,
     });
 
     // Persist the tagged capture so PACK 1 thresholds can be calibrated on real data.
@@ -564,6 +667,7 @@ export function EyeTrackingTestScreen() {
       id: Date.now().toString(),
       timestamp: Date.now(),
       conditions: conditionsAtFinish,
+      context: preContextRef.current ?? undefined,
       coverage,
       calibrated: series.signalSource === 'calibrated-mediapipe',
       metrics,
@@ -578,10 +682,22 @@ export function EyeTrackingTestScreen() {
       orientation: currentOrientation(),
       calibratedSampleCount: series.calibratedSampleCount,
       rawSampleCount: series.rawSampleCount,
+      extrapolatedSampleCount: captureExtrapolatedRef.current,
     };
     saveValidationCapture(capture)
       .then(() => setCaptures(prev => [capture, ...prev]))
       .catch(() => {/* keep the on-screen report even if persistence fails */});
+
+    // Recall mode: the reading just ended, generate the quiz over the text that was
+    // actually on screen. The capture above is saved either way — only the quiz is
+    // at the mercy of the AI call.
+    lastRecallCaptureRef.current = { captureId: capture.id, readingDurationMs: Math.round(durationMs) };
+    if (testModeRef.current === 'recall' && recallContentRef.current) {
+      setRecallGenState('generating');
+      getRecallQuestions(recallContentRef.current.text)
+        .then(questions => { setRecallQuiz(questions); setRecallGenState('idle'); })
+        .catch(() => setRecallGenState('error'));
+    }
   };
 
   const removeCapture = (id: string) => {
@@ -617,6 +733,10 @@ export function EyeTrackingTestScreen() {
 
   const diagnosticsLayout = diagnosticsLayoutMode({ viewportWidth, hasTouch: IS_MOBILE });
   const isDesktopDiagnosticsLayout = diagnosticsLayout === 'desktop';
+  // Effective display scale (OS scaling × browser zoom). On desktop, ≠100% means the
+  // physical size of a CSS px differs from the 96dpi assumption behind the angular
+  // stimulus sizes; the value is already persisted per capture via CaptureEnvironment.
+  const displayScalePct = Math.round((typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1) * 100);
   const diagnosticsSurface = computeDiagnosticsSurface({
     viewportWidth,
     viewportHeight,
@@ -735,9 +855,13 @@ export function EyeTrackingTestScreen() {
               <span className="h-2 w-2 rounded-full bg-indigo-300" />
               Área fixa de leitura e calibração
             </div>
-            <div className="absolute right-4 top-4 rounded-full bg-slate-950/70 px-3 py-1.5 text-[11px] font-semibold text-slate-200 backdrop-blur">
-              {Math.round(diagnosticsSurface.width)}×{Math.round(diagnosticsSurface.height)} px
-            </div>
+            {/* Desktop only: on the phone it collides with the left chip and the
+                compact surface is the element itself, not the computed bounds. */}
+            {isDesktopDiagnosticsLayout && (
+              <div className="absolute right-4 top-4 rounded-full bg-slate-950/70 px-3 py-1.5 text-[11px] font-semibold text-slate-200 backdrop-blur">
+                {Math.round(diagnosticsSurface.width)}×{Math.round(diagnosticsSurface.height)} px
+              </div>
+            )}
             <div className="absolute left-3 top-3 h-10 w-10 rounded-tl-2xl border-l-2 border-t-2 border-indigo-300/90" />
             <div className="absolute right-3 top-3 h-10 w-10 rounded-tr-2xl border-r-2 border-t-2 border-indigo-300/90" />
             <div className="absolute bottom-3 left-3 h-10 w-10 rounded-bl-2xl border-b-2 border-l-2 border-indigo-300/90" />
@@ -780,15 +904,19 @@ export function EyeTrackingTestScreen() {
         </div>
 
         {/* Diagnostics panel */}
-        <aside className={`${isDesktopDiagnosticsLayout ? 'w-72 border-l max-h-none' : 'w-full border-t max-h-[42vh]'} shrink-0 bg-slate-800/80 border-white/10 p-4 overflow-y-auto flex flex-col gap-4`}>
-          {/* Mirrored camera preview */}
-          <div className="rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center">
-            {cameraState === 'running'
-              ? <MirroredPreview stream={streamRef} streamId={streamRef.current?.id ?? ''} />
-              : <span className="text-slate-500 text-sm">sem vídeo</span>}
-          </div>
+        <aside className={`${isDesktopDiagnosticsLayout ? 'w-72 border-l max-h-none' : 'w-full border-t max-h-[42vh] overflow-y-auto'} shrink-0 bg-slate-800/80 border-white/10 p-4 flex flex-col gap-4`}>
+          {/* Mirrored camera preview — desktop only. On the phone the panel shares
+              42vh with the reading area, and the chips (Rosto/Olhos) already give
+              the framing feedback, so the big preview would just eat the space. */}
+          {isDesktopDiagnosticsLayout && (
+            <div className="shrink-0 rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center">
+              {cameraState === 'running'
+                ? <MirroredPreview stream={streamRef} streamId={streamRef.current?.id ?? ''} />
+                : <span className="text-slate-500 text-sm">sem vídeo</span>}
+            </div>
+          )}
 
-          <div className="flex flex-wrap gap-2">
+          <div className="shrink-0 flex flex-wrap gap-2">
             <Chip ok={cameraState === 'running'} label={cameraState === 'running' ? 'Câmera' : 'Câmera off'} />
             <Chip ok={live.faceFound} label="Rosto" />
             <Chip ok={live.eyesFound} label="Olhos" />
@@ -798,7 +926,17 @@ export function EyeTrackingTestScreen() {
               label={motionStatusLabel(motionQuality.status)}
               neutral={motionQuality.status === 'unavailable'}
             />
+            {isDesktopDiagnosticsLayout && (
+              <Chip ok neutral label={`Escala ${displayScalePct}%`} />
+            )}
           </div>
+
+          {/* On desktop the preview/chips above and the action buttons below stay
+              pinned; only this middle section scrolls, so the camera never leaves
+              view while reaching the controls. Compact keeps the single scroll.
+              -mr-4/pr-4 park a classic (non-overlay) scrollbar inside the panel's
+              own padding so the cards keep the same width as the pinned rows. */}
+          <div className={isDesktopDiagnosticsLayout ? 'min-h-0 overflow-y-auto flex flex-col gap-4 -mr-4 pr-4 [scrollbar-width:thin]' : 'contents'}>
 
           <div className="grid grid-cols-2 gap-2 text-sm">
             <Metric label="FPS detecção" value={live.fps ? String(live.fps) : '—'} />
@@ -838,16 +976,28 @@ export function EyeTrackingTestScreen() {
             <p className="text-xs text-slate-400 mt-3">{liveSignal.detail}</p>
           </div>
 
-          <div className="text-xs text-slate-400">
-            Horizontal é o eixo principal da leitura; vertical/diagonal fica como contexto.
-            <br />
-            O traço inferior mostra a captação funcional do movimento; a bolinha pequena é só apoio técnico.
-            <br />
-            <span className="text-blue-400 font-bold">Azul</span> = sinal calibrado ·{' '}
-            <span className="text-amber-400 font-bold">âmbar</span> = sinal bruto
-            <br />
-            Motion Assist sinaliza mudança do iPhone desde a calibração; não corrige o olhar automaticamente.
-          </div>
+          <details className="rounded-xl bg-slate-900/40 border border-white/10 px-3 py-2 text-xs text-slate-400">
+            <summary className="cursor-pointer select-none font-bold text-slate-300">
+              Como interpretar os indicadores
+            </summary>
+            <div className="mt-2">
+              Horizontal é o eixo principal da leitura; vertical/diagonal fica como contexto.
+              <br />
+              O traço inferior mostra a captação funcional do movimento; a bolinha pequena é só apoio técnico.
+              <br />
+              <span className="text-blue-400 font-bold">Azul</span> = sinal calibrado ·{' '}
+              <span className="text-amber-400 font-bold">âmbar</span> = sinal bruto
+              <br />
+              Motion Assist sinaliza mudança do iPhone desde a calibração; não corrige o olhar automaticamente.
+              {isDesktopDiagnosticsLayout && (
+                <>
+                  <br />
+                  Escala {displayScalePct}% = sistema × zoom do navegador. Os tamanhos angulares do
+                  estímulo assumem 96 dpi; a escala fica registrada em cada captura.
+                </>
+              )}
+            </div>
+          </details>
 
           {/* PACK 2: tag the physical conditions so captures are comparable. */}
           <div className="rounded-xl bg-slate-900/50 border border-white/10 p-3 flex flex-col gap-3">
@@ -888,7 +1038,22 @@ export function EyeTrackingTestScreen() {
             />
           </div>
 
-          <div className="mt-auto flex flex-col gap-2">
+          </div>
+
+          <div className="shrink-0 flex flex-col gap-2">
+            <div className="grid grid-cols-2 gap-1 bg-white/5 rounded-xl p-1">
+              <button
+                onClick={() => switchMode('capture')}
+                disabled={capturing}
+                className={`px-2 py-2 rounded-lg text-xs font-bold transition-colors ${testMode === 'capture' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-white/10'}`}
+              >Captura simples</button>
+              <button
+                onClick={() => switchMode('recall')}
+                disabled={capturing}
+                className={`px-2 py-2 rounded-lg text-xs font-bold transition-colors ${testMode === 'recall' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-white/10'}`}
+              >Leitura + Recall</button>
+            </div>
+
             <button
               onClick={beginCalibration}
               disabled={cameraState !== 'running' && cameraState !== 'idle'}
@@ -903,14 +1068,14 @@ export function EyeTrackingTestScreen() {
                 disabled={!canStartCapture}
                 className="flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-xl font-bold"
               >
-                <Play className="w-4 h-4" /> Iniciar captura ({CAPTURE_MS / 1000}s)
+                <Play className="w-4 h-4" /> {testMode === 'recall' ? 'Ler e responder' : 'Iniciar captura de leitura'}
               </button>
             ) : (
               <button
                 onClick={finishCapture}
-                className="flex items-center justify-center gap-2 px-4 py-3 bg-rose-600 hover:bg-rose-500 rounded-xl font-bold"
+                className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold"
               >
-                <Square className="w-4 h-4" /> Parar ({Math.ceil(captureRemaining / 1000)}s)
+                <Check className="w-4 h-4" /> Terminei de ler ({Math.floor(captureElapsed / 1000)}s)
               </button>
             )}
             {captureBlockReason && (
@@ -933,8 +1098,56 @@ export function EyeTrackingTestScreen() {
         </aside>
       </div>
 
+      {/* Quick pre-test context, asked before the first capture of the session */}
+      {contextFormOpen && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-900/90 p-6 overflow-y-auto">
+          <div className="w-full max-w-2xl">
+            <PreContextForm
+              tone="dark"
+              value={contextDraft}
+              onChange={setContextDraft}
+              submitLabel="Registrar e iniciar captura"
+              onSubmit={() => {
+                // The ref is set directly so the capture that starts right now (before
+                // the state effect runs) already sees the context.
+                preContextRef.current = contextDraft;
+                setPreContext(contextDraft);
+                setContextFormOpen(false);
+                startCapture();
+              }}
+            />
+            <button
+              onClick={() => setContextFormOpen(false)}
+              className="w-full mt-3 py-2 text-slate-400 hover:text-slate-200 text-sm font-medium"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Recall: question generation / quiz overlays (above the capture report) */}
+      {recallGenState === 'generating' && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/90 p-6">
+          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
+          <p className="text-slate-300 font-medium">Gerando questões sobre o texto…</p>
+        </div>
+      )}
+      {recallGenState === 'error' && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/90 p-6 text-center">
+          <p className="text-rose-300 font-bold mb-2">Não foi possível gerar as questões.</p>
+          <p className="text-slate-400 text-sm mb-6 max-w-md">A captura da leitura foi salva normalmente; só o questionário falhou. Tente outra rodada.</p>
+          <button onClick={() => setRecallGenState('idle')} className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold">Fechar</button>
+        </div>
+      )}
+      {recallQuiz && recallContent && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/95 p-4 overflow-y-auto">
+          <RecallQuiz topic={recallContent.topic} questions={recallQuiz} onDone={handleQuizDone} />
+        </div>
+      )}
+
       {/* Capture report */}
-      {captureResult && (
+      {captureResult && !recallQuiz && recallGenState === 'idle' && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-900/90 p-6">
           <div className="bg-slate-800 rounded-3xl p-8 max-w-lg w-full border border-white/10">
             <div className="flex items-center gap-2 mb-1">
@@ -945,6 +1158,16 @@ export function EyeTrackingTestScreen() {
               Estimativa experimental por webcam. Prioriza movimento relativo, ritmo e eventos
               de leitura; não promete palavra exata nem detecta microssacadas.
             </p>
+
+            {recallOutcome && (
+              <div className="rounded-2xl bg-indigo-500/15 border border-indigo-400/30 p-4 mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-1">Recall · {recallOutcome.topic}</div>
+                  <div className="text-2xl font-bold text-white">{recallOutcome.score}/{recallOutcome.total} corretas</div>
+                </div>
+                <BookOpen className="w-8 h-8 text-indigo-300 shrink-0" />
+              </div>
+            )}
 
             {captureResult.metrics.trackingAvailable && captureSummary ? (
               <>
@@ -975,6 +1198,9 @@ export function EyeTrackingTestScreen() {
                   <Metric label="Amostras válidas" value={String(captureResult.metrics.samplesValid)} big />
                   <Metric label="Taxa efetiva" value={captureResult.metrics.sampleRateHz ? `${captureResult.metrics.sampleRateHz} Hz` : 'N/D'} big />
                   <Metric label="Fonte" value={sourceConsistencyLabel(captureResult.metrics.signalSource, captureResult.calibratedSampleCount, captureResult.rawSampleCount)} big />
+                  {(captureResult.extrapolatedSampleCount ?? 0) > 0 && (
+                    <Metric label="Extrapolação rejeitada" value={`${captureResult.extrapolatedSampleCount} frames`} big />
+                  )}
                   <Metric label="Sacadas" value={String(captureResult.metrics.saccadeCount)} big />
                   <Metric label="Regressões" value={String(captureResult.metrics.regressionCount)} big />
                   <Metric label="Retornos de linha" value={captureResult.metrics.lineReturnCount != null ? String(captureResult.metrics.lineReturnCount) : 'N/D'} big />
@@ -1039,10 +1265,10 @@ export function EyeTrackingTestScreen() {
             )}
 
             <div className="flex gap-3 mt-8">
-              <button onClick={() => setCaptureResult(null)} className="flex-1 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold">
+              <button onClick={() => { setCaptureResult(null); setRecallOutcome(null); }} className="flex-1 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold">
                 Fechar
               </button>
-              <button onClick={() => { setCaptureResult(null); startCapture(); }} className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold">
+              <button onClick={() => { setCaptureResult(null); setRecallOutcome(null); startCapture(); }} className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold">
                 Nova captura
               </button>
             </div>

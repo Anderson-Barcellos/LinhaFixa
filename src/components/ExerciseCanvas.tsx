@@ -6,7 +6,7 @@ import { getCalibrationSignature, isCalibrated, predictNorm } from '@/services/g
 import { interpupillaryPx, estimateDistanceCm, getDistanceAnchor, distanceWithinAnchorTolerance } from '@/services/viewingGeometry';
 import { attachStream, getFrontCameraStream } from '@/services/cameraStream';
 import { getMotionQuality } from '@/services/motionSensor';
-import { getPosturalBaseline, summarizePosturalStability, type PosturalSample } from '@/exercises/posturalStability';
+import { createLiveStabilityTracker, getPosturalBaseline, summarizePosturalStability, toPosturalSample, type PosturalSample } from '@/exercises/posturalStability';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import {
   calibrationSignatureMatches,
@@ -54,6 +54,10 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
     // high-movement flag. Summarized into extraData.posturalStability on finish.
     const posturalSamples: PosturalSample[] = [];
     let posturalHighMovement = false;
+
+    // Baseline-relative live stillness check (falls back to a warmup-derived neutral
+    // pose when no calibration baseline exists, which is the player's common case).
+    const liveStability = createLiveStabilityTracker(getPosturalBaseline());
 
     // Live distance estimate (EMA-smoothed), used to invalidate the calibrated gaze
     // point when the user drifts away from the distance the model was calibrated at.
@@ -174,10 +178,10 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
            const headPose = estimateHeadPose(videoRef.current, detectTs);
            if (headPose) {
              framesAnalyzed++;
-             posturalSamples.push({ yaw: headPose.yaw, pitch: headPose.pitch, roll: headPose.roll });
+             const posturalSample = toPosturalSample(headPose);
+             posturalSamples.push(posturalSample);
              if (getMotionQuality().status === 'shaking') posturalHighMovement = true;
-             // Arbitrary threshold for motion
-             const isStable = Math.abs(headPose.yaw) < 5 && Math.abs(headPose.pitch) < 5;
+             const isStable = liveStability.update(posturalSample);
              setHeadStable(isStable);
              if (isStable) framesStable++;
            }
@@ -218,7 +222,9 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
                  rectFromElement(canvas),
                  { width: viewportWidth, height: viewportHeight }
                );
-               exContext.latestGazePoint = signatureStatus.matches && localPoint.inBounds && distanceOk
+               // Extrapolated predictions are clamped border points, not measured
+               // positions — rejected here so oculomotor metrics never ingest them.
+               exContext.latestGazePoint = signatureStatus.matches && localPoint.inBounds && distanceOk && !norm.extrapolated
                  ? { x: localPoint.x, y: localPoint.y }
                  : null;
              } else {

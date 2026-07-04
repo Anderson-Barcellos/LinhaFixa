@@ -11,7 +11,9 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test src/services/*.test.ts src/exercises/*.test.ts",
+    "smoke": "node scripts/smoke-layout.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "0.10.35",
@@ -33,6 +35,7 @@
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
+    "playwright": "^1.61.0",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",

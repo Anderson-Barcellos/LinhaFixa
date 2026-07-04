@@ -1,19 +1,12 @@
-import { SymptomRating } from '@/types';
+import { PreTestContext } from '@/types';
 
-export function checkSymptomsSafety(symptoms: SymptomRating): { safe: boolean; reason?: string } {
-  const HIGH_THRESHOLD = 7;
-  const criticalFactors = [];
-  
-  if (symptoms.dorOcular >= HIGH_THRESHOLD) criticalFactors.push('dor ocular elevada');
-  if (symptoms.cefaleia >= HIGH_THRESHOLD) criticalFactors.push('cefaleia elevada');
-  if (symptoms.visaoDupla >= HIGH_THRESHOLD) criticalFactors.push('visão dupla intensa');
-  if (symptoms.tontura >= HIGH_THRESHOLD) criticalFactors.push('tontura severa');
-  if (symptoms.nausea >= HIGH_THRESHOLD) criticalFactors.push('náusea severa');
-
-  if (criticalFactors.length > 0) {
+// Deterministic gate, never delegated to the AI: a "péssimo" self-report blocks
+// training the same way high symptom scores used to before the quick context.
+export function checkContextSafety(context: PreTestContext): { safe: boolean; reason?: string } {
+  if (context.feeling <= 1) {
     return {
       safe: false,
-      reason: `Atenção: ${criticalFactors.join(', ')}. Interrompa o exercício e procure seu especialista.`
+      reason: 'Você relatou estar se sentindo péssimo agora. Por segurança, adie o treino; se isso persistir, procure seu especialista.'
     };
   }
 

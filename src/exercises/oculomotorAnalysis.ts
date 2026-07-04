@@ -78,7 +78,8 @@ export function analyzeSaccadeTask(samples: OcSample[], pxPerDeg: number): Sacca
     trackingAvailable: false,
     samplesValid: validCount,
     validSaccades: 0,
-    meanLatencyMs: 0,
+    validLatencyCount: 0,
+    meanLatencyMs: null,
     meanAccuracyDeg: 0,
     meanGain: 0,
   };
@@ -143,7 +144,10 @@ export function analyzeSaccadeTask(samples: OcSample[], pxPerDeg: number): Sacca
     trackingAvailable: true,
     samplesValid: validCount,
     validSaccades: accuracies.length,
-    meanLatencyMs: mean(latencies),
+    validLatencyCount: latencies.length,
+    // A landing can be usable while every latency fails the plausibility window;
+    // that is "no measurement" (null), never a perfect-looking 0 ms.
+    meanLatencyMs: latencies.length ? mean(latencies) : null,
     meanAccuracyDeg: mean(accuracies),
     meanGain: mean(gains),
   };

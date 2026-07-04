@@ -1,20 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { SymptomScale } from '@/components/SymptomScale';
+import { PreContextForm, PostContextForm } from '@/components/QuickContextForm';
 import { ExerciseCanvas } from '@/components/ExerciseCanvas';
 import { useAppStore } from '@/store/useAppStore';
 import { generateTreatmentPlan } from '@/services/planner';
-import { checkSymptomsSafety } from '@/services/safety';
-import { saveSession } from '@/services/storage';
+import { checkContextSafety } from '@/services/safety';
+import { saveSession, getTodayPreContext } from '@/services/storage';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { isCalibrated } from '@/services/gazeCalibration';
 import { stopCameraStream } from '@/services/cameraStream';
 import { requestMotionPermissionFromGesture, startMotionSensor, stopMotionSensor } from '@/services/motionSensor';
 import { resetPosturalBaseline } from '@/exercises/posturalStability';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
-import { SymptomRating, TreatmentPlanResponse, SessionResult, ExerciseResult } from '@/types';
+import { PreTestContext, PostTestContext, TreatmentPlanResponse, SessionResult, ExerciseResult } from '@/types';
 
-type PlayerStage = 'PRE_SYMPTOMS' | 'LOADING_PLAN' | 'BLOCKED' | 'PRE_EXERCISE_INFO' | 'CALIBRATION' | 'EXERCISE' | 'POST_READING_RATING' | 'POST_SYMPTOMS' | 'SUMMARY';
+type PlayerStage = 'PRE_CONTEXT' | 'LOADING_PLAN' | 'BLOCKED' | 'PRE_EXERCISE_INFO' | 'CALIBRATION' | 'EXERCISE' | 'POST_READING_RATING' | 'POST_CONTEXT' | 'SUMMARY';
 
 export function ExercisePlayerScreen() {
   const navigate = useNavigate();
@@ -22,12 +22,12 @@ export function ExercisePlayerScreen() {
   const singleExerciseId = location.state?.singleExercise;
 
   const { profile } = useAppStore();
-  const [stage, setStage] = useState<PlayerStage>('PRE_SYMPTOMS');
-  const [symptomsPre, setSymptomsPre] = useState<SymptomRating>({
-    dorOcular: 0, cefaleia: 0, visaoDupla: 0, tontura: 0, nausea: 0, fotofobia: 0, fadigaVisual: 0, borramento: 0
+  const [stage, setStage] = useState<PlayerStage>('PRE_CONTEXT');
+  const [contextPre, setContextPre] = useState<PreTestContext>({
+    venvanseTakenAt: null, sleepHours: 7, mood: 3, feeling: 3
   });
-  const [symptomsPost, setSymptomsPost] = useState<SymptomRating>({
-    dorOcular: 0, cefaleia: 0, visaoDupla: 0, tontura: 0, nausea: 0, fotofobia: 0, fadigaVisual: 0, borramento: 0
+  const [contextPost, setContextPost] = useState<PostTestContext>({
+    feeling: 3, fatigue: 3, mood: 3
   });
   
   const [plan, setPlan] = useState<TreatmentPlanResponse | null>(null);
@@ -45,6 +45,14 @@ export function ExercisePlayerScreen() {
     resetPosturalBaseline();
   }, []);
 
+  // Prefill from the day's first session so repeat sessions start from the
+  // morning's answers instead of asking everything again.
+  useEffect(() => {
+    getTodayPreContext()
+      .then(ctx => { if (ctx) setContextPre(ctx); })
+      .catch(() => {/* keep defaults */});
+  }, []);
+
   // Decide whether to calibrate before the exercise, then enter it.
   const proceedToExercise = async () => {
     if (profile?.cameraEnabled ?? false) {
@@ -55,8 +63,8 @@ export function ExercisePlayerScreen() {
     setStage(needsCalibration ? 'CALIBRATION' : 'EXERCISE');
   };
 
-  const handlePreSymptomsSubmit = async () => {
-    const safety = checkSymptomsSafety(symptomsPre);
+  const handlePreContextSubmit = async () => {
+    const safety = checkContextSafety(contextPre);
     if (!safety.safe) {
       setSafetyReason(safety.reason!);
       setStage('BLOCKED');
@@ -93,7 +101,7 @@ export function ExercisePlayerScreen() {
     }
 
     // Mock call since we'll use fallback for reliability without keys
-    const generatedPlan = await generateTreatmentPlan(profile || { contrastPreference: 'light' } as any, symptomsPre, []);
+    const generatedPlan = await generateTreatmentPlan(profile || { contrastPreference: 'light' } as any, contextPre, []);
     setPlan(generatedPlan);
     
     if (generatedPlan.safetyStatus.allowTraining) {
@@ -129,7 +137,7 @@ export function ExercisePlayerScreen() {
       setCurrentExerciseIndex(prev => prev + 1);
       setStage('PRE_EXERCISE_INFO'); // show info for next exercise
     } else {
-      setStage('POST_SYMPTOMS');
+      setStage('POST_CONTEXT');
     }
   };
 
@@ -147,8 +155,8 @@ export function ExercisePlayerScreen() {
       id: Date.now().toString(),
       timestamp: Date.now(),
       durationSec: plan!.exercises.reduce((acc, ex) => acc + ex.durationSec, 0),
-      symptomsBefore: symptomsPre,
-      symptomsAfter: symptomsPost,
+      contextBefore: contextPre,
+      contextAfter: contextPost,
       exercises,
       clinicianSummaryPtBR: plan!.clinicianSummaryPtBR
     };
@@ -207,7 +215,7 @@ export function ExercisePlayerScreen() {
     const ex = plan.exercises[currentExerciseIndex];
     return (
       <div className="w-screen h-screen relative bg-slate-900">
-         <button onClick={() => setStage('POST_SYMPTOMS')} className="absolute top-6 right-6 z-50 px-6 py-3 bg-slate-800/80 hover:bg-red-600/90 text-white rounded-full font-medium transition-colors border border-slate-700">Parar Imediatamente</button>
+         <button onClick={() => setStage('POST_CONTEXT')} className="absolute top-6 right-6 z-50 px-6 py-3 bg-slate-800/80 hover:bg-red-600/90 text-white rounded-full font-medium transition-colors border border-slate-700">Parar Imediatamente</button>
          <ExerciseCanvas
            exerciseId={ex.exerciseId}
            parameters={ex.parameters}
@@ -222,8 +230,8 @@ export function ExercisePlayerScreen() {
 
   return (
     <div className="min-h-screen bg-slate-50 py-12 px-6">
-      {stage === 'PRE_SYMPTOMS' && (
-        <SymptomScale symptoms={symptomsPre} onChange={setSymptomsPre} onSubmit={handlePreSymptomsSubmit} />
+      {stage === 'PRE_CONTEXT' && (
+        <PreContextForm value={contextPre} onChange={setContextPre} onSubmit={handlePreContextSubmit} />
       )}
       {stage === 'POST_READING_RATING' && (
         <div className="max-w-3xl mx-auto bg-white p-10 py-12 rounded-3xl shadow-sm border border-slate-100 text-center animate-in fade-in slide-in-from-bottom-8">
@@ -337,7 +345,7 @@ export function ExercisePlayerScreen() {
                   setCurrentExerciseIndex(prev => prev + 1);
                   setStage('PRE_EXERCISE_INFO');
                 } else {
-                  setStage('POST_SYMPTOMS');
+                  setStage('POST_CONTEXT');
                 }
              }}
              className="px-10 py-4 bg-slate-900 text-white rounded-xl text-lg font-bold w-full hover:bg-slate-800 transition-colors"
@@ -346,13 +354,13 @@ export function ExercisePlayerScreen() {
            </button>
         </div>
       )}
-      {stage === 'POST_SYMPTOMS' && (
+      {stage === 'POST_CONTEXT' && (
         <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
           <div className="max-w-2xl mx-auto mb-8 text-center">
             <h2 className="text-3xl font-bold text-slate-800">Sessão Concluída!</h2>
-            <p className="text-slate-500 text-lg mt-2 font-medium">Por favor, reavalie seus sintomas.</p>
+            <p className="text-slate-500 text-lg mt-2 font-medium">Registre como terminaste.</p>
           </div>
-          <SymptomScale symptoms={symptomsPost} onChange={setSymptomsPost} onSubmit={finalizeSession} />
+          <PostContextForm value={contextPost} onChange={setContextPost} onSubmit={finalizeSession} />
         </div>
       )}
       {stage === 'SUMMARY' && (
@@ -415,7 +423,7 @@ export function ExercisePlayerScreen() {
                                      stat('Quebras de fixação', `${fx.fixationBreaks}`),
                                   ]}
                                   {sc?.trackingAvailable && [
-                                     stat('Latência média', `${Math.round(sc.meanLatencyMs)} ms`),
+                                     stat('Latência média', sc.meanLatencyMs != null ? `${Math.round(sc.meanLatencyMs)} ms` : 'sem latência válida'),
                                      stat('Precisão (erro)', `${sc.meanAccuracyDeg.toFixed(1)}°`),
                                      stat('Ganho médio', sc.meanGain.toFixed(2)),
                                   ]}

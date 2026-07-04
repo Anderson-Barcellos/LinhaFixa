@@ -166,7 +166,11 @@ export function isCalibrated(): boolean {
 
 // Predict the normalized [0,1] screen position of gaze for a feature vector.
 // Returns null when not calibrated or the feature vector is the wrong shape.
-export function predictNorm(features: number[]): { x: number; y: number } | null {
+// `extrapolated` is true when the raw prediction fell outside [0,1] on either
+// axis: the returned point is clamped for safe display, but a clamped border
+// point is a fabricated position, not a measured one — consumers must not
+// treat it as a valid fixation at the edge.
+export function predictNorm(features: number[]): { x: number; y: number; extrapolated: boolean } | null {
   if (!weightsX || !weightsY || features.length !== GAZE_FEATURE_LENGTH) return null;
   const row = [1, ...standardizeFeatures(features)];
   let x = 0, y = 0;
@@ -174,8 +178,9 @@ export function predictNorm(features: number[]): { x: number; y: number } | null
     x += row[i] * weightsX[i];
     y += row[i] * weightsY[i];
   }
+  const extrapolated = x < 0 || x > 1 || y < 0 || y > 1;
   const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
-  return { x: clamp01(x), y: clamp01(y) };
+  return { x: clamp01(x), y: clamp01(y), extrapolated };
 }
 
 // Store/read the validation accuracy (mean error in degrees) for display in the UI.

@@ -1,4 +1,4 @@
-import { ExerciseResult, SessionResult, ValidationCapture } from '@/types';
+import { SessionResult, SymptomRating, ValidationCapture } from '@/types';
 import { PosturalStabilityMetrics } from '@/exercises/posturalStability';
 import { summarizeSaccadeSignalQuality, type SaccadeSignalQuality } from '@/services/signalQuality';
 
@@ -13,6 +13,7 @@ export interface OcularReadingPoint {
   sampleRateHz: number | null;
   saccades: number;
   regressions: number;
+  lineReturns: number | null; // null on legacy captures without the metric
   meanFixationMs: number;
   samplesValid: number;
   coverage: number | null;
@@ -33,7 +34,9 @@ export interface StatisticsSummary {
     exerciseCount: number;
     totalMinutes: number;
     averageStillness: number | null;
-    symptomDelta: number | null;
+    // Mean feeling change (1-5 scale, after - before) over quick-context sessions;
+    // null when the history only has legacy symptom sessions.
+    wellbeingDelta: number | null;
     latestTimestamp: number | null;
   };
   sections: {
@@ -61,7 +64,8 @@ export function buildStatisticsSummary(
     ...captures.map(c => c.postural),
   ].filter((p): p is PosturalStabilityMetrics => !!p && p.status !== 'insufficient');
   const averageStillness = average(stillnessScores);
-  const symptomDelta = averageSymptomDelta(sessions);
+  const wellbeingDelta = averageWellbeingDelta(sessions);
+  const legacySymptomDelta = averageSymptomDelta(sessions);
   const latestTimestamp = Math.max(
     0,
     ...sessions.map(s => s.timestamp),
@@ -75,12 +79,12 @@ export function buildStatisticsSummary(
       exerciseCount,
       totalMinutes,
       averageStillness,
-      symptomDelta,
+      wellbeingDelta,
       latestTimestamp,
     },
     sections: {
       training: trainingSummary(sortedSessions, exerciseCount, totalMinutes),
-      symptoms: symptomsSummary(sortedSessions, symptomDelta),
+      symptoms: wellbeingSummary(sortedSessions, wellbeingDelta, legacySymptomDelta),
       reading: readingSummary(sessions, captures),
       diagnostics: diagnosticsSummary(sortedCaptures),
       posture: postureSummary(posturalSamples, averageStillness),
@@ -113,6 +117,7 @@ export function buildOcularReadingSeries(
           sampleRateHz: metrics.sampleRateHz ?? null,
           saccades: metrics.saccadeCount,
           regressions: metrics.regressionCount,
+          lineReturns: metrics.lineReturnCount ?? null,
           meanFixationMs: Math.round(metrics.meanFixationMs),
           samplesValid: metrics.samplesValid,
           coverage: null,
@@ -137,6 +142,7 @@ export function buildOcularReadingSeries(
       sampleRateHz: capture.metrics.sampleRateHz ?? null,
       saccades: capture.metrics.saccadeCount,
       regressions: capture.metrics.regressionCount,
+      lineReturns: capture.metrics.lineReturnCount ?? null,
       meanFixationMs: Math.round(capture.metrics.meanFixationMs),
       samplesValid: capture.metrics.samplesValid,
       coverage: Math.round(capture.coverage),
@@ -166,26 +172,45 @@ function trainingSummary(
   );
 }
 
-function symptomsSummary(
+function wellbeingSummary(
   sessions: SessionResult[],
-  symptomDelta: number | null
+  wellbeingDelta: number | null,
+  legacySymptomDelta: number | null
 ): StatisticSectionSummary {
-  if (sessions.length === 0 || symptomDelta === null) {
-    return section('Sintomas', 'N/D', 'sem comparativo', 'Ainda nao ha antes/depois suficiente para resumir variacao de sintomas.', 'slate');
+  if (wellbeingDelta !== null) {
+    const absDelta = Math.abs(wellbeingDelta);
+    const value = `${wellbeingDelta > 0 ? '+' : wellbeingDelta < 0 ? '-' : ''}${formatNumber(absDelta, 1)}`;
+    const direction = wellbeingDelta > 0
+      ? `melhora media de ${formatNumber(absDelta, 1)} ${plural(absDelta, 'ponto', 'pontos')} na sensacao entre inicio e fim`
+      : wellbeingDelta < 0
+        ? `queda media de ${formatNumber(absDelta, 1)} ${plural(absDelta, 'ponto', 'pontos')} na sensacao depois dos testes`
+        : 'sensacao estavel entre antes e depois';
+    return section(
+      'Bem-estar',
+      value,
+      'sensacao (1-5)',
+      `Contexto rapido mostra ${direction}. Use como tendencia de conforto, nao como conclusao clinica isolada.`,
+      wellbeingDelta > 0 ? 'emerald' : wellbeingDelta < 0 ? 'amber' : 'slate'
+    );
   }
-  const absDelta = Math.abs(symptomDelta);
-  const value = `${symptomDelta > 0 ? '-' : symptomDelta < 0 ? '+' : ''}${formatNumber(absDelta, 1)}`;
-  const direction = symptomDelta > 0
+
+  // Legacy fallback: histories saved before the quick context (0-10 symptom scale).
+  if (sessions.length === 0 || legacySymptomDelta === null) {
+    return section('Bem-estar', 'N/D', 'sem comparativo', 'Ainda nao ha antes/depois suficiente para resumir variacao de bem-estar.', 'slate');
+  }
+  const absDelta = Math.abs(legacySymptomDelta);
+  const value = `${legacySymptomDelta > 0 ? '-' : legacySymptomDelta < 0 ? '+' : ''}${formatNumber(absDelta, 1)}`;
+  const direction = legacySymptomDelta > 0
     ? `queda media de ${formatNumber(absDelta, 1)} ${plural(absDelta, 'ponto', 'pontos')} entre inicio e fim das sessoes`
-    : symptomDelta < 0
+    : legacySymptomDelta < 0
       ? `aumento medio de ${formatNumber(absDelta, 1)} ${plural(absDelta, 'ponto', 'pontos')} depois dos treinos`
       : 'sem mudanca media entre antes e depois';
   return section(
-    'Sintomas',
+    'Bem-estar',
     value,
-    'pontos',
-    `Sintomas mostram ${direction}. Use como tendencia de conforto, nao como conclusao clinica isolada.`,
-    symptomDelta > 0 ? 'emerald' : symptomDelta < 0 ? 'amber' : 'slate'
+    'pontos (escala antiga)',
+    `Sintomas (escala antiga) mostram ${direction}. Use como tendencia de conforto, nao como conclusao clinica isolada.`,
+    legacySymptomDelta > 0 ? 'emerald' : legacySymptomDelta < 0 ? 'amber' : 'slate'
   );
 }
 
@@ -223,9 +248,14 @@ function readingSummary(
   const avgInterval = average(intervals);
   const totalSaccades = sum(readingMetrics.map(m => m.saccadeCount));
   const totalRegressions = sum(readingMetrics.map(m => m.regressionCount));
+  const lineReturnValues = readingMetrics
+    .map(m => m.lineReturnCount)
+    .filter((v): v is number => typeof v === 'number');
+  const totalLineReturns = lineReturnValues.length ? sum(lineReturnValues) : null;
   const avgFixation = average(readingMetrics.map(m => m.meanFixationMs));
   const ocularPieces = [
     `${totalSaccades} sacadas e ${totalRegressions} regressoes pelo olhar`,
+    totalLineReturns !== null ? `${totalLineReturns} ${plural(totalLineReturns, 'retorno de linha', 'retornos de linha')}` : null,
     avgFixation !== null ? `fixacao media de ${formatInteger(avgFixation)} ms` : null,
   ].filter(Boolean);
 
@@ -272,7 +302,7 @@ function diagnosticsSummary(captures: ValidationCapture[]): StatisticSectionSumm
     'Capturas',
     `${formatInteger(avgCoverage)}%`,
     'cobertura media',
-    `${captures.length} ${plural(captures.length, 'captura diagnostica', 'capturas diagnosticas')}; ultima com ${formatInteger(latest.coverage)}% de cobertura, ${latest.metrics.saccadeCount} sacadas, ${latest.metrics.regressionCount} regressoes e ${axisTone}.`,
+    `${captures.length} ${plural(captures.length, 'captura diagnostica', 'capturas diagnosticas')}; ultima com ${formatInteger(latest.coverage)}% de cobertura, ${latest.metrics.saccadeCount} sacadas, ${latest.metrics.regressionCount} regressoes${latest.metrics.lineReturnCount != null ? `, ${latest.metrics.lineReturnCount} retornos de linha` : ''} e ${axisTone}.`,
     avgCoverage >= 80 ? 'emerald' : 'amber'
   );
 }
@@ -319,12 +349,21 @@ function sum(values: number[]): number {
   return values.reduce((total, value) => total + value, 0);
 }
 
-function averageSymptomDelta(sessions: SessionResult[]): number | null {
-  const deltas = sessions.map(s => maxSymptom(s.symptomsBefore) - maxSymptom(s.symptomsAfter));
+function averageWellbeingDelta(sessions: SessionResult[]): number | null {
+  const deltas = sessions
+    .filter(s => s.contextBefore && s.contextAfter)
+    .map(s => s.contextAfter!.feeling - s.contextBefore!.feeling);
   return average(deltas);
 }
 
-function maxSymptom(symptoms: SessionResult['symptomsBefore']): number {
+function averageSymptomDelta(sessions: SessionResult[]): number | null {
+  const deltas = sessions
+    .filter(s => s.symptomsBefore && s.symptomsAfter)
+    .map(s => maxSymptom(s.symptomsBefore!) - maxSymptom(s.symptomsAfter!));
+  return average(deltas);
+}
+
+function maxSymptom(symptoms: SymptomRating): number {
   return Math.max(...(Object.values(symptoms) as number[]));
 }
 

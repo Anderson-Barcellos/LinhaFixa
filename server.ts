@@ -68,6 +68,75 @@ Apenas o texto, sem título, sem formatação markdown. Responda em português (
     }
   });
 
+  app.post(p("/api/generateRecallText"), async (_req, res) => {
+    try {
+      const client = requireOpenAI(res, "Geracao de texto de recall");
+      if (!client) return;
+
+      const domains = ['ciência', 'história', 'natureza', 'tecnologia', 'medicina', 'geografia', 'astronomia', 'cultura'];
+      const topicHint = domains[Math.floor(Math.random() * domains.length)];
+
+      const prompt = `Gere um texto expositivo em português (pt-BR) sobre uma curiosidade de ${topicHint}.
+Requisitos:
+- 150 a 250 palavras, prosa corrida, sem título e sem formatação markdown.
+- Denso em fatos concretos e nomeáveis (nomes, datas, quantidades, causas e efeitos) — ele será usado para avaliar recall de leitura com perguntas objetivas.
+- Autocontido: todas as informações necessárias devem estar no próprio texto.
+Responda SOMENTE com um objeto JSON: { "topic": string curta com o tema, "text": string com o texto }.`;
+
+      const completion = await client.chat.completions.create({
+        model: MODEL,
+        temperature: 0.8,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "Você gera textos expositivos factuais para testes de leitura e memória. Responda apenas com JSON válido." },
+          { role: "user", content: prompt }
+        ]
+      });
+
+      const parsed = JSON.parse(completion.choices[0]?.message?.content ?? "{}");
+      res.json({ topic: typeof parsed.topic === 'string' ? parsed.topic : topicHint, text: typeof parsed.text === 'string' ? parsed.text : "" });
+    } catch (e) {
+      console.error("OpenAI Error (recall text):", e);
+      res.status(500).json({ error: "Failed to generate recall text" });
+    }
+  });
+
+  app.post(p("/api/generateRecallQuestions"), async (req, res) => {
+    try {
+      const { text } = req.body;
+      const client = requireOpenAI(res, "Geracao de questoes de recall");
+      if (!client) return;
+
+      const prompt = `Texto lido pelo usuário:
+"""
+${text}
+"""
+Gere EXATAMENTE 6 questões de múltipla escolha sobre o texto acima, cada uma com EXATAMENTE 5 alternativas.
+Regras:
+- Cada questão tem UMA alternativa correta e inequívoca, respondível apenas com o texto (sem exigir conhecimento externo).
+- Distratores plausíveis, do mesmo domínio, de preferência derivados do próprio texto.
+- Proibido "todas as anteriores", "nenhuma das anteriores" ou variações.
+- Varie a posição da alternativa correta entre as questões.
+Responda SOMENTE com JSON: { "questions": [ { "question": string, "options": [string, string, string, string, string], "correctIndex": number de 0 a 4, "rationale": string curta citando o trecho que fundamenta } ] }.`;
+
+      const completion = await client.chat.completions.create({
+        model: MODEL,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "Você elabora questões objetivas de compreensão leitora, precisas e sem ambiguidade. Responda apenas com JSON válido." },
+          { role: "user", content: prompt }
+        ]
+      });
+
+      const raw = completion.choices[0]?.message?.content ?? "{}";
+      res.json(JSON.parse(raw));
+    } catch (e) {
+      console.error("OpenAI Error (recall questions):", e);
+      res.status(500).json({ error: "Failed to generate recall questions" });
+    }
+  });
+
   app.post(p("/api/generateInsight"), async (req, res) => {
     try {
       const { sessionSummary } = req.body;
@@ -78,6 +147,8 @@ Apenas o texto, sem título, sem formatação markdown. Responda em português (
 ${JSON.stringify(sessionSummary, null, 2)}
 
 Produza um parágrafo avaliando o progresso da estabilidade de cabeça, dinâmica ocular de leitura (sacadas, regressões, fixações e cobertura do olhar) e relato de sintomas.
+O campo "lineReturns", quando presente, conta voltas amplas do olhar para o início da próxima linha — é parte normal da leitura, não é regressão de releitura nem indica dificuldade.
+Os campos "contextBefore"/"contextAfter", quando presentes, trazem o contexto rápido: venvanseTakenAt = horário da medicação (null se não tomou), sleepHours = horas de sono, e escalas 1-5 de mood (humor) e feeling (sensação subjetiva). Relacione tendências de leitura/estabilidade a esse contexto quando fizer sentido.
 Se houver tempos de toque/avanço manual, trate-os apenas como contexto de navegação do texto, não como medida de sacada ou fixação.
 Seja cauteloso: você é um assistente de software, NÃO faça diagnósticos médicos, apenas aponte tendências observadas nos dados.
 Aja de forma encorajadora e profissional, em português do Brasil (pt-BR).`;
@@ -100,13 +171,15 @@ Aja de forma encorajadora e profissional, em português do Brasil (pt-BR).`;
 
   app.post(p("/api/generatePlan"), async (req, res) => {
     try {
-      const { profile, symptoms, history } = req.body;
+      const { profile, context, history } = req.body;
       const client = requireOpenAI(res, "Geracao de plano de treino");
       if (!client) return;
 
       const prompt = `Você é um assistente que monta um plano de treino oculomotor curto e seguro.
 Perfil do usuário: ${JSON.stringify(profile)}
-Sintomas atuais (0-10): ${JSON.stringify(symptoms)}
+Contexto de hoje: ${JSON.stringify(context)}
+Campos do contexto: venvanseTakenAt = horário da medicação (lisdexanfetamina) hoje, null se não tomou; sleepHours = horas dormidas na última noite; mood = humor (1 péssimo .. 5 ótimo); feeling = sensação subjetiva agora (1 péssimo .. 5 afiado).
+Pouco sono, humor baixo ou sensação baixa => sessão mais leve e mais curta.
 Resumo do histórico recente: ${JSON.stringify((history || []).slice(-5))}
 
 Monte um plano com 2 a 4 exercícios escolhidos APENAS entre estes IDs:
@@ -115,7 +188,7 @@ Monte um plano com 2 a 4 exercícios escolhidos APENAS entre estes IDs:
 - "smooth_pursuit" (perseguição suave; use speedDegPerSec entre 1 e 5 e amplitudeDeg entre 8 e 20)
 - "assistedReading" (leitura guiada; defina textComplexity "facil" ou "dificil")
 
-Adapte a dificuldade ao histórico e ao conforto (sintomas mais altos => mais leve e curto).
+Adapte a dificuldade ao histórico e ao contexto relatado.
 Responda SOMENTE com um objeto JSON com EXATAMENTE este formato:
 {
   "sessionTitle": string,

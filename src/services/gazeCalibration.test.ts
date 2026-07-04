@@ -85,3 +85,38 @@ test('ridge recovers a linear mapping despite a feature on a 100x scale (z-score
   resetCalibration();
   assert.equal(predictNorm(built[0].features), null);
 });
+
+test('predictNorm flags extrapolation instead of passing clamped border points as valid', () => {
+  resetCalibration();
+
+  // Simple planar mapping: x follows feature 0, y follows feature 1, both trained
+  // strictly inside [0.25, 0.75] so out-of-range features force raw predictions
+  // beyond [0,1].
+  let seed = 98765;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0xffffffff;
+  };
+  for (let n = 0; n < 40; n++) {
+    const features = Array.from({ length: GAZE_FEATURE_LENGTH }, () => rand());
+    const target = { x: 0.25 + features[0] * 0.5, y: 0.25 + features[1] * 0.5 };
+    addCalibrationSample(features, target);
+  }
+  assert.equal(fitCalibration(), true);
+
+  // In-range features → prediction inside [0,1], no extrapolation flag.
+  const inside = predictNorm(Array.from({ length: GAZE_FEATURE_LENGTH }, () => 0.5));
+  assert.ok(inside);
+  assert.equal(inside!.extrapolated, false);
+
+  // Feature 0 far beyond anything seen in calibration → raw x well above 1. The
+  // returned point must stay clamped, but the clamp cannot masquerade as a real
+  // border fixation: extrapolated must be true.
+  const wayOut = Array.from({ length: GAZE_FEATURE_LENGTH }, (_, i) => (i === 0 ? 4 : 0.5));
+  const out = predictNorm(wayOut);
+  assert.ok(out);
+  assert.ok(out!.x >= 0 && out!.x <= 1 && out!.y >= 0 && out!.y <= 1, 'point stays clamped');
+  assert.equal(out!.extrapolated, true);
+
+  resetCalibration();
+});

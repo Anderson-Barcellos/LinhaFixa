@@ -1,4 +1,5 @@
-import { TreatmentPlanResponse, SymptomRating, UserProfile, SessionResult } from '@/types';
+import { TreatmentPlanResponse, PreTestContext, UserProfile, SessionResult } from '@/types';
+import { checkContextSafety } from './safety';
 import { apiUrl } from './apiBase';
 
 // Deterministic, offline-safe plan used as a fallback whenever the AI planner is
@@ -65,18 +66,18 @@ function buildFallbackPlan(profile: UserProfile): TreatmentPlanResponse {
   };
 }
 
-function blockedPlan(): TreatmentPlanResponse {
+function blockedPlan(reason?: string): TreatmentPlanResponse {
   return {
     sessionTitle: "Sessão Interrompida",
     safetyStatus: {
       allowTraining: false,
-      reason: "Sintomas elevados relatados antes do treino.",
+      reason: reason || "Sensação relatada muito baixa antes do treino.",
       recommendPause: true,
       recommendProfessionalReview: true
     },
     exercises: [],
-    patientFeedbackPtBR: "Notamos que seus sintomas base estão altos. Por segurança, recomendamos não treinar agora.",
-    clinicianSummaryPtBR: "Usuário apresentou pontuação >= 7 em sintomas de base. Treino bloqueado pelo sistema."
+    patientFeedbackPtBR: "Notamos que você não está se sentindo bem. Por segurança, recomendamos não treinar agora.",
+    clinicianSummaryPtBR: "Usuário relatou sensação subjetiva mínima (1/5) no contexto pré-teste. Treino bloqueado pelo sistema."
   };
 }
 
@@ -92,13 +93,13 @@ function isValidPlan(p: any): p is TreatmentPlanResponse {
 
 export async function generateTreatmentPlan(
   profile: UserProfile,
-  symptoms: SymptomRating,
+  context: PreTestContext,
   history: SessionResult[]
 ): Promise<TreatmentPlanResponse> {
   // Deterministic safety gate ALWAYS runs first and is never delegated to the AI.
-  const highSymptoms = Object.values(symptoms).some(v => v >= 7);
-  if (highSymptoms) {
-    return blockedPlan();
+  const safety = checkContextSafety(context);
+  if (!safety.safe) {
+    return blockedPlan(safety.reason);
   }
 
   // Try the AI planner (OpenAI, proxied by the server). Falls back deterministically.
@@ -106,7 +107,7 @@ export async function generateTreatmentPlan(
     const res = await fetch(apiUrl('/api/generatePlan'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile, symptoms, history })
+      body: JSON.stringify({ profile, context, history })
     });
     if (res.ok) {
       const data = await res.json();

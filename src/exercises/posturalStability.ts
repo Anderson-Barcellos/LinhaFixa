@@ -10,6 +10,32 @@ export interface PosturalSample {
   roll: number;
 }
 
+// Head pose as produced by faceTracking.estimateHeadPose: yaw/pitch are normalized
+// landmark offsets ×100 (NOT degrees) whose magnitude grows with the face size in
+// the frame; roll is real degrees; scale is the face width in normalized image
+// coordinates. Extra fields (x, y) are ignored via structural typing.
+export interface HeadPoseSample {
+  yaw: number;
+  pitch: number;
+  roll: number;
+  scale?: number;
+}
+
+// Face width (normalized image coords) at a typical webcam/selfie distance. Rescaling
+// yaw/pitch to this reference keeps their magnitude in the range the thresholds below
+// were tuned for, while making the signal distance-invariant: sitting closer to the
+// camera no longer inflates the numbers.
+export const REFERENCE_FACE_SCALE = 0.3;
+// Below this the face box is degenerate (tracker glitch) — rescaling by it would
+// explode the sample, so we fall back to the raw values instead.
+const MIN_VALID_FACE_SCALE = 0.02;
+
+export function toPosturalSample(pose: HeadPoseSample): PosturalSample {
+  const scale = pose.scale != null && pose.scale > MIN_VALID_FACE_SCALE ? pose.scale : REFERENCE_FACE_SCALE;
+  const k = REFERENCE_FACE_SCALE / scale;
+  return { yaw: pose.yaw * k, pitch: pose.pitch * k, roll: pose.roll };
+}
+
 export interface PosturalBaseline {
   yaw: number;
   pitch: number;
@@ -66,8 +92,8 @@ export interface PosturalContext {
 }
 
 const MIN_SAMPLES = 5;
-// Head-pose jitter (std of yaw/pitch) thresholds, aligned with the existing
-// "stable within ~5" rule used in ExerciseCanvas.
+// Head-pose jitter thresholds (std of detrended yaw/pitch, in REFERENCE_FACE_SCALE
+// units). Provisional until recalibrated on real captures (PACK Pescoço v2, PN4).
 const STEADY_JITTER = 3;
 const MAX_JITTER = 15;
 // Sustained roll offset that reads as a held head tilt.
@@ -140,7 +166,9 @@ export function summarizePosturalStability(
   const pitch = samples.map(s => s.pitch);
   const roll = samples.map(s => s.roll);
 
-  const jitter = Math.hypot(std(yaw), std(pitch));
+  // Jitter only sees what remains after removing the linear trend: slow, steady
+  // drift (the head naturally following lines down a long page) is not tremor.
+  const jitter = Math.hypot(std(detrend(yaw)), std(detrend(pitch)));
   const meanYaw = mean(yaw);
   const meanPitch = mean(pitch);
   const neutralRoll = baselineRoll ?? 0;
@@ -201,6 +229,62 @@ export function summarizePosturalStability(
   };
 }
 
+// Live head-stillness classifier for the in-exercise warning ("Mantenha a cabeça
+// parada"). Replaces the old absolute |yaw|<5 && |pitch|<5 check, which compared a
+// biased signal against zero: a neutral face has a large positive pitch (the nose tip
+// sits below the eye line), so the old rule flickered with camera distance. This one
+// is baseline-relative — the calibrated neutral pose when available, otherwise the
+// median of the first frames of the exercise itself — with hysteresis plus a
+// consecutive-frame debounce so the warning doesn't strobe at frame rate.
+export interface LiveStabilityTracker {
+  update(sample: PosturalSample): boolean; // true = head currently counts as still
+}
+
+const LIVE_WARMUP_SAMPLES = 30;
+// Deviation (hypot of yaw/pitch offsets, REFERENCE_FACE_SCALE units) that starts
+// reading as head movement, and the level it must return under to count as still
+// again. Provisional until PN4 recalibration on real captures.
+const LIVE_ENTER_DEVIATION = 6;
+const LIVE_EXIT_DEVIATION = 3.5;
+const LIVE_FLIP_STREAK = 5;
+
+export function createLiveStabilityTracker(baseline?: PosturalBaseline | null): LiveStabilityTracker {
+  let refYaw = baseline?.yaw ?? null;
+  let refPitch = baseline?.pitch ?? null;
+  const warmup: PosturalSample[] = [];
+  let stable = true;
+  let streak = 0;
+
+  return {
+    update(sample: PosturalSample): boolean {
+      if (refYaw == null || refPitch == null) {
+        warmup.push(sample);
+        if (warmup.length >= LIVE_WARMUP_SAMPLES) {
+          refYaw = median(warmup.map(s => s.yaw));
+          refPitch = median(warmup.map(s => s.pitch));
+        }
+        // Don't nag before the neutral pose is known.
+        return true;
+      }
+      const deviation = Math.hypot(sample.yaw - refYaw, sample.pitch - refPitch);
+      if (stable) {
+        streak = deviation >= LIVE_ENTER_DEVIATION ? streak + 1 : 0;
+        if (streak >= LIVE_FLIP_STREAK) {
+          stable = false;
+          streak = 0;
+        }
+      } else {
+        streak = deviation <= LIVE_EXIT_DEVIATION ? streak + 1 : 0;
+        if (streak >= LIVE_FLIP_STREAK) {
+          stable = true;
+          streak = 0;
+        }
+      }
+      return stable;
+    },
+  };
+}
+
 function statusLabel(status: PosturalStatus): string {
   switch (status) {
     case 'stable': return 'Postura estável';
@@ -240,6 +324,28 @@ function std(values: number[]): number {
   const m = mean(values);
   const variance = values.reduce((sum, v) => sum + (v - m) ** 2, 0) / values.length;
   return Math.sqrt(variance);
+}
+
+// Residuals after removing the least-squares linear fit from the series.
+function detrend(values: number[]): number[] {
+  const n = values.length;
+  if (n < 2) return values.map(() => 0);
+  const xMean = (n - 1) / 2;
+  const yMean = mean(values);
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (i - xMean) * (values[i] - yMean);
+    den += (i - xMean) ** 2;
+  }
+  const slope = den === 0 ? 0 : num / den;
+  return values.map((v, i) => v - (yMean + slope * (i - xMean)));
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -9,6 +9,8 @@ export interface UserProfile {
   viewingDistanceCm: number;
 }
 
+// Legacy 0-10 symptom questionnaire. Kept only so sessions saved before the quick
+// context existed remain readable; new sessions record Pre/PostTestContext instead.
 export interface SymptomRating {
   dorOcular: number;
   cefaleia: number;
@@ -18,6 +20,21 @@ export interface SymptomRating {
   fotofobia: number;
   fadigaVisual: number;
   borramento: number;
+}
+
+// Quick pre-test context replacing the long symptom questionnaire (single-user app).
+// Scales run 1 (worst) .. 5 (best), except fatigue where 5 = exhausted.
+export interface PreTestContext {
+  venvanseTakenAt: string | null; // "HH:MM" local time; null = not taken today
+  sleepHours: number;             // last night, 0-14 in 0.5 steps
+  mood: number;                   // 1..5
+  feeling: number;                // subjective readiness right now, 1..5
+}
+
+export interface PostTestContext {
+  feeling: number; // 1..5
+  fatigue: number; // 1..5 (5 = exhausted)
+  mood: number;    // 1..5
 }
 
 export interface ExerciseParameters {
@@ -111,8 +128,9 @@ export interface FixationMetrics {
 export interface SaccadeTaskMetrics {
   trackingAvailable: boolean;
   samplesValid: number;
-  validSaccades: number;          // jumps with a usable latency/accuracy estimate
-  meanLatencyMs: number;          // mean time from target jump to gaze movement onset
+  validSaccades: number;          // jumps with a usable landing (accuracy/gain) estimate
+  validLatencyCount: number;      // jumps whose latency fell in the plausible window
+  meanLatencyMs: number | null;   // mean time from target jump to gaze movement onset; null when no latency was valid
   meanAccuracyDeg: number;        // mean angular error of gaze landing vs target
   meanGain: number;               // landing displacement / target displacement (1 = on target)
 }
@@ -131,8 +149,11 @@ export interface SessionResult {
   id: string;
   timestamp: number;
   durationSec: number;
-  symptomsBefore: SymptomRating;
-  symptomsAfter: SymptomRating;
+  // Legacy questionnaire (sessions saved before the quick context existed).
+  symptomsBefore?: SymptomRating;
+  symptomsAfter?: SymptomRating;
+  contextBefore?: PreTestContext;
+  contextAfter?: PostTestContext;
   exercises: ExerciseResult[];
   clinicianSummaryPtBR?: string;
 }
@@ -195,6 +216,8 @@ export interface ValidationCapture {
   id: string;
   timestamp: number;
   conditions: ValidationConditions;
+  // Quick pre-test context tagged on captures taken after it existed.
+  context?: PreTestContext;
   coverage: number; // % of frames with a detected face
   calibrated: boolean; // whether the gaze samples came from the calibrated model
   metrics: SaccadeMetrics;
@@ -215,6 +238,31 @@ export interface ValidationCapture {
   // during the capture instead of a binary calibrated/raw label.
   calibratedSampleCount?: number; // frames that produced a calibrated sample
   rawSampleCount?: number;        // frames that fell back to the raw iris ratio
+  extrapolatedSampleCount?: number; // frames whose calibrated prediction was rejected as extrapolation (clamped outside [0,1])
+}
+
+// --- Reading + Recall test ---
+// AI-generated intermediate text read inside the diagnostics capture window, followed
+// by 6 multiple-choice questions (5 options each) also generated from the text.
+
+export interface RecallQuestion {
+  question: string;
+  options: string[];     // exactly 5
+  correctIndex: number;  // 0-4, index into options
+  rationale: string;     // short justification quoting the supporting passage
+}
+
+export interface RecallTestResult {
+  id: string;
+  timestamp: number;
+  topic: string;
+  text: string;
+  questions: RecallQuestion[]; // as displayed (options already shuffled)
+  answers: number[];           // chosen option index per question
+  score: number;               // correct answers (0..questions.length)
+  readingDurationMs: number;
+  captureId?: string;          // ValidationCapture recorded while reading
+  context?: PreTestContext;
 }
 
 export interface TreatmentPlanResponse {
