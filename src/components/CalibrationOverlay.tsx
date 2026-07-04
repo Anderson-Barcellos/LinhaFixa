@@ -22,6 +22,8 @@ interface CalibrationOverlayProps {
   onSkip: () => void;      // proceed without eye metrics
   keepCameraOnClose?: boolean;
   surfaceRect?: SurfaceRect;
+  /** Mobile: oculta badge/contador e reduz o texto-guia a uma linha fora do rect. */
+  compactChrome?: boolean;
 }
 
 // Normalized screen positions (0..1) for the calibration grid and validation checks.
@@ -43,7 +45,7 @@ const PX_PER_CM = 37.8;         // CSS reference (~96 dpi); used only for the de
 
 type Phase = 'warmup' | 'calibrating' | 'validating' | 'done' | 'unavailable';
 
-export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keepCameraOnClose = false, surfaceRect }: CalibrationOverlayProps) {
+export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keepCameraOnClose = false, surfaceRect, compactChrome = false }: CalibrationOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [phase, setPhase] = useState<Phase>('warmup');
   const [mode, setMode] = useState<'calib' | 'valid'>('calib');
@@ -281,15 +283,22 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           <div
             className="pointer-events-none absolute rounded-2xl border-2 border-blue-300/80 bg-slate-950/20 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_24px_70px_rgba(15,23,42,0.55)]"
             style={surfaceRectStyle(surface)}
+            data-testid="calibration-frame"
             aria-hidden="true"
           >
-            <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-slate-950/85 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-blue-100 shadow-lg backdrop-blur">
-              <span className="h-2 w-2 rounded-full bg-blue-300" />
-              Área calibrada do teste
-            </div>
-            <div className="absolute right-4 top-4 rounded-full bg-slate-950/75 px-3 py-1.5 text-[11px] font-semibold text-slate-200 backdrop-blur">
-              {Math.round(surface.width)}×{Math.round(surface.height)} px
-            </div>
+            {/* Badge e contador consomem área útil do rect pequeno do celular;
+                os cantos decorativos abaixo já enquadram nos dois modos. */}
+            {!compactChrome && (
+              <>
+                <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-slate-950/85 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-blue-100 shadow-lg backdrop-blur">
+                  <span className="h-2 w-2 rounded-full bg-blue-300" />
+                  Área calibrada do teste
+                </div>
+                <div className="absolute right-4 top-4 rounded-full bg-slate-950/75 px-3 py-1.5 text-[11px] font-semibold text-slate-200 backdrop-blur">
+                  {Math.round(surface.width)}×{Math.round(surface.height)} px
+                </div>
+              </>
+            )}
             <div className="absolute left-3 top-3 h-10 w-10 rounded-tl-2xl border-l-2 border-t-2 border-blue-200/90" />
             <div className="absolute right-3 top-3 h-10 w-10 rounded-tr-2xl border-r-2 border-t-2 border-blue-200/90" />
             <div className="absolute bottom-3 left-3 h-10 w-10 rounded-bl-2xl border-b-2 border-l-2 border-blue-200/90" />
@@ -302,14 +311,25 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           >
             <div className="absolute inset-0 rounded-full bg-blue-200 animate-ping opacity-60" />
           </div>
-          <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2 text-center text-white px-4">
-            <p className="text-base md:text-xl font-semibold mb-1">
-              {phase === 'calibrating' ? 'Calibrando posição do olhar' : 'Verificando mapeamento'}
-            </p>
-            <p className="text-slate-300 text-xs md:text-sm">
-              Olhe para o ponto azul dentro da área marcada · {index + 1}/{totalThisMode}
-            </p>
-          </div>
+          {compactChrome ? (
+            /* Uma linha fora do surface rect quando há folga acima; sem folga o
+               top clampa em 8px e o fundo semitransparente cobre a sobreposição. */
+            <div
+              className="absolute left-1/2 -translate-x-1/2 z-10 rounded-full bg-slate-950/70 px-3 py-1 text-xs text-slate-200 backdrop-blur whitespace-nowrap"
+              style={{ top: `${Math.max(8, surface.top - 36)}px` }}
+            >
+              Olhe para o ponto azul · {index + 1}/{totalThisMode}
+            </div>
+          ) : (
+            <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2 text-center text-white px-4">
+              <p className="text-base md:text-xl font-semibold mb-1">
+                {phase === 'calibrating' ? 'Calibrando posição do olhar' : 'Verificando mapeamento'}
+              </p>
+              <p className="text-slate-300 text-xs md:text-sm">
+                Olhe para o ponto azul dentro da área marcada · {index + 1}/{totalThisMode}
+              </p>
+            </div>
+          )}
         </>
       )}
 

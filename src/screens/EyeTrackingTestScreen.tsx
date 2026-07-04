@@ -804,6 +804,7 @@ export function EyeTrackingTestScreen() {
         onSkip={() => setShowCalibration(false)}
         keepCameraOnClose
         surfaceRect={calibrationSurfaceRect ?? undefined}
+        compactChrome={!isDesktopDiagnosticsLayout}
       />
     );
   }
