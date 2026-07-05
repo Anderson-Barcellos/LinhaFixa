@@ -190,6 +190,37 @@ async function runViewport(browser, profile) {
       check(profile.name, 'cartões da gaveta alinhados', !!spread && spread.l <= 1.5 && spread.r <= 1.5,
         spread ? `spread esq=${spread.l.toFixed(1)}px dir=${spread.r.toFixed(1)}px em ${spread.n} fileiras` : 'painel não medido');
 
+      // --- Acordeão (D2): um card aberto por vez; toques não movem a superfície ---
+      const metricsHeader = page.getByTestId('accordion-metrics');
+      const signalHeader = page.getByTestId('accordion-signal');
+      check(profile.name, 'acordeão começa todo colapsado',
+        await metricsHeader.getAttribute('aria-expanded') === 'false' &&
+        await signalHeader.getAttribute('aria-expanded') === 'false');
+
+      await metricsHeader.click();
+      check(profile.name, 'toque abre só o card tocado',
+        await metricsHeader.getAttribute('aria-expanded') === 'true' &&
+        await signalHeader.getAttribute('aria-expanded') === 'false');
+
+      await signalHeader.click();
+      check(profile.name, 'abrir outro card fecha o anterior',
+        await signalHeader.getAttribute('aria-expanded') === 'true' &&
+        await metricsHeader.getAttribute('aria-expanded') === 'false');
+
+      await signalHeader.click();
+      check(profile.name, 'tocar no card aberto fecha tudo',
+        await signalHeader.getAttribute('aria-expanded') === 'false' &&
+        await metricsHeader.getAttribute('aria-expanded') === 'false');
+
+      const canvasAfterAccordion = await page.locator('canvas').first().boundingBox();
+      const accordionStable = !!(canvasBefore && canvasAfterAccordion &&
+        Math.abs(canvasBefore.x - canvasAfterAccordion.x) <= 1 &&
+        Math.abs(canvasBefore.y - canvasAfterAccordion.y) <= 1 &&
+        Math.abs(canvasBefore.width - canvasAfterAccordion.width) <= 1 &&
+        Math.abs(canvasBefore.height - canvasAfterAccordion.height) <= 1);
+      check(profile.name, 'superfície estável durante toques no acordeão', accordionStable,
+        canvasAfterAccordion ? `${Math.round(canvasAfterAccordion.width)}×${Math.round(canvasAfterAccordion.height)}` : 'geometria indisponível');
+
       await page.getByRole('button', { name: 'Recolher diagnóstico' }).click();
       await drawerPanel.waitFor({ state: 'hidden', timeout: 3_000 }).catch(() => {});
       check(profile.name, 'gaveta recolhe de volta', !(await drawerPanel.isVisible().catch(() => false)));
