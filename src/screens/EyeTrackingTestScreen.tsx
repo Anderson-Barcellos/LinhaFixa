@@ -21,6 +21,7 @@ import {
 } from '@/services/motionSensor';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { DiagnosticsDrawer } from '@/components/DiagnosticsDrawer';
+import { DiagnosticsAccordion, type DiagnosticsSection } from '@/components/DiagnosticsAccordion';
 import type { DrawerVariant } from '@/services/diagnosticsDrawerLayout';
 import { analyzeSaccades } from '@/exercises/saccadeAnalysis';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
@@ -68,6 +69,12 @@ const CAPTURE_SAFETY_CAP_MS = 120000;
 const DIAGNOSTICS_PANEL_WIDTH_PX = 288;
 const DIAGNOSTICS_HEADER_HEIGHT_PX = 73;
 const DIAGNOSTICS_DESKTOP_GUTTER_PX = 48; // horizontal padding + gap around canvas/panel
+
+// Opções de condição compartilhadas entre os botões do card e o resumo do acordeão.
+const LIGHTING_OPTIONS: [ValidationLighting, string][] = [['dim', 'Fraca'], ['normal', 'Normal'], ['bright', 'Forte']];
+const POSTURE_OPTIONS: [ValidationPosture, string][] = [['upright', 'Reta'], ['tilted', 'Inclinada'], ['slouched', 'Curvada'], ['reclined', 'Recostada']];
+const optionLabel = <T extends string>(options: [T, string][], value: T) =>
+  options.find(([v]) => v === value)?.[1] ?? value;
 
 // Phones expose the front camera off-axis in landscape, but we prefer landscape anyway:
 // reading saccades are horizontal, so a wide line gives the webcam a bigger, cleaner
@@ -846,110 +853,134 @@ export function EyeTrackingTestScreen() {
     />
   );
 
-  // Miolo de diagnóstico compartilhado entre o <aside> desktop e a gaveta compacta.
+  // Cards de diagnóstico como dados: o desktop recompõe verbatim (pixel igual),
+  // a gaveta mobile empilha os mesmos nós como acordeão com resumo vivo.
+  const metricsGrid = (
+    <div className="grid grid-cols-2 gap-2 text-sm">
+      <Metric label="FPS detecção" value={live.fps ? String(live.fps) : '—'} />
+      <Metric label="Cobertura" value={`${live.coverage.toFixed(0)}%`} />
+      <Metric label="Olhar H" value={fmt(live.h)} />
+      <Metric label="Olhar V" value={fmt(live.v)} />
+      <Metric label="Yaw idx" value={live.yaw != null ? live.yaw.toFixed(0) : '—'} />
+      <Metric label="Pitch idx" value={live.pitch != null ? live.pitch.toFixed(0) : '—'} />
+      <Metric label="Delta pos." value={motionQuality.deltaDeg != null ? `${motionQuality.deltaDeg.toFixed(1)}°` : '—'} />
+      <Metric label="Confiança" value={confidenceLabel(motionQuality.confidence)} />
+    </div>
+  );
+
+  const signalCard = (
+    <div className="rounded-xl bg-slate-900/60 border border-white/10 p-3">
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div>
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Captação funcional</div>
+          <div className="text-sm font-bold text-slate-100 mt-1">{liveSignal.label}</div>
+        </div>
+        <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${visualToneClass(liveSignal.tone)}`}>
+          {liveSignal.sourceLabel}
+        </span>
+      </div>
+      <div className="h-2 rounded-full bg-white/10 overflow-hidden mb-3">
+        <div
+          className={`h-full rounded-full ${liveSignal.tone === 'emerald' ? 'bg-emerald-400' : liveSignal.tone === 'rose' ? 'bg-rose-400' : liveSignal.tone === 'amber' ? 'bg-amber-400' : 'bg-slate-500'}`}
+          style={{ width: `${liveSignal.sensitivityScore}%` }}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <Metric label="Sensibilidade" value={`${liveSignal.sensitivityScore}%`} />
+        <Metric label="Evento" value={liveSignal.eventLabel} />
+        <Metric label="H range" value={liveSignal.horizontalRange.toFixed(2)} />
+        <Metric label="Fixação" value={`${liveSignal.fixationShare}%`} />
+        <Metric label="Continuidade" value={`${liveSignal.continuityPct}%`} />
+        <Metric label="Taxa janela" value={liveSignal.sampleRateHz ? `${liveSignal.sampleRateHz} Hz` : '—'} />
+      </div>
+      <p className="text-xs text-slate-400 mt-3">{liveSignal.detail}</p>
+    </div>
+  );
+
+  // Corpo compartilhado: no desktop dentro do <details>, no mobile como card do acordeão.
+  const interpretBody = (
+    <>
+      Horizontal é o eixo principal da leitura; vertical/diagonal fica como contexto.
+      <br />
+      O traço inferior mostra a captação funcional do movimento; a bolinha pequena é só apoio técnico.
+      <br />
+      <span className="text-blue-400 font-bold">Azul</span> = sinal calibrado ·{' '}
+      <span className="text-amber-400 font-bold">âmbar</span> = sinal bruto
+      <br />
+      Motion Assist sinaliza mudança do iPhone desde a calibração; não corrige o olhar automaticamente.
+      {isDesktopDiagnosticsLayout && (
+        <>
+          <br />
+          Escala {displayScalePct}% = sistema × zoom do navegador. Os tamanhos angulares do
+          estímulo assumem 96 dpi; a escala fica registrada em cada captura.
+        </>
+      )}
+    </>
+  );
+
+  // PACK 2: tag the physical conditions so captures are comparable.
+  const conditionsCard = (
+    <div className="rounded-xl bg-slate-900/50 border border-white/10 p-3 flex flex-col gap-3">
+      <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Condição da captura</div>
+      <div>
+        <div className="text-[11px] text-slate-500 mb-1">Iluminação</div>
+        <div className="flex gap-1">
+          {LIGHTING_OPTIONS.map(([val, label]) => (
+            <button
+              key={val}
+              onClick={() => setConditions(p => ({ ...p, lighting: val }))}
+              className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-bold ${conditions.lighting === val ? 'bg-indigo-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}
+            >{label}</button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div className="text-[11px] text-slate-500 mb-1">Postura</div>
+        <div className="grid grid-cols-2 gap-1">
+          {POSTURE_OPTIONS.map(([val, label]) => (
+            <button
+              key={val}
+              onClick={() => setConditions(p => ({ ...p, posture: val }))}
+              className={`px-2 py-1.5 rounded-lg text-xs font-bold ${conditions.posture === val ? 'bg-indigo-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}
+            >{label}</button>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center justify-between text-xs text-slate-400">
+        <span>Distância (perfil)</span>
+        <span className="font-bold text-slate-200">{conditions.distanceCm} cm</span>
+      </div>
+      <input
+        value={conditions.note ?? ''}
+        onChange={e => setConditions(p => ({ ...p, note: e.target.value }))}
+        placeholder="Nota (opcional)"
+        className="w-full px-2 py-1.5 rounded-lg bg-white/10 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:bg-white/15"
+      />
+    </div>
+  );
+
+  // Miolo de diagnóstico do <aside> desktop — mesma composição e ordem de sempre.
   const diagnosticsCards = (
     <>
-      <div className="grid grid-cols-2 gap-2 text-sm">
-        <Metric label="FPS detecção" value={live.fps ? String(live.fps) : '—'} />
-        <Metric label="Cobertura" value={`${live.coverage.toFixed(0)}%`} />
-        <Metric label="Olhar H" value={fmt(live.h)} />
-        <Metric label="Olhar V" value={fmt(live.v)} />
-        <Metric label="Yaw idx" value={live.yaw != null ? live.yaw.toFixed(0) : '—'} />
-        <Metric label="Pitch idx" value={live.pitch != null ? live.pitch.toFixed(0) : '—'} />
-        <Metric label="Delta pos." value={motionQuality.deltaDeg != null ? `${motionQuality.deltaDeg.toFixed(1)}°` : '—'} />
-        <Metric label="Confiança" value={confidenceLabel(motionQuality.confidence)} />
-      </div>
-
-      <div className="rounded-xl bg-slate-900/60 border border-white/10 p-3">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <div>
-            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Captação funcional</div>
-            <div className="text-sm font-bold text-slate-100 mt-1">{liveSignal.label}</div>
-          </div>
-          <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${visualToneClass(liveSignal.tone)}`}>
-            {liveSignal.sourceLabel}
-          </span>
-        </div>
-        <div className="h-2 rounded-full bg-white/10 overflow-hidden mb-3">
-          <div
-            className={`h-full rounded-full ${liveSignal.tone === 'emerald' ? 'bg-emerald-400' : liveSignal.tone === 'rose' ? 'bg-rose-400' : liveSignal.tone === 'amber' ? 'bg-amber-400' : 'bg-slate-500'}`}
-            style={{ width: `${liveSignal.sensitivityScore}%` }}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <Metric label="Sensibilidade" value={`${liveSignal.sensitivityScore}%`} />
-          <Metric label="Evento" value={liveSignal.eventLabel} />
-          <Metric label="H range" value={liveSignal.horizontalRange.toFixed(2)} />
-          <Metric label="Fixação" value={`${liveSignal.fixationShare}%`} />
-          <Metric label="Continuidade" value={`${liveSignal.continuityPct}%`} />
-          <Metric label="Taxa janela" value={liveSignal.sampleRateHz ? `${liveSignal.sampleRateHz} Hz` : '—'} />
-        </div>
-        <p className="text-xs text-slate-400 mt-3">{liveSignal.detail}</p>
-      </div>
-
+      {metricsGrid}
+      {signalCard}
       <details className="rounded-xl bg-slate-900/40 border border-white/10 px-3 py-2 text-xs text-slate-400">
         <summary className="cursor-pointer select-none font-bold text-slate-300">
           Como interpretar os indicadores
         </summary>
-        <div className="mt-2">
-          Horizontal é o eixo principal da leitura; vertical/diagonal fica como contexto.
-          <br />
-          O traço inferior mostra a captação funcional do movimento; a bolinha pequena é só apoio técnico.
-          <br />
-          <span className="text-blue-400 font-bold">Azul</span> = sinal calibrado ·{' '}
-          <span className="text-amber-400 font-bold">âmbar</span> = sinal bruto
-          <br />
-          Motion Assist sinaliza mudança do iPhone desde a calibração; não corrige o olhar automaticamente.
-          {isDesktopDiagnosticsLayout && (
-            <>
-              <br />
-              Escala {displayScalePct}% = sistema × zoom do navegador. Os tamanhos angulares do
-              estímulo assumem 96 dpi; a escala fica registrada em cada captura.
-            </>
-          )}
-        </div>
+        <div className="mt-2">{interpretBody}</div>
       </details>
-
-      {/* PACK 2: tag the physical conditions so captures are comparable. */}
-      <div className="rounded-xl bg-slate-900/50 border border-white/10 p-3 flex flex-col gap-3">
-        <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Condição da captura</div>
-        <div>
-          <div className="text-[11px] text-slate-500 mb-1">Iluminação</div>
-          <div className="flex gap-1">
-            {([['dim', 'Fraca'], ['normal', 'Normal'], ['bright', 'Forte']] as [ValidationLighting, string][]).map(([val, label]) => (
-              <button
-                key={val}
-                onClick={() => setConditions(p => ({ ...p, lighting: val }))}
-                className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-bold ${conditions.lighting === val ? 'bg-indigo-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}
-              >{label}</button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <div className="text-[11px] text-slate-500 mb-1">Postura</div>
-          <div className="grid grid-cols-2 gap-1">
-            {([['upright', 'Reta'], ['tilted', 'Inclinada'], ['slouched', 'Curvada'], ['reclined', 'Recostada']] as [ValidationPosture, string][]).map(([val, label]) => (
-              <button
-                key={val}
-                onClick={() => setConditions(p => ({ ...p, posture: val }))}
-                className={`px-2 py-1.5 rounded-lg text-xs font-bold ${conditions.posture === val ? 'bg-indigo-600 text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'}`}
-              >{label}</button>
-            ))}
-          </div>
-        </div>
-        <div className="flex items-center justify-between text-xs text-slate-400">
-          <span>Distância (perfil)</span>
-          <span className="font-bold text-slate-200">{conditions.distanceCm} cm</span>
-        </div>
-        <input
-          value={conditions.note ?? ''}
-          onChange={e => setConditions(p => ({ ...p, note: e.target.value }))}
-          placeholder="Nota (opcional)"
-          className="w-full px-2 py-1.5 rounded-lg bg-white/10 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:bg-white/15"
-        />
-      </div>
+      {conditionsCard}
     </>
   );
+
+  // Resumos vivos derivam de estado que já existe — nenhum buffer ou cálculo novo.
+  const diagnosticsSections: DiagnosticsSection[] = [
+    { id: 'metrics', title: 'Métricas', summary: `${live.fps ? `${live.fps}fps` : '—'} · H ${fmt(live.h)}`, content: metricsGrid },
+    { id: 'signal', title: 'Captação', summary: `${liveSignal.sensitivityScore}% · ${liveSignal.sourceLabel}`, content: signalCard },
+    { id: 'conditions', title: 'Condição', summary: `${optionLabel(LIGHTING_OPTIONS, conditions.lighting)} · ${optionLabel(POSTURE_OPTIONS, conditions.posture)}`, content: conditionsCard },
+    { id: 'interpret', title: 'Como interpretar', content: <div className="text-xs text-slate-400 px-1">{interpretBody}</div> },
+  ];
 
   const modeSwitch = (
     <div className="grid grid-cols-2 gap-1 bg-white/5 rounded-xl p-1">
@@ -1178,7 +1209,7 @@ export function EyeTrackingTestScreen() {
           chips={drawerChips}
           actions={drawerActions}
         >
-          {diagnosticsCards}
+          <DiagnosticsAccordion sections={diagnosticsSections} />
           {modeSwitch}
           {captureBlockReason && (
             <p className="text-xs text-amber-300 font-medium text-center px-2">{captureBlockReason}</p>
