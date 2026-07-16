@@ -7,6 +7,7 @@ import { getCalibrationSignature, isCalibrated, predictNorm } from '@/services/g
 import { interpupillaryPx, estimateDistanceCm, getDistanceAnchor, distanceWithinAnchorTolerance } from '@/services/viewingGeometry';
 import { attachStream, getFrontCameraStream } from '@/services/cameraStream';
 import { getMotionQuality } from '@/services/motionSensor';
+import { createStimulusDistanceTracker, type StimulusDistanceSnapshot } from '@/services/stimulusDistance';
 import { createLiveStabilityTracker, getPosturalBaseline, summarizePosturalStability, toPosturalSample, type PosturalSample } from '@/exercises/posturalStability';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import {
@@ -37,7 +38,9 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
   const videoRef = useRef<HTMLVideoElement>(null);
   const contextRef = useRef<any>(null);
   const [headStable, setHeadStable] = useState(true);
-  
+  const [stimulusDrift, setStimulusDrift] = useState(false);
+  const stimulusDriftRef = useRef(false);
+
   useEffect(() => {
     let animationFrameId: number;
     let videoFrameLoop: VideoFrameLoopHandle | null = null;
@@ -62,9 +65,11 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
     // pose when no calibration baseline exists, which is the player's common case).
     const liveStability = createLiveStabilityTracker(getPosturalBaseline());
 
-    // Live distance estimate (EMA-smoothed), used to invalidate the calibrated gaze
-    // point when the user drifts away from the distance the model was calibrated at.
-    let emaDistanceCm = viewingDistanceCm;
+    // Stimulus geometry: freeze the live distance at start, then only observe drift.
+    // Absolute distance needs the calibration anchor (IPD→cm is relative to it);
+    // without an anchor the sample is null and the tracker falls back to the profile.
+    const stimulusTracker = createStimulusDistanceTracker({ profileDistanceCm: viewingDistanceCm });
+    let stimulusSnap: StimulusDistanceSnapshot = stimulusTracker.snapshot();
 
     const setup = async () => {
       // 1. Camera setup if enabled
@@ -134,9 +139,10 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
       // draw in CSS px — the loop's ctx.setTransform(surface.dpr, ...) absorbs the
       // DPR, so pxPerCm stays a CSS-px constant and must NOT be multiplied by DPR.
       const pxPerCm = PX_PER_CM;
-      // Visual angle -> physical size on screen: size_cm = 2 * dist * tan(deg/2).
+      // Visual angle -> screen size at the FROZEN stimulus distance (profile until
+      // the tracker freezes; a single early adjustment ≤3s in is the accepted cost).
       const degToPx = (deg: number) => {
-        const sizeCm = 2 * viewingDistanceCm * Math.tan((deg * Math.PI / 180) / 2);
+        const sizeCm = 2 * stimulusSnap.distanceCm * Math.tan((deg * Math.PI / 180) / 2);
         return sizeCm * pxPerCm;
       };
 
@@ -174,7 +180,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
              motionConfidence: motionQuality.confidence,
              durationMs: exContext.timeMs,
            });
-           onFinish(score, stillnessScore, { ...(extraData || {}), posturalStability });
+           onFinish(score, stillnessScore, { ...(extraData || {}), posturalStability, stimulusGeometry: stimulusTracker.snapshot() });
         }
       };
       
@@ -222,8 +228,12 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
            const anchor = getDistanceAnchor();
            const ipdPx = interpupillaryPx(getLastLandmarks(), videoRef.current.videoWidth || 1280, videoRef.current.videoHeight || 720);
            const dEst = estimateDistanceCm(ipdPx, anchor, viewingDistanceCm);
-           emaDistanceCm = emaDistanceCm * 0.85 + dEst * 0.15;
-           const distanceOk = distanceWithinAnchorTolerance(emaDistanceCm, anchor?.distanceCm ?? null);
+           stimulusSnap = stimulusTracker.update(anchor && ipdPx != null ? dEst : null, exContext.timeMs);
+           if (stimulusSnap.inDrift !== stimulusDriftRef.current) {
+             stimulusDriftRef.current = stimulusSnap.inDrift;
+             setStimulusDrift(stimulusSnap.inDrift);
+           }
+           const distanceOk = distanceWithinAnchorTolerance(dEst, anchor?.distanceCm ?? null);
            // Blink score is measured, but hard rejection sits behind the shared
            // BLINK_REJECT_GATE_ENABLED kill-switch (off until tuned on real data —
            // a high eyeBlink baseline would otherwise kill a flowing signal).
@@ -265,6 +275,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
              exContext.latestGazePoint = null;
            }
         } else {
+           stimulusSnap = stimulusTracker.update(null, exContext.timeMs);
            exContext.latestGaze = null;
            exContext.latestGazePoint = null;
         }
