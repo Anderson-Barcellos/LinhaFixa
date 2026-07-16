@@ -1,5 +1,12 @@
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
+import {
+  assertPortFree,
+  observeChild,
+  smokeResultMarker,
+  terminateObserved,
+  waitForOwnedHttp,
+} from './smoke-runtime.mjs';
 
 const BUILD_BASE_URL = (process.argv[2] ?? '').replace(/\/$/, '');
 if (!BUILD_BASE_URL) throw new Error('smoke-validity requires the exact built base URL');
@@ -20,24 +27,18 @@ function check(scope, label, ok, detail = '') {
   if (!ok) failures.push(`[${scope}] ${label}${detail ? ` — ${detail}` : ''}`);
 }
 
-async function waitFor(url, timeoutMs = 20_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try { if ((await fetch(url)).ok) return; } catch { /* retry */ }
-    await new Promise(resolve => setTimeout(resolve, 150));
-  }
-  throw new Error(`fixture did not become ready: ${url}`);
-}
-
-const vite = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '4176', '--strictPort'], {
-  cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, APP_BASE_PATH: '/' },
-});
-let viteOutput = '';
-vite.stdout.on('data', chunk => { viteOutput += chunk; });
-vite.stderr.on('data', chunk => { viteOutput += chunk; });
+await assertPortFree({ host: '127.0.0.1', port: 4176, label: 'validity fixture server' });
+let vite = null;
 
 try {
-  await waitFor(FIXTURE_URL);
+  vite = observeChild(spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '4176', '--strictPort'], {
+    cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, APP_BASE_PATH: '/' },
+  }), { label: 'validity fixture server', forward: false });
+  await waitForOwnedHttp({
+    observed: vite,
+    url: FIXTURE_URL,
+    isReady: async response => response.ok && (await response.text()).includes('Gaze validity component smoke'),
+  });
   console.log(`\nValidity component smoke (real components; build identity ${BUILD_BASE_URL})`);
   const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   try {
@@ -47,10 +48,33 @@ try {
       await context.tracing.start({ screenshots: true, snapshots: true });
       const page = await context.newPage();
       const consoleIssues = [];
+      const resourceIssues = [];
+      const optionalThirdPartyIssues = [];
+      const requiredAssets = { script: false, styles: false };
       page.on('console', msg => {
         if (msg.type() === 'error' || msg.type() === 'warning') consoleIssues.push(`${msg.type()}: ${msg.text()}`);
       });
       page.on('pageerror', error => consoleIssues.push(String(error)));
+      page.on('requestfailed', request => {
+        const url = new URL(request.url());
+        const detail = `${url.pathname}: ${request.failure()?.errorText ?? 'request failed'}`;
+        if (url.hostname === '127.0.0.1' && url.port === '4176') resourceIssues.push(detail);
+        else if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') optionalThirdPartyIssues.push(`Google Fonts optional — ${detail}`);
+        else resourceIssues.push(`unexpected third-party failure ${url.href}: ${detail}`);
+      });
+      page.on('response', response => {
+        const url = new URL(response.url());
+        const local = url.hostname === '127.0.0.1' && url.port === '4176';
+        if (local && response.ok()) {
+          if (/\.(?:tsx|jsx|js|mjs)$/.test(url.pathname)) requiredAssets.script = true;
+          if (/\.css$/.test(url.pathname)) requiredAssets.styles = true;
+        }
+        if (response.status() < 400) return;
+        const detail = `${response.status()} ${url.href}`;
+        if (local) resourceIssues.push(detail);
+        else if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') optionalThirdPartyIssues.push(`Google Fonts optional — ${detail}`);
+        else resourceIssues.push(`unexpected third-party response ${detail}`);
+      });
       try {
         await page.goto(FIXTURE_URL, { waitUntil: 'networkidle' });
         check(profile.name, 'identidade da fixture real', (await page.title()) === 'Gaze validity component smoke');
@@ -82,6 +106,12 @@ try {
           check(profile.name, `${expected} sem clipping horizontal`, geometry.width > 0 && !geometry.overflowing);
         }
         check(profile.name, 'console sem erros/warnings relevantes', consoleIssues.length === 0, consoleIssues.slice(0, 3).join(' | '));
+        check(profile.name, 'sem falhas HTTP locais ou assets quebrados', resourceIssues.length === 0, resourceIssues.slice(0, 3).join(' | '));
+        check(profile.name, 'entry TSX e CSS reais carregados', requiredAssets.script && requiredAssets.styles,
+          `script=${requiredAssets.script} css=${requiredAssets.styles}`);
+        if (optionalThirdPartyIssues.length) {
+          console.warn(`  ⚠ opcional nominal: ${optionalThirdPartyIssues.slice(0, 2).join(' | ')}`);
+        }
       } finally {
         await page.screenshot({ path: `/tmp/gaze-smoke-validity-${profile.name}.png`, fullPage: true }).catch(() => {});
         await context.tracing.stop({ path: `/tmp/gaze-smoke-validity-${profile.name}.zip` }).catch(() => {});
@@ -92,15 +122,18 @@ try {
     await browser.close();
   }
 } finally {
-  vite.kill('SIGTERM');
-  await Promise.race([
-    new Promise(resolve => vite.once('exit', resolve)),
-    new Promise(resolve => setTimeout(resolve, 3_000)),
-  ]);
-  if (vite.exitCode === null) vite.kill('SIGKILL');
+  await terminateObserved(vite);
 }
 
-console.log(`\n${checks - failures.length}/${checks} validity checks OK`);
+const result = {
+  suite: 'validity',
+  assertionsPassed: checks - failures.length,
+  assertionsTotal: checks,
+  blockedRequiredCapabilities: 0,
+  blockedCapabilityNames: [],
+};
+console.log(`\n${result.assertionsPassed}/${result.assertionsTotal} validity assertions passed; 0 required capabilities BLOCKED`);
+console.log(smokeResultMarker(result));
 if (failures.length) {
   console.error(failures.join('\n'));
   process.exit(1);

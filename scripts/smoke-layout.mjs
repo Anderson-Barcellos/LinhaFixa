@@ -18,6 +18,7 @@
 // still exercising attachStream/videoFrameLoop/MediaPipe with real frames.
 
 import { chromium } from 'playwright';
+import { smokeResultMarker } from './smoke-runtime.mjs';
 
 const BASE_URL = (process.argv[2] ?? 'http://localhost:3060/gaze').replace(/\/$/, '');
 const CHROME = process.env.CHROME_PATH ?? '/usr/bin/google-chrome';
@@ -33,6 +34,8 @@ const VIEWPORTS = [
 
 const failures = [];
 let checks = 0;
+let blockedRequiredCapabilities = 0;
+const blockedCapabilityNames = [];
 
 function check(scope, label, ok, detail = '') {
   checks++;
@@ -121,9 +124,34 @@ async function runViewport(browser, profile) {
   // to catch MediaPipe (or anything else) silently reaching for a CDN again.
   const ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'fonts.googleapis.com', 'fonts.gstatic.com'];
   const externalRequests = [];
+  const resourceIssues = [];
+  const optionalThirdPartyIssues = [];
+  const requiredAssets = { script: false, styles: false, mediapipeModel: false, mediapipeWasm: false };
   page.on('request', req => {
     const url = new URL(req.url());
     if (!ALLOWED_HOSTS.includes(url.hostname)) externalRequests.push(req.url());
+  });
+  page.on('requestfailed', request => {
+    const url = new URL(request.url());
+    const detail = `${url.pathname}: ${request.failure()?.errorText ?? 'request failed'}`;
+    if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') resourceIssues.push(detail);
+    else if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') optionalThirdPartyIssues.push(`Google Fonts optional — ${detail}`);
+    else resourceIssues.push(`unexpected third-party failure ${url.href}: ${detail}`);
+  });
+  page.on('response', response => {
+    const url = new URL(response.url());
+    const local = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
+    if (local && response.ok()) {
+      if (/\/assets\/.*\.js$/.test(url.pathname)) requiredAssets.script = true;
+      if (/\/assets\/.*\.css$/.test(url.pathname)) requiredAssets.styles = true;
+      if (url.pathname.endsWith('/vendor/mediapipe/face_landmarker.task')) requiredAssets.mediapipeModel = true;
+      if (/\/vendor\/mediapipe\/wasm\/.*\.wasm$/.test(url.pathname)) requiredAssets.mediapipeWasm = true;
+    }
+    if (response.status() < 400) return;
+    const detail = `${response.status()} ${url.href}`;
+    if (local) resourceIssues.push(detail);
+    else if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') optionalThirdPartyIssues.push(`Google Fonts optional — ${detail}`);
+    else resourceIssues.push(`unexpected third-party response ${detail}`);
   });
 
   try {
@@ -315,6 +343,8 @@ async function runViewport(browser, profile) {
         await startCapture.click();
       } else {
         console.warn(`  ⚠ SKIP/BLOCKED real-tab-hidden unavailable — capture=${hiddenState}, second=${await secondTab.evaluate(() => document.visibilityState)}`);
+        blockedRequiredCapabilities += 1;
+        blockedCapabilityNames.push('real-tab-hidden');
         await page.bringToFront();
       }
       await secondTab.close();
@@ -333,6 +363,14 @@ async function runViewport(browser, profile) {
       externalRequests.slice(0, 3).join(', '));
     check(profile.name, 'sem erros de console', consoleErrors.length === 0,
       consoleErrors.slice(0, 3).join(' | '));
+    check(profile.name, 'sem falhas HTTP locais ou assets quebrados', resourceIssues.length === 0,
+      resourceIssues.slice(0, 3).join(' | '));
+    check(profile.name, 'JS, CSS e MediaPipe locais carregados',
+      Object.values(requiredAssets).every(Boolean),
+      Object.entries(requiredAssets).map(([name, loaded]) => `${name}=${loaded}`).join(' '));
+    if (optionalThirdPartyIssues.length) {
+      console.warn(`  ⚠ opcional nominal: ${optionalThirdPartyIssues.slice(0, 2).join(' | ')}`);
+    }
   } finally {
     await page.screenshot({ path: `/tmp/gaze-smoke-layout-${profile.name}.png`, fullPage: false }).catch(() => {});
     await context.tracing.stop({ path: `/tmp/gaze-smoke-layout-${profile.name}.zip` }).catch(() => {});
@@ -356,7 +394,15 @@ try {
   await browser.close();
 }
 
-console.log(`\n${checks - failures.length}/${checks} checks OK`);
+const result = {
+  suite: 'layout',
+  assertionsPassed: checks - failures.length,
+  assertionsTotal: checks,
+  blockedRequiredCapabilities,
+  blockedCapabilityNames,
+};
+console.log(`\n${result.assertionsPassed}/${result.assertionsTotal} layout assertions passed; ${blockedRequiredCapabilities} required ${blockedRequiredCapabilities === 1 ? 'capability' : 'capabilities'} BLOCKED`);
+console.log(smokeResultMarker(result));
 if (failures.length) {
   console.error('\nFALHAS:');
   for (const f of failures) console.error(`  ${f}`);

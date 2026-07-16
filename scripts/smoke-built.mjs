@@ -1,47 +1,56 @@
 import { spawn } from 'node:child_process';
+import {
+  assertPortFree,
+  formatSmokeSummary,
+  observeChild,
+  parseSmokeResult,
+  terminateObserved,
+  waitForOwnedHttp,
+} from './smoke-runtime.mjs';
 
 const PORT = '4175';
 const BASE_URL = `http://127.0.0.1:${PORT}/gaze/`;
 
-async function waitFor(url, timeoutMs = 20_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url);
-      if (response.ok && (await response.text()).includes('<div id="root">')) return;
-    } catch { /* retry */ }
-    await new Promise(resolve => setTimeout(resolve, 150));
-  }
-  throw new Error(`fresh built server did not become ready: ${url}`);
-}
-
 function run(script) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, BASE_URL], { cwd: process.cwd(), stdio: 'inherit' });
-    child.once('error', reject);
-    child.once('exit', code => code === 0 ? resolve() : reject(new Error(`${script} exited ${code}`)));
+    const observed = observeChild(
+      spawn(process.execPath, [script, BASE_URL], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] }),
+      { label: script },
+    );
+    observed.exited.then(exit => {
+      if (exit.error || exit.code !== 0) {
+        reject(new Error(`${script} exited ${exit.error?.message ?? exit.code}\n${observed.output.stdout}${observed.output.stderr}`));
+        return;
+      }
+      try {
+        resolve(parseSmokeResult(`${observed.output.stdout}\n${observed.output.stderr}`));
+      } catch (error) {
+        reject(error);
+      }
+    });
   });
 }
 
-const server = spawn(process.execPath, ['dist/server.cjs'], {
-  cwd: process.cwd(),
-  env: { ...process.env, NODE_ENV: 'production', APP_BASE_PATH: '/gaze', PORT },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-server.stdout.on('data', chunk => process.stdout.write(`[built:4175] ${chunk}`));
-server.stderr.on('data', chunk => process.stderr.write(`[built:4175] ${chunk}`));
+await assertPortFree({ host: '127.0.0.1', port: Number(PORT), label: 'built smoke server' });
+let server = null;
 
 try {
-  await waitFor(BASE_URL);
+  server = observeChild(spawn(process.execPath, ['dist/server.cjs'], {
+    cwd: process.cwd(),
+    env: { ...process.env, NODE_ENV: 'production', APP_BASE_PATH: '/gaze', PORT },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }), { label: 'built smoke server', prefix: '[built:4175] ' });
+  await waitForOwnedHttp({
+    observed: server,
+    url: BASE_URL,
+    isReady: async response => response.ok && (await response.text()).includes('<div id="root">'),
+  });
   console.log(`\nIsolated fresh build ready at ${BASE_URL}`);
-  await run('scripts/smoke-layout.mjs');
-  await run('scripts/smoke-validity.mjs');
-  console.log(`\nBoth smoke suites passed against isolated port ${PORT}.`);
+  const results = [
+    await run('scripts/smoke-layout.mjs'),
+    await run('scripts/smoke-validity.mjs'),
+  ];
+  console.log(`\n${formatSmokeSummary(results)}`);
 } finally {
-  server.kill('SIGTERM');
-  await Promise.race([
-    new Promise(resolve => server.once('exit', resolve)),
-    new Promise(resolve => setTimeout(resolve, 3_000)),
-  ]);
-  if (server.exitCode === null) server.kill('SIGKILL');
+  await terminateObserved(server);
 }
