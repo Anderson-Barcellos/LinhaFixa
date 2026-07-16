@@ -57,6 +57,7 @@ import { getReadingContent } from '@/services/contentGenerator';
 import { diagnosticsLayoutMode } from '@/services/deviceProfile';
 import { computeDiagnosticsSurface } from '@/services/captureGeometry';
 import { useMeasuredSurface } from '@/hooks/useMeasuredSurface';
+import { useModalDialog } from '@/hooks/useModalDialog';
 import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import {
@@ -194,6 +195,25 @@ export function EyeTrackingTestScreen() {
   const [recallOutcome, setRecallOutcome] = useState<{ score: number; total: number; topic: string } | null>(null);
   const lastRecallCaptureRef = useRef<{ captureId: string; readingDurationMs: number } | null>(null);
   const [calibrationSurfaceRect, setCalibrationSurfaceRect] = useState<SurfaceRect | null>(null);
+  const contextDialogRef = useModalDialog({
+    open: contextFormOpen,
+    onEscape: () => setContextFormOpen(false),
+  });
+  const recallErrorDialogRef = useModalDialog({
+    open: recallGenState === 'error',
+    onEscape: () => setRecallGenState('idle'),
+  });
+  const recallQuizDialogRef = useModalDialog({
+    open: recallQuiz !== null && recallContent !== null,
+  });
+  const captureReportDialogRef = useModalDialog({
+    open: captureResult !== null && recallQuiz === null && recallGenState === 'idle',
+    onEscape: () => { setCaptureResult(null); setRecallOutcome(null); },
+  });
+  const capturesDialogRef = useModalDialog({
+    open: showCaptures,
+    onEscape: () => { setShowCaptures(false); setExportNote(null); },
+  });
 
   // Loop-local mutable state (refs so the rAF loop is created once).
   const streamRef = useRef<MediaStream | null>(null);
@@ -1391,7 +1411,8 @@ export function EyeTrackingTestScreen() {
       {/* Quick pre-test context, asked before the first capture of the session */}
       {contextFormOpen && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-900/90 p-6 overflow-y-auto">
-          <div className="w-full max-w-2xl">
+          <div ref={contextDialogRef} role="dialog" aria-modal="true" aria-labelledby="capture-context-title" tabIndex={-1} className="w-full max-w-2xl">
+            <h2 id="capture-context-title" className="sr-only">Contexto antes da captura</h2>
             <PreContextForm
               tone="dark"
               value={contextDraft}
@@ -1418,20 +1439,21 @@ export function EyeTrackingTestScreen() {
 
       {/* Recall: question generation / quiz overlays (above the capture report) */}
       {recallGenState === 'generating' && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/90 p-6">
+        <div role="status" aria-live="polite" className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/90 p-6">
           <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
           <p className="text-slate-300 font-medium">Gerando questões sobre o texto…</p>
         </div>
       )}
       {recallGenState === 'error' && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/90 p-6 text-center">
-          <p className="text-rose-300 font-bold mb-2">Não foi possível gerar as questões.</p>
+        <div ref={recallErrorDialogRef} role="dialog" aria-modal="true" aria-labelledby="recall-error-title" tabIndex={-1} className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/90 p-6 text-center">
+          <h2 id="recall-error-title" className="text-rose-300 font-bold mb-2">Não foi possível gerar as questões.</h2>
           <p className="text-slate-400 text-sm mb-6 max-w-md">A captura da leitura foi salva normalmente; só o questionário falhou. Tente outra rodada.</p>
           <button onClick={() => setRecallGenState('idle')} className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold">Fechar</button>
         </div>
       )}
       {recallQuiz && recallContent && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/95 p-4 overflow-y-auto">
+        <div ref={recallQuizDialogRef} role="dialog" aria-modal="true" aria-labelledby="recall-quiz-title" tabIndex={-1} className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/95 p-4 overflow-y-auto">
+          <h2 id="recall-quiz-title" className="sr-only">Questionário de recall</h2>
           <RecallQuiz topic={recallContent.topic} questions={recallQuiz} onDone={handleQuizDone} />
         </div>
       )}
@@ -1439,10 +1461,10 @@ export function EyeTrackingTestScreen() {
       {/* Capture report */}
       {captureResult && reportedCapture && !recallQuiz && recallGenState === 'idle' && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-900/90 p-6">
-          <div className="bg-slate-800 rounded-3xl p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto border border-white/10">
+          <div ref={captureReportDialogRef} role="dialog" aria-modal="true" aria-labelledby="capture-report-title" tabIndex={-1} className="bg-slate-800 rounded-3xl p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto border border-white/10">
             <div className="flex items-center gap-2 mb-1">
               <Eye className="w-5 h-5 text-indigo-400" />
-              <h2 className="text-2xl font-bold">Dinâmica ocular capturada</h2>
+              <h2 id="capture-report-title" className="text-2xl font-bold">Dinâmica ocular capturada</h2>
             </div>
             <p className="text-xs text-slate-400 mb-6">
               Estimativa experimental por webcam. Prioriza movimento relativo, ritmo e eventos
@@ -1565,10 +1587,10 @@ export function EyeTrackingTestScreen() {
       {/* Saved validation captures */}
       {showCaptures && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-900/90 p-4">
-          <div className="bg-slate-800 rounded-3xl p-6 max-w-2xl w-full max-h-[90vh] flex flex-col border border-white/10">
+          <div ref={capturesDialogRef} role="dialog" aria-modal="true" aria-labelledby="saved-captures-title" tabIndex={-1} className="bg-slate-800 rounded-3xl p-6 max-w-2xl w-full max-h-[90vh] flex flex-col border border-white/10">
             <div className="flex items-center gap-3 mb-1">
               <Database className="w-5 h-5 text-indigo-400" />
-              <h2 className="text-xl font-bold">Capturas de validação</h2>
+              <h2 id="saved-captures-title" className="text-xl font-bold">Capturas de validação</h2>
               <span className="text-sm text-slate-400">{captures.length}</span>
               <div className="ml-auto flex gap-2">
                 <button

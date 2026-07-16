@@ -1,4 +1,5 @@
 import React from 'react';
+import { useModalDialog } from '@/hooks/useModalDialog';
 
 interface CalibrationReusePromptProps {
   reasons: string[];
@@ -11,13 +12,23 @@ export function CalibrationReusePrompt({
   onRecalibrate,
   onContinueRaw,
 }: CalibrationReusePromptProps) {
+  // Escape intentionally has no action: the user must choose recalibration or the
+  // explicitly exploratory raw-signal path.
+  const dialogRef = useModalDialog({ open: true });
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-white">
-      <div className="w-full max-w-2xl rounded-3xl border border-amber-400/30 bg-slate-800 p-8 md:p-12 shadow-2xl">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="calibration-reuse-title"
+        tabIndex={-1}
+        className="w-full max-w-2xl rounded-3xl border border-amber-400/30 bg-slate-800 p-8 md:p-12 shadow-2xl"
+      >
         <p className="text-sm font-bold uppercase tracking-widest text-amber-300 mb-3">
           Configuração alterada
         </p>
-        <h2 className="text-3xl font-bold mb-4">Esta calibração não combina com a tela atual</h2>
+        <h2 id="calibration-reuse-title" className="text-3xl font-bold mb-4">Esta calibração não combina com a tela atual</h2>
         <p className="text-slate-300 text-lg mb-6">
           Para manter as medidas espaciais honestas, recalibre nesta configuração ou continue
           apenas com o sinal bruto exploratório da câmera.

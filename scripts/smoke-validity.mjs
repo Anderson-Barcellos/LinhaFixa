@@ -80,7 +80,18 @@ try {
         check(profile.name, 'identidade da fixture real', (await page.title()) === 'Gaze validity component smoke');
         check(profile.name, 'página não está em branco', await page.getByText('Esta calibração não combina com a tela atual').isVisible());
         check(profile.name, 'sem overlay de framework', !(await page.locator('vite-error-overlay').isVisible().catch(() => false)));
-        await page.getByRole('button', { name: 'Continuar em modo bruto' }).click();
+        const mismatchDialog = page.getByRole('dialog', { name: 'Esta calibração não combina com a tela atual' });
+        const recalibrateButton = page.getByRole('button', { name: 'Recalibrar agora' });
+        const rawButton = page.getByRole('button', { name: 'Continuar em modo bruto' });
+        check(profile.name, 'prompt expõe diálogo modal nomeado',
+          await mismatchDialog.getAttribute('aria-modal') === 'true');
+        check(profile.name, 'foco inicial entra na ação primária', await recalibrateButton.evaluate(button => button === document.activeElement));
+        await rawButton.focus();
+        await page.keyboard.press('Tab');
+        check(profile.name, 'Tab fica preso no diálogo', await recalibrateButton.evaluate(button => button === document.activeElement));
+        await page.keyboard.press('Escape');
+        check(profile.name, 'Escape não burla decisão obrigatória de calibração', await mismatchDialog.isVisible());
+        await rawButton.click();
         check(profile.name, 'interação do prompt real responde', await page.getByTestId('fixture-action').getByText('ação: modo-bruto').isVisible());
         check(profile.name, 'prompt de mismatch sem clipping horizontal', await page.evaluate(() => (
           [...document.querySelectorAll('[data-testid="fixture-mismatch"] *')].every(node => {
