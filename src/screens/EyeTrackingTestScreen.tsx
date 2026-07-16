@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, BookOpen, Camera, Check, Eye, Play, RotateCcw, Crosshair, Trash2, Database } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
@@ -47,7 +47,7 @@ import {
   type CaptureInterruptionReason,
 } from '@/services/captureValidity';
 import { persistValidationCapture, type CapturePersistenceStatus } from '@/services/capturePersistence';
-import { canBeginCaptureCalibration } from '@/services/captureLifecycle';
+import { canBeginCaptureCalibration, createCaptureLifecycleLock } from '@/services/captureLifecycle';
 import {
   summarizeFunctionalVisualSignal,
   type FunctionalVisualSignalSummary,
@@ -221,6 +221,8 @@ export function EyeTrackingTestScreen() {
   const capturingRef = useRef(false);
   const captureStartSnapshotRef = useRef<CaptureStartSnapshot | null>(null);
   const finishCaptureRef = useRef<(interruption?: CaptureInterruptionReason | null) => void>(() => {});
+  const captureLifecycleRef = useRef(createCaptureLifecycleLock());
+  const captureOwnerRef = useRef<number | null>(null);
   const persistenceInFlightRef = useRef<Set<string>>(new Set());
   // Calibrated predictions and raw iris ratios use different units/gains, so each
   // source accumulates in its own buffer; finishCapture analyzes the majority buffer
@@ -669,9 +671,12 @@ export function EyeTrackingTestScreen() {
     }
     const startSnapshot = buildCaptureStartSnapshot();
     if (!startSnapshot) return;
+    const captureOwner = captureLifecycleRef.current.begin();
+    if (captureOwner === null) return;
     // Freeze the stimulus geometry and provenance for the whole measurement window.
     frozenFontPxRef.current = Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
     captureStartSnapshotRef.current = startSnapshot;
+    captureOwnerRef.current = captureOwner;
     capturingRef.current = true;
     captureCalSamplesRef.current = [];
     captureRawSamplesRef.current = [];
@@ -687,9 +692,14 @@ export function EyeTrackingTestScreen() {
   };
 
   const finishCapture = (interruption: CaptureInterruptionReason | null = null) => {
-    if (!capturingRef.current) return;
+    const captureOwner = captureOwnerRef.current;
+    if (
+      captureOwner === null
+      || !captureLifecycleRef.current.finish(captureOwner)
+    ) return;
     // The synchronous lock is deliberately first: pagehide + visibilitychange can
     // arrive back-to-back, and only the first event may own this immutable record.
+    captureOwnerRef.current = null;
     capturingRef.current = false;
     frozenFontPxRef.current = null;
     if (mountedRef.current) setCapturing(false);
@@ -823,7 +833,11 @@ export function EyeTrackingTestScreen() {
     void persistCaptureAndPublish(capture);
   };
 
-  finishCaptureRef.current = finishCapture;
+  // Publish the latest committed callback after render. The DOM listeners below
+  // remain registered once, while their ref never observes an uncommitted closure.
+  useLayoutEffect(() => {
+    finishCaptureRef.current = finishCapture;
+  }, [finishCapture]);
 
   useEffect(() => {
     const onVisibility = () => {
