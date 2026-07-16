@@ -16,7 +16,12 @@ import {
 } from '@/services/calibrationValidity';
 import { interpupillaryPx, setDistanceAnchor, resetDistanceAnchor } from '@/services/viewingGeometry';
 import { attachStream, getFrontCameraStream, stopCameraStream } from '@/services/cameraStream';
-import { setMotionBaseline, stopMotionSensor } from '@/services/motionSensor';
+import {
+  getMotionSnapshot,
+  setMotionBaseline,
+  startMotionSensor,
+  stopMotionSensor,
+} from '@/services/motionSensor';
 import {
   resetPosturalBaseline,
   setPosturalBaseline,
@@ -83,6 +88,9 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   const idxRef = useRef(0);
   const pointStartRef = useRef(0);
   const collectedRef = useRef(0);
+  const pointTimeoutRef = useRef<number | null>(null);
+  const pointTimerGenerationRef = useRef(0);
+  const startPointRef = useRef<(() => void) | null>(null);
   const fitSampleCountsRef = useRef<number[]>(Array(CALIB_POINTS.length).fill(0));
   const validationEvidenceRef = useRef<CalibrationValidationPointEvidence[]>(
     createEmptyValidationEvidence(),
@@ -97,18 +105,22 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
 
   useEffect(() => {
     let frameLoop: VideoFrameLoopHandle | null = null;
+    let cancelled = false;
     runningRef.current = true;
 
     const setPhaseBoth = (p: Phase) => { phaseRef.current = p; setPhase(p); };
     const setModeBoth = (m: 'calib' | 'valid') => { modeRef.current = m; setMode(m); };
     const setIdxBoth = (i: number) => { idxRef.current = i; setIndex(i); };
 
-    const startPoint = () => {
-      pointStartRef.current = performance.now();
-      collectedRef.current = 0;
-    };
+    function clearPointTimeout() {
+      pointTimerGenerationRef.current += 1;
+      if (pointTimeoutRef.current !== null) {
+        window.clearTimeout(pointTimeoutRef.current);
+        pointTimeoutRef.current = null;
+      }
+    }
 
-    const buildSignature = () => {
+    function buildSignature() {
       const video = videoRef.current;
       const trackSettings = ((video?.srcObject as MediaStream | null)?.getVideoTracks()[0])?.getSettings?.();
       const viewportWidth = window.innerWidth;
@@ -123,9 +135,9 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
         videoHeight: video?.videoHeight || trackSettings?.height,
         trackFrameRate: trackSettings?.frameRate,
       };
-    };
+    }
 
-    const buildAssessment = (): CalibrationAssessment => {
+    function buildAssessment(): CalibrationAssessment {
       const signature = buildSignature();
       const createdAt = Date.now();
       return assessCalibration({
@@ -135,27 +147,94 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
         validationPoints: validationEvidenceRef.current,
         signature,
       });
-    };
+    }
 
-    const rejectAttempt = (assessment: CalibrationAssessment, failedPointHadNoSamples: boolean) => {
+    function rejectAttempt(assessment: CalibrationAssessment, failedPointHadNoSamples: boolean) {
+      clearPointTimeout();
       rejectCalibration(assessment);
-      resetDistanceAnchor();
-      resetPosturalBaseline();
+      resetCalibrationAnchorsAndBaselines();
       setAccuracy(null);
       setRejection({ assessment, failedPointHadNoSamples });
       setPhaseBoth('rejected');
-    };
+    }
+
+    function completeCurrentPoint() {
+      const phaseNow = phaseRef.current;
+      if (phaseNow !== 'calibrating' && phaseNow !== 'validating') return;
+      clearPointTimeout();
+
+      const points = phaseNow === 'calibrating' ? CALIB_POINTS : VALID_POINTS;
+      const nextIdx = idxRef.current + 1;
+      if (nextIdx < points.length) {
+        setIdxBoth(nextIdx);
+        startPoint();
+      } else if (phaseNow === 'calibrating') {
+        // Fit the model, then move to validation.
+        const ok = fitCalibration();
+        if (!ok) {
+          setPhaseBoth('unavailable');
+        } else {
+          setPhaseBoth('validating');
+          setModeBoth('valid');
+          setIdxBoth(0);
+          startPoint();
+        }
+      } else {
+        const assessment = buildAssessment();
+        if (acceptPendingCalibration(assessment)) {
+          setAccuracy(assessment.meanErrorDeg);
+          // Anchor distance estimation only after the calibration model and
+          // its evidence have been accepted in the same transaction.
+          const ipds = ipdSamplesRef.current.slice().sort((a, b) => a - b);
+          if (ipds.length) {
+            const medianIpd = ipds[Math.floor(ipds.length / 2)];
+            setDistanceAnchor({ distanceCm: viewingDistanceCm, ipdPx: medianIpd });
+          }
+          setPosturalBaseline(summarizePosturalBaseline(posturalSamplesRef.current));
+          setMotionBaseline('calibration');
+          setPhaseBoth('done');
+        } else if (!assessment.accepted) {
+          rejectAttempt(assessment, false);
+        } else {
+          setPhaseBoth('unavailable');
+        }
+      }
+    }
+
+    function startPoint() {
+      clearPointTimeout();
+      pointStartRef.current = performance.now();
+      collectedRef.current = 0;
+      const generation = pointTimerGenerationRef.current;
+      pointTimeoutRef.current = window.setTimeout(() => {
+        if (
+          cancelled
+          || !runningRef.current
+          || generation !== pointTimerGenerationRef.current
+          || (phaseRef.current !== 'calibrating' && phaseRef.current !== 'validating')
+        ) return;
+
+        pointTimeoutRef.current = null;
+        if (collectedRef.current < MIN_SAMPLES_PER_POINT) {
+          rejectAttempt(buildAssessment(), collectedRef.current === 0);
+        } else {
+          completeCurrentPoint();
+        }
+      }, MAX_POINT_MS);
+    }
+
+    startPointRef.current = startPoint;
 
     const setup = async () => {
       resetCalibration();
-      resetDistanceAnchor();
-      resetPosturalBaseline();
+      resetCalibrationAnchorsAndBaselines();
       ipdSamplesRef.current = [];
       posturalSamplesRef.current = [];
       fitSampleCountsRef.current = Array(CALIB_POINTS.length).fill(0);
       validationEvidenceRef.current = createEmptyValidationEvidence();
       setRejection(null);
       await initFaceTracking();
+      if (cancelled) return;
       if (!isFaceTrackingActive()) {
         setPhaseBoth('unavailable');
         return;
@@ -166,9 +245,11 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           await attachStream(videoRef.current, stream);
         }
       } catch {
+        if (cancelled) return;
         setPhaseBoth('unavailable');
         return;
       }
+      if (cancelled) return;
 
       setPhaseBoth('calibrating');
       setModeBoth('calib');
@@ -180,7 +261,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     };
 
     const loop = () => {
-      if (!runningRef.current) return;
+      if (cancelled || !runningRef.current) return;
       const video = videoRef.current;
       const phaseNow = phaseRef.current;
 
@@ -230,49 +311,11 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
             }
           }
 
-          const collectionElapsed = elapsed - SETTLE_MS;
-          const hasEnoughSamples = collectedRef.current >= MIN_SAMPLES_PER_POINT && collectionElapsed >= MIN_POINT_MS;
-          const timedOut = collectionElapsed >= MAX_POINT_MS;
+          const hasEnoughSamples = collectedRef.current >= MIN_SAMPLES_PER_POINT
+            && elapsed >= SETTLE_MS + MIN_POINT_MS;
 
-          if (timedOut && collectedRef.current < MIN_SAMPLES_PER_POINT) {
-            rejectAttempt(buildAssessment(), collectedRef.current === 0);
-          } else if (hasEnoughSamples) {
-
-            const nextIdx = idxRef.current + 1;
-            if (nextIdx < points.length) {
-              setIdxBoth(nextIdx);
-              startPoint();
-            } else if (phaseNow === 'calibrating') {
-              // Fit the model, then move to validation.
-              const ok = fitCalibration();
-              if (!ok) {
-                setPhaseBoth('unavailable');
-              } else {
-                setPhaseBoth('validating');
-                setModeBoth('valid');
-                setIdxBoth(0);
-                startPoint();
-              }
-            } else {
-              const assessment = buildAssessment();
-              if (acceptPendingCalibration(assessment)) {
-                setAccuracy(assessment.meanErrorDeg);
-                // Anchor distance estimation only after the calibration model and
-                // its evidence have been accepted in the same transaction.
-                const ipds = ipdSamplesRef.current.slice().sort((a, b) => a - b);
-                if (ipds.length) {
-                  const medianIpd = ipds[Math.floor(ipds.length / 2)];
-                  setDistanceAnchor({ distanceCm: viewingDistanceCm, ipdPx: medianIpd });
-                }
-                setPosturalBaseline(summarizePosturalBaseline(posturalSamplesRef.current));
-                setMotionBaseline('calibration');
-                setPhaseBoth('done');
-              } else if (!assessment.accepted) {
-                rejectAttempt(assessment, false);
-              } else {
-                setPhaseBoth('unavailable');
-              }
-            }
+          if (hasEnoughSamples) {
+            completeCurrentPoint();
           }
         }
         setTick(t => (t + 1) % 1000);
@@ -282,7 +325,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     setup();
 
     return () => {
+      cancelled = true;
       runningRef.current = false;
+      startPointRef.current = null;
+      clearPointTimeout();
       frameLoop?.stop();
       if (!keepCameraOnClose) {
         stopCameraStream();
@@ -294,8 +340,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   const restart = () => {
     // Re-run the whole flow by remounting the loop via a phase reset.
     resetCalibration();
-    resetDistanceAnchor();
-    resetPosturalBaseline();
+    resetCalibrationAnchorsAndBaselines();
     ipdSamplesRef.current = [];
     posturalSamplesRef.current = [];
     fitSampleCountsRef.current = Array(CALIB_POINTS.length).fill(0);
@@ -303,13 +348,12 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     phaseRef.current = 'calibrating';
     modeRef.current = 'calib';
     idxRef.current = 0;
-    pointStartRef.current = performance.now();
-    collectedRef.current = 0;
     setAccuracy(null);
     setRejection(null);
     setMode('calib');
     setIndex(0);
     setPhase('calibrating');
+    startPointRef.current?.();
   };
 
   const points = mode === 'calib' ? CALIB_POINTS : VALID_POINTS;
@@ -509,4 +553,12 @@ function createEmptyValidationEvidence(): CalibrationValidationPointEvidence[] {
     errorsDeg: [],
     extrapolatedCount: 0,
   }));
+}
+
+function resetCalibrationAnchorsAndBaselines(): void {
+  resetDistanceAnchor();
+  resetPosturalBaseline();
+  const motionWasActive = getMotionSnapshot().active;
+  stopMotionSensor();
+  if (motionWasActive) startMotionSensor();
 }
