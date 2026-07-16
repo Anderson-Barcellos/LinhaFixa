@@ -45,17 +45,19 @@ export function assessCalibration(input: {
   validationPoints: CalibrationValidationPointEvidence[];
   signature: CalibrationSignature;
 }): CalibrationAssessment {
-  const fitSampleCounts = [...input.fitSampleCounts];
+  const fitSampleCounts = input.fitSampleCounts.map(finiteOrZero);
   const validationPoints = input.validationPoints.map(point => ({
     sampleCount: point.sampleCount,
     errorsDeg: [...point.errorsDeg],
     extrapolatedCount: point.extrapolatedCount,
   }));
-  const validationSampleCounts = validationPoints.map(point => point.sampleCount);
+  const validationSampleCounts = validationPoints.map(point => finiteOrZero(point.sampleCount));
 
   const validFitCount = (count: number) => Number.isInteger(count) && count >= MIN_SAMPLES;
-  const completeFitPoints = fitSampleCounts.filter(validFitCount).length;
-  let insufficientEvidence = fitSampleCounts.some(count => !validFitCount(count));
+  const completeFitPoints = input.fitSampleCounts.filter(validFitCount).length;
+  let insufficientEvidence = !Number.isFinite(input.createdAt)
+    || !signatureNumbersAreFinite(input.signature)
+    || input.fitSampleCounts.some(count => !validFitCount(count));
 
   let completeValidationPoints = 0;
   let extrapolatedValidationSamples = 0;
@@ -75,14 +77,15 @@ export function assessCalibration(input: {
       insufficientEvidence = true;
     }
     if (extrapolatedCountValid) {
-      extrapolatedValidationSamples += point.extrapolatedCount;
+      extrapolatedValidationSamples = addFiniteNonNegative(
+        extrapolatedValidationSamples,
+        point.extrapolatedCount,
+      );
     }
     validationErrors.push(...validErrors);
   }
 
-  const meanErrorDeg = validationErrors.length === 0
-    ? null
-    : validationErrors.reduce((sum, error) => sum + error, 0) / validationErrors.length;
+  const meanErrorDeg = mean(validationErrors);
   const p95ErrorDeg = percentile(validationErrors, 0.95);
   const reasonCodes: CalibrationReasonCode[] = [];
 
@@ -108,7 +111,7 @@ export function assessCalibration(input: {
   return {
     contractVersion: CALIBRATION_VALIDITY_CONTRACT_VERSION,
     id: input.id,
-    createdAt: input.createdAt,
+    createdAt: finiteOrZero(input.createdAt),
     accepted: reasonCodes.length === 0,
     reasonCodes,
     fitSampleCounts,
@@ -133,9 +136,56 @@ function percentile(values: number[], p: number): number | null {
     : sorted[lo] + (sorted[hi] - sorted[lo]) * (index - lo);
 }
 
+function mean(values: number[]): number | null {
+  if (values.length === 0) return null;
+  let result = 0;
+  for (let index = 0; index < values.length; index++) {
+    result += (values[index] - result) / (index + 1);
+  }
+  return result;
+}
+
+function finiteOrZero(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function finiteOptionalOrZero(value: number | undefined): number | undefined {
+  return value === undefined ? undefined : finiteOrZero(value);
+}
+
+function addFiniteNonNegative(total: number, value: number): number {
+  return total > Number.MAX_VALUE - value ? Number.MAX_VALUE : total + value;
+}
+
+function signatureNumbersAreFinite(signature: CalibrationSignature): boolean {
+  return [
+    signature.viewportWidth,
+    signature.viewportHeight,
+    signature.devicePixelRatio,
+    signature.surfaceRect.left,
+    signature.surfaceRect.top,
+    signature.surfaceRect.width,
+    signature.surfaceRect.height,
+    signature.videoWidth,
+    signature.videoHeight,
+    signature.trackFrameRate,
+  ].every(value => value === undefined || Number.isFinite(value));
+}
+
 function cloneSignature(signature: CalibrationSignature): CalibrationSignature {
   return {
-    ...signature,
-    surfaceRect: { ...signature.surfaceRect },
+    viewportWidth: finiteOrZero(signature.viewportWidth),
+    viewportHeight: finiteOrZero(signature.viewportHeight),
+    orientation: signature.orientation,
+    devicePixelRatio: finiteOrZero(signature.devicePixelRatio),
+    surfaceRect: {
+      left: finiteOrZero(signature.surfaceRect.left),
+      top: finiteOrZero(signature.surfaceRect.top),
+      width: finiteOrZero(signature.surfaceRect.width),
+      height: finiteOrZero(signature.surfaceRect.height),
+    },
+    videoWidth: finiteOptionalOrZero(signature.videoWidth),
+    videoHeight: finiteOptionalOrZero(signature.videoHeight),
+    trackFrameRate: finiteOptionalOrZero(signature.trackFrameRate),
   };
 }

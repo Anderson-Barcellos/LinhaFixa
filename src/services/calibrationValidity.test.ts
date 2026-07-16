@@ -35,6 +35,22 @@ const validInput = () => ({
   signature: signature(),
 });
 
+function assertAllNumbersFinite(value: unknown, path = 'assessment'): void {
+  if (typeof value === 'number') {
+    assert.equal(Number.isFinite(value), true, `${path} must be finite`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertAllNumbersFinite(item, `${path}[${index}]`));
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      assertAllNumbersFinite(item, `${path}.${key}`);
+    }
+  }
+}
+
 test('accepts the exact v1 boundaries with complete evidence', () => {
   const assessment = assessCalibration(validInput());
 
@@ -186,6 +202,7 @@ test('fails closed for invalid counts without producing invalid metrics', () => 
     assert.deepEqual(assessment.reasonCodes, scenario.reasonCodes, scenario.name);
     assert.equal(Number.isNaN(assessment.meanErrorDeg), false, scenario.name);
     assert.equal(Number.isNaN(assessment.p95ErrorDeg), false, scenario.name);
+    assertAllNumbersFinite(assessment, scenario.name);
   }
 });
 
@@ -263,4 +280,54 @@ test('clones input arrays and the nested calibration signature', () => {
   assert.equal(input.fitSampleCounts[1], 12);
   assert.equal(input.validationPoints[1].sampleCount, 12);
   assert.equal(input.signature.surfaceRect.height, 700);
+});
+
+test('fails closed and normalizes non-finite metadata and signature values', () => {
+  const cases: Array<{
+    name: string;
+    mutate: (input: ReturnType<typeof validInput>) => void;
+  }> = [
+    { name: 'createdAt NaN', mutate: input => { input.createdAt = NaN; } },
+    { name: 'viewport width Infinity', mutate: input => { input.signature.viewportWidth = Infinity; } },
+    { name: 'surface width NaN', mutate: input => { input.signature.surfaceRect.width = NaN; } },
+    { name: 'optional video height Infinity', mutate: input => { input.signature.videoHeight = Infinity; } },
+  ];
+
+  for (const scenario of cases) {
+    const input = validInput();
+    scenario.mutate(input);
+    const assessment = assessCalibration(input);
+
+    assert.equal(assessment.accepted, false, scenario.name);
+    assert.deepEqual(
+      assessment.reasonCodes,
+      ['calibration-insufficient-target-samples'],
+      scenario.name,
+    );
+    assertAllNumbersFinite(assessment, scenario.name);
+  }
+});
+
+test('normalizes every non-finite number in the returned assessment', () => {
+  const input = validInput();
+  input.createdAt = Infinity;
+  input.fitSampleCounts[0] = NaN;
+  input.validationPoints[0].sampleCount = Infinity;
+  input.validationPoints[0].extrapolatedCount = NaN;
+  input.signature.devicePixelRatio = NaN;
+  input.signature.surfaceRect.left = -Infinity;
+  input.signature.videoWidth = Infinity;
+  input.signature.trackFrameRate = NaN;
+
+  const assessment = assessCalibration(input);
+
+  assert.equal(assessment.accepted, false);
+  assert.equal(assessment.createdAt, 0);
+  assert.equal(assessment.fitSampleCounts[0], 0);
+  assert.equal(assessment.validationSampleCounts[0], 0);
+  assert.equal(assessment.signature.devicePixelRatio, 0);
+  assert.equal(assessment.signature.surfaceRect.left, 0);
+  assert.equal(assessment.signature.videoWidth, 0);
+  assert.equal(assessment.signature.trackFrameRate, 0);
+  assertAllNumbersFinite(assessment);
 });
