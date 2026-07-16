@@ -6,6 +6,7 @@ let pendingAcquisition: CameraAcquisition | null = null;
 interface CameraAcquisition {
   disposableOrigin: boolean;
   claimedByPersistentConsumer: boolean;
+  discarded: boolean;
 }
 
 export interface FrontCameraRequest {
@@ -52,19 +53,28 @@ function cameraRequest(disposable: boolean): FrontCameraRequest {
   const acquisition: CameraAcquisition = {
     disposableOrigin: disposable,
     claimedByPersistentConsumer: !disposable,
+    discarded: false,
   };
   pendingAcquisition = acquisition;
-  pendingStream = navigator.mediaDevices.getUserMedia(buildFrontCameraConstraints())
+  const acquisitionPromise = navigator.mediaDevices.getUserMedia(buildFrontCameraConstraints())
     .then(stream => {
+      if (pendingAcquisition !== acquisition) {
+        stream.getTracks().forEach(track => track.stop());
+        acquisition.discarded = true;
+        return stream;
+      }
       sharedStream = stream;
       return stream;
     })
     .finally(() => {
-      pendingStream = null;
-      pendingAcquisition = null;
+      if (pendingAcquisition === acquisition) {
+        pendingStream = null;
+        pendingAcquisition = null;
+      }
     });
+  pendingStream = acquisitionPromise;
 
-  return { claim, promise: pendingStream, acquisition };
+  return { claim, promise: acquisitionPromise, acquisition };
 }
 
 export function discardFrontCameraRequest(
@@ -74,6 +84,7 @@ export function discardFrontCameraRequest(
   if (
     request.claim !== claimGeneration
     || request.acquisition?.disposableOrigin !== true
+    || request.acquisition.discarded
     || request.acquisition.claimedByPersistentConsumer
     || sharedStream !== stream
   ) return false;

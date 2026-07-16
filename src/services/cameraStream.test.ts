@@ -102,3 +102,36 @@ test('a stale request cannot stop a pending stream claimed by a newer consumer',
     Object.defineProperty(globalThis, 'navigator', { configurable: true, value: originalNavigator });
   }
 });
+
+test('a revoked acquisition cannot overwrite or clear a newer camera acquisition', async () => {
+  stopCameraStream();
+  const resolvers: Array<(stream: MediaStream) => void> = [];
+  const originalNavigator = globalThis.navigator;
+  let staleStops = 0;
+  let currentStops = 0;
+  const staleStream = {
+    getTracks: () => [{ kind: 'video', readyState: 'live', stop: () => { staleStops += 1; } }],
+  } as unknown as MediaStream;
+  const currentStream = {
+    getTracks: () => [{ kind: 'video', readyState: 'live', stop: () => { currentStops += 1; } }],
+  } as unknown as MediaStream;
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { mediaDevices: { getUserMedia: () => new Promise<MediaStream>(resolve => { resolvers.push(resolve); }) } },
+  });
+  try {
+    const stale = requestFrontCameraStream();
+    stopCameraStream();
+    const current = requestFrontCameraStream();
+    resolvers[0](staleStream);
+    assert.equal(await stale.promise, staleStream);
+    assert.equal(staleStops, 1, 'revoked stream is released on resolution');
+    resolvers[1](currentStream);
+    assert.equal(await current.promise, currentStream);
+    assert.equal(discardFrontCameraRequest(stale, staleStream), false, 'already discarded stream is not stopped twice');
+    assert.equal(currentStops, 0);
+  } finally {
+    stopCameraStream();
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: originalNavigator });
+  }
+});
