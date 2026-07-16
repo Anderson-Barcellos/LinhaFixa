@@ -412,6 +412,10 @@ function CapStat({ label, value }: { label: string; value: string }) {
   );
 }
 
+export function formatEstimatedMilliseconds(value: number | null): string {
+  return value == null ? 'não estimável' : `${value} ms`;
+}
+
 function OcularTooltip({ active, payload }: { active?: boolean; payload?: any[] }) {
   if (!active || !payload?.length) return null;
   const point = payload[0]?.payload;
@@ -426,7 +430,7 @@ function OcularTooltip({ active, payload }: { active?: boolean; payload?: any[] 
         <span>Sacadas</span><strong className="text-right text-slate-800">{point.saccades}</strong>
         <span>Regressões</span><strong className="text-right text-slate-800">{point.regressions}</strong>
         <span>Retornos linha</span><strong className="text-right text-slate-800">{point.lineReturns ?? 'N/D'}</strong>
-        <span>Fixação</span><strong className="text-right text-slate-800">{point.meanFixationMs} ms</strong>
+        <span>Fixação</span><strong className="text-right text-slate-800">{formatEstimatedMilliseconds(point.meanFixationMs)}</strong>
         <span>Amostras</span><strong className="text-right text-slate-800">{point.samplesValid}</strong>
         <span>Cobertura</span><strong className="text-right text-slate-800">{point.coverage != null ? `${point.coverage}%` : 'N/D'}</strong>
       </div>
