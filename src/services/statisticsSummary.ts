@@ -9,8 +9,18 @@ import { PosturalStabilityMetrics } from '@/exercises/posturalStability';
 import { summarizeSaccadeSignalQuality, type SaccadeSignalQuality } from '@/services/signalQuality';
 import {
   captureValidityOrLegacy,
+  classifyTemporalTier,
   type CaptureValiditySnapshot,
 } from '@/services/captureValidity';
+
+export type TrendExclusionReason =
+  | 'unsupported-validity-contract'
+  | 'malformed-validity-snapshot'
+  | 'validity-grade-not-comparable'
+  | 'validity-contract-contradiction'
+  | 'temporal-tier-not-high'
+  | 'signal-source-not-calibrated'
+  | 'missing-comparison-context';
 
 export interface OcularReadingPoint {
   id: string;
@@ -29,6 +39,7 @@ export interface OcularReadingPoint {
   coverage: number | null;
   validity: CaptureValiditySnapshot;
   comparisonKey: string | null;
+  comparisonExclusionReason: TrendExclusionReason | null;
   orientation: 'portrait' | 'landscape' | null;
   saveProvenance: 'saved-session' | 'saved-capture';
 }
@@ -68,7 +79,7 @@ export interface DiagnosticInsightRecord {
   verticalRange: number;
   conditions: ValidationConditions;
   context: PreTestContext | null;
-  comparisonExclusionReason: 'missing-comparison-context' | null;
+  comparisonExclusionReason: TrendExclusionReason | null;
   validity: Pick<
     CaptureValiditySnapshot,
     'grade' | 'reasonCodes' | 'temporalTier' | 'signalSource' | 'selectedSourceRatio' | 'durationMs'
@@ -181,12 +192,14 @@ export function buildOcularReadingSeries(
       .map((exercise, index) => {
         const metrics = exercise.extraData?.saccadeMetrics;
         if (!metrics) return null;
-        const validity = captureValidityOrLegacy(exercise.extraData?.validity);
+        const runtimeValidity = captureValidityOrLegacy(exercise.extraData?.validity);
         const orientation = normalizeOrientation(exercise.extraData?.orientation);
+        const eligibility = trendEligibility(runtimeValidity, orientation);
+        const validity = presentationSafeValidity(runtimeValidity);
         const signalQuality = summarizeSaccadeSignalQuality(metrics, {
           coverage: exercise.extraData?.signalCoverage ?? null,
           calibrated: metrics.signalSource === 'calibrated-mediapipe',
-          validity: exercise.extraData?.validity,
+          validity,
         });
         return {
           id: `${session.id}-reading-${index}`,
@@ -204,7 +217,8 @@ export function buildOcularReadingSeries(
           samplesValid: metrics.samplesValid,
           coverage: null,
           validity,
-          comparisonKey: comparisonKey(validity, orientation),
+          comparisonKey: eligibility.key,
+          comparisonExclusionReason: eligibility.reason,
           orientation,
           saveProvenance: 'saved-session' as const,
         };
@@ -212,14 +226,16 @@ export function buildOcularReadingSeries(
   );
 
   const capturePoints: OcularReadingPoint[] = captures.map(capture => {
-    const validity = captureValidityOrLegacy(capture.validity);
+    const runtimeValidity = captureValidityOrLegacy(capture.validity);
     const orientation = normalizeOrientation(
       capture.orientation ?? capture.environment?.viewport.orientation,
     );
+    const eligibility = trendEligibility(runtimeValidity, orientation);
+    const validity = presentationSafeValidity(runtimeValidity);
     const signalQuality = summarizeSaccadeSignalQuality(capture.metrics, {
       coverage: capture.coverage,
       calibrated: capture.calibrated,
-      validity: capture.validity,
+      validity,
     });
     return {
       id: capture.id,
@@ -239,7 +255,8 @@ export function buildOcularReadingSeries(
       samplesValid: capture.metrics.samplesValid,
       coverage: Math.round(capture.coverage),
       validity,
-      comparisonKey: comparisonKey(validity, orientation),
+      comparisonKey: eligibility.key,
+      comparisonExclusionReason: eligibility.reason,
       orientation,
       saveProvenance: 'saved-capture' as const,
     };
@@ -328,6 +345,44 @@ export function buildDiagnosticInsightPayload(
     comparableDiagnosticCaptures: comparable,
     auditDiagnosticCaptures: audit,
   };
+}
+
+export interface SessionInsightRecord {
+  id: string;
+  date: string;
+  durationMins: number;
+  maxSymptomBefore: number | null;
+  maxSymptomAfter: number | null;
+  contextBefore: SessionResult['contextBefore'] | null;
+  contextAfter: SessionResult['contextAfter'] | null;
+  avgHeadStillness: number | null;
+  exercisesCount: number;
+}
+
+export function buildSessionInsightSummary(sessions: SessionResult[]): SessionInsightRecord[] {
+  return [...sessions]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, 8)
+    .map(session => {
+      const scores = session.exercises
+        .map(exercise => exercise.headStillnessScore)
+        .filter((value): value is number => value !== null && Number.isFinite(value));
+      return {
+        id: session.id,
+        date: new Date(session.timestamp).toISOString(),
+        durationMins: Math.round(session.durationSec / 60),
+        maxSymptomBefore: session.symptomsBefore
+          ? Math.max(...(Object.values(session.symptomsBefore) as number[]))
+          : null,
+        maxSymptomAfter: session.symptomsAfter
+          ? Math.max(...(Object.values(session.symptomsAfter) as number[]))
+          : null,
+        contextBefore: session.contextBefore ? { ...session.contextBefore } : null,
+        contextAfter: session.contextAfter ? { ...session.contextAfter } : null,
+        avgHeadStillness: scores.length ? scores.reduce((total, value) => total + value, 0) / scores.length : null,
+        exercisesCount: session.exercises.length,
+      };
+    });
 }
 
 function trainingSummary(
@@ -491,16 +546,73 @@ function diagnosticsSummary(
   );
 }
 
-function comparisonKey(
+function trendEligibility(
   validity: CaptureValiditySnapshot,
   orientation: OcularReadingPoint['orientation'],
-): string | null {
+): { key: string | null; reason: TrendExclusionReason | null } {
+  const runtime = validity as unknown as Record<string, unknown>;
+  if (runtime.contractVersion !== 1) {
+    return { key: null, reason: 'unsupported-validity-contract' };
+  }
   if (
-    !isOrientation(orientation)
-    || !isComparableTemporalTier(validity.temporalTier)
-    || !isComparableSignalSource(validity.signalSource)
-  ) return null;
-  return `${orientation}|${validity.temporalTier}|${validity.signalSource}`;
+    !Array.isArray(runtime.reasonCodes)
+    || !runtime.reasonCodes.every(reason => typeof reason === 'string')
+    || (runtime.assessedAt !== null && (
+      typeof runtime.assessedAt !== 'number'
+      || !Number.isFinite(runtime.assessedAt)
+      || runtime.assessedAt < 0
+    ))
+  ) {
+    return { key: null, reason: 'malformed-validity-snapshot' };
+  }
+  if (runtime.grade !== 'comparable') {
+    return { key: null, reason: 'validity-grade-not-comparable' };
+  }
+  if (
+    runtime.reasonCodes.length !== 0
+    || typeof runtime.sampleRateHz !== 'number'
+    || !Number.isFinite(runtime.sampleRateHz)
+    || classifyTemporalTier(runtime.sampleRateHz) !== runtime.temporalTier
+  ) {
+    return { key: null, reason: 'validity-contract-contradiction' };
+  }
+  if (runtime.temporalTier !== 'high-temporal') {
+    return { key: null, reason: 'temporal-tier-not-high' };
+  }
+  if (runtime.signalSource !== 'calibrated-mediapipe') {
+    return { key: null, reason: 'signal-source-not-calibrated' };
+  }
+  if (!isOrientation(orientation)) {
+    return { key: null, reason: 'missing-comparison-context' };
+  }
+  return {
+    key: `${orientation}|high-temporal|calibrated-mediapipe`,
+    reason: null,
+  };
+}
+
+function presentationSafeValidity(validity: CaptureValiditySnapshot): CaptureValiditySnapshot {
+  const runtime = validity as unknown as Record<string, unknown>;
+  const grade = runtime.grade;
+  const temporalTier = runtime.temporalTier;
+  const signalSource = runtime.signalSource;
+  if (
+    (grade !== 'comparable' && grade !== 'exploratory' && grade !== 'invalid')
+    || !Array.isArray(runtime.reasonCodes)
+    || !runtime.reasonCodes.every(reason => typeof reason === 'string')
+    || (
+      temporalTier !== 'high-temporal'
+      && temporalTier !== 'coarse-temporal'
+      && temporalTier !== 'insufficient-temporal'
+    )
+    || (
+      signalSource !== null
+      && signalSource !== 'calibrated-mediapipe'
+      && signalSource !== 'raw-mediapipe'
+      && signalSource !== 'unavailable'
+    )
+  ) return captureValidityOrLegacy(undefined);
+  return validity;
 }
 
 function normalizeOrientation(value: unknown): OcularReadingPoint['orientation'] {
@@ -509,18 +621,6 @@ function normalizeOrientation(value: unknown): OcularReadingPoint['orientation']
 
 function isOrientation(value: unknown): value is NonNullable<OcularReadingPoint['orientation']> {
   return value === 'portrait' || value === 'landscape';
-}
-
-function isComparableTemporalTier(
-  value: unknown,
-): value is Exclude<CaptureValiditySnapshot['temporalTier'], 'insufficient-temporal'> {
-  return value === 'high-temporal' || value === 'coarse-temporal';
-}
-
-function isComparableSignalSource(
-  value: unknown,
-): value is 'calibrated-mediapipe' | 'raw-mediapipe' {
-  return value === 'calibrated-mediapipe' || value === 'raw-mediapipe';
 }
 
 function comparisonLabel(point: OcularReadingPoint): string {
@@ -566,9 +666,7 @@ function diagnosticInsightRecord(
     verticalRange: capture.axis.vRange,
     conditions: { ...capture.conditions },
     context: capture.context ? { ...capture.context } : null,
-    comparisonExclusionReason: point.validity.grade === 'comparable' && point.comparisonKey === null
-      ? 'missing-comparison-context'
-      : null,
+    comparisonExclusionReason: point.comparisonExclusionReason,
     validity: {
       grade: point.validity.grade,
       reasonCodes: [...point.validity.reasonCodes],

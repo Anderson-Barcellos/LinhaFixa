@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildDiagnosticInsightPayload,
+  buildSessionInsightSummary,
   buildOcularReadingSeries,
   buildStatisticsSummary,
   partitionOcularReadingSeries,
@@ -432,7 +433,8 @@ test('partitions comparable captures by orientation, temporal tier and source wh
   assert.match(partition.comparableGroups[0].key, /calibrated-mediapipe/);
   assert.match(partition.comparableGroups[0].label, /Retrato/);
   assert.deepEqual(partition.audit.map(point => point.id), ['coarse', 'interrupted', 'legacy']);
-  assert.equal(partition.audit[0].comparisonKey, 'portrait|coarse-temporal|calibrated-mediapipe');
+  assert.equal(partition.audit[0].comparisonKey, null);
+  assert.equal(partition.audit[0].comparisonExclusionReason, 'validity-grade-not-comparable');
   assert.equal(partition.comparableGroups[0].points[1].meanFixationMs, null);
   assert.equal(partition.audit[2].validity.assessedAt, null);
   assert.deepEqual(legacy.validity, undefined, 'read-time normalization must not mutate storage objects');
@@ -449,7 +451,7 @@ test('routes comparable captures with missing orientation to audit instead of in
   assert.deepEqual(partition.audit.map(item => item.id), ['missing-orientation']);
 });
 
-test('comparison keys fail closed for missing, unknown or insufficient runtime enum values', () => {
+test('trend eligibility fails closed for malformed and unsupported runtime snapshots', () => {
   const cases: Array<{ name: string; capture: ValidationCapture }> = [];
   const missingOrientation = diagnosticCapture('missing-orientation-runtime', 1, validity('comparable'));
   delete missingOrientation.orientation;
@@ -499,15 +501,34 @@ test('comparison keys fail closed for missing, unknown or insufficient runtime e
     assert.deepEqual(partition.audit.map(audit => audit.id), [item.capture.id], item.name);
   }
 
-  const allowedRawCoarse = diagnosticCapture('allowed-raw-coarse', 100, validity('exploratory', {
+  const rawCoarse = diagnosticCapture('raw-coarse', 100, validity('exploratory', {
     signalSource: 'raw-mediapipe',
     temporalTier: 'coarse-temporal',
     sampleRateHz: 30,
   }));
-  assert.equal(
-    buildOcularReadingSeries([], [allowedRawCoarse])[0].comparisonKey,
-    'portrait|coarse-temporal|raw-mediapipe',
-  );
+  const rawCoarsePoint = buildOcularReadingSeries([], [rawCoarse])[0];
+  assert.equal(rawCoarsePoint.comparisonKey, null);
+  assert.equal(rawCoarsePoint.comparisonExclusionReason, 'validity-grade-not-comparable');
+
+  for (const [name, overrides, reason] of [
+    ['unsupported version', { contractVersion: 2 }, 'unsupported-validity-contract'],
+    ['missing reasons', { reasonCodes: undefined }, 'malformed-validity-snapshot'],
+    ['coarse contradiction', { temporalTier: 'coarse-temporal', sampleRateHz: 60 }, 'validity-contract-contradiction'],
+    ['raw comparable', { signalSource: 'raw-mediapipe' }, 'signal-source-not-calibrated'],
+  ] as const) {
+    const capture = diagnosticCapture(name, 200, validity('comparable', overrides as Partial<CaptureValiditySnapshot>));
+    const point = buildOcularReadingSeries([], [capture])[0];
+    assert.equal(point.comparisonKey, null, name);
+    assert.equal(point.comparisonExclusionReason, reason, name);
+    assert.deepEqual(capture.validity, validity('comparable', overrides as Partial<CaptureValiditySnapshot>), `${name} input remains untouched`);
+  }
+});
+
+test('trend eligibility requires exact v1 comparable high-temporal calibrated evidence', () => {
+  const capture = diagnosticCapture('eligible', 100, validity('comparable'), 'portrait');
+  const point = buildOcularReadingSeries([], [capture])[0];
+  assert.equal(point.comparisonKey, 'portrait|high-temporal|calibrated-mediapipe');
+  assert.equal(point.comparisonExclusionReason, null);
 });
 
 test('treats reading sessions without a validity snapshot as exploratory legacy audit records', () => {
@@ -600,7 +621,7 @@ test('builds separated AI diagnostic arrays without a combined trend payload', (
   assert.notEqual(payload.comparableDiagnosticCaptures[0].context, comparable.context);
   assert.deepEqual(payload.auditDiagnosticCaptures[0].validity.reasonCodes, ['capture-source-inconsistent']);
   assert.equal(payload.auditDiagnosticCaptures[0].meanFixationMs, null);
-  assert.equal(payload.auditDiagnosticCaptures[0].comparisonExclusionReason, null);
+  assert.equal(payload.auditDiagnosticCaptures[0].comparisonExclusionReason, 'validity-grade-not-comparable');
   assert.equal('diagnosticCaptures' in payload, false);
 });
 
@@ -626,6 +647,24 @@ test('limits the separated AI payload to the eight newest captures globally', ()
   ]);
   assert.deepEqual(comparableIds, ['capture-10', 'capture-8', 'capture-6', 'capture-4']);
   assert.deepEqual(auditIds, ['capture-9', 'capture-7', 'capture-5', 'capture-3']);
+});
+
+test('limits AI session summary to the eight newest sessions without mutating input', () => {
+  const sessions = Array.from({ length: 10 }, (_, index): SessionResult => ({
+    id: `session-${index + 1}`,
+    timestamp: (index + 1) * 100,
+    durationSec: 60,
+    exercises: [],
+  }));
+  const originalOrder = sessions.map(session => session.id);
+  const summary = buildSessionInsightSummary(sessions);
+
+  assert.deepEqual(summary.map(item => item.id), [
+    'session-10', 'session-9', 'session-8', 'session-7',
+    'session-6', 'session-5', 'session-4', 'session-3',
+  ]);
+  assert.deepEqual(sessions.map(session => session.id), originalOrder);
+  assert.equal(summary.length, 8);
 });
 
 test('ocular validity counts reconcile grade, trend eligibility and audit exclusion', () => {

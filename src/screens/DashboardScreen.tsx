@@ -4,6 +4,7 @@ import { getSessions, getValidationCaptures } from '@/services/storage';
 import { apiUrl } from '@/services/apiBase';
 import {
   buildDiagnosticInsightPayload,
+  buildSessionInsightSummary,
   buildOcularReadingSeries,
   buildStatisticsSummary,
   partitionOcularReadingSeries,
@@ -113,19 +114,7 @@ export function DashboardScreen() {
     if (sessions.length === 0 && captures.length === 0) return;
     setInsightLoading(true);
     try {
-      const summaryPayload = sessions.map(s => ({
-         date: new Date(s.timestamp).toISOString(),
-         durationMins: Math.round(s.durationSec / 60),
-         maxSymptomBefore: s.symptomsBefore ? Math.max(...(Object.values(s.symptomsBefore) as number[])) : null,
-         maxSymptomAfter: s.symptomsAfter ? Math.max(...(Object.values(s.symptomsAfter) as number[])) : null,
-         contextBefore: s.contextBefore ?? null,
-         contextAfter: s.contextAfter ?? null,
-         avgHeadStillness: (() => {
-            const scores = s.exercises.map(e => e.headStillnessScore).filter((v): v is number => v !== null);
-            return scores.length ? scores.reduce((acc, v) => acc + v, 0) / scores.length : null;
-         })(),
-         exercisesCount: s.exercises.length
-      }));
+      const summaryPayload = buildSessionInsightSummary(sessions);
 
       const res = await fetch(apiUrl('/api/generateInsight'), {
         method: 'POST',
