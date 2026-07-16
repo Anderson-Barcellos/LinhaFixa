@@ -13,7 +13,7 @@ test('wide desktop fills the measured box up to the clamps', () => {
     layoutMode: 'desktop',
   });
   assert.equal(surface.mode, 'desktop');
-  assert.equal(surface.width, 1180);
+  assert.equal(surface.width, 1440);
   assert.equal(surface.height, 1007);
 });
 
@@ -65,7 +65,7 @@ test('pins both maxima exactly on an oversized box', () => {
     availableHeight: 1500,
     layoutMode: 'desktop',
   });
-  assert.equal(surface.width, 1180);
+  assert.equal(surface.width, 1440);
   assert.equal(surface.height, 1280);
 });
 

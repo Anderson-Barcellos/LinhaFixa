@@ -17,7 +17,7 @@ export interface DiagnosticsSurface {
 }
 
 const DESKTOP_MIN_WIDTH = 720;
-const DESKTOP_MAX_WIDTH = 1180;
+const DESKTOP_MAX_WIDTH = 1440;
 const DESKTOP_MIN_HEIGHT = 420;
 const DESKTOP_MAX_HEIGHT = 1280;
 
@@ -35,7 +35,7 @@ export function computeDiagnosticsSurface(input: DiagnosticsSurfaceInput): Diagn
   const minHeight = Math.min(DESKTOP_MIN_HEIGHT, availableHeight);
 
   // Unified desktop rule: the surface always fills the measured box, each axis
-  // clamped independently (1180 wide × 1280 tall), regardless of orientation.
+  // clamped independently (1440 wide × 1280 tall), regardless of orientation.
   // Height is the clinically valuable axis — more visible lines means more of
   // the reading flow is captured — so it is never traded off against width.
   // The old 16:9 coupling below the width≈height boundary was cosmetic legacy
