@@ -1,5 +1,18 @@
 let sharedStream: MediaStream | null = null;
 let pendingStream: Promise<MediaStream> | null = null;
+let claimGeneration = 0;
+let pendingAcquisition: CameraAcquisition | null = null;
+
+interface CameraAcquisition {
+  disposableOrigin: boolean;
+  claimedByPersistentConsumer: boolean;
+}
+
+export interface FrontCameraRequest {
+  claim: number;
+  promise: Promise<MediaStream>;
+  acquisition: CameraAcquisition | null;
+}
 
 export function buildFrontCameraConstraints(): MediaStreamConstraints {
   return {
@@ -19,9 +32,28 @@ export function isReusableStream(stream: MediaStream | null): stream is MediaStr
 }
 
 export async function getFrontCameraStream(): Promise<MediaStream> {
-  if (isReusableStream(sharedStream)) return sharedStream;
-  if (pendingStream) return pendingStream;
+  return cameraRequest(false).promise;
+}
 
+export function requestFrontCameraStream(): FrontCameraRequest {
+  return cameraRequest(true);
+}
+
+function cameraRequest(disposable: boolean): FrontCameraRequest {
+  const claim = ++claimGeneration;
+  if (isReusableStream(sharedStream)) {
+    return { claim, promise: Promise.resolve(sharedStream), acquisition: null };
+  }
+  if (pendingStream && pendingAcquisition) {
+    if (!disposable) pendingAcquisition.claimedByPersistentConsumer = true;
+    return { claim, promise: pendingStream, acquisition: pendingAcquisition };
+  }
+
+  const acquisition: CameraAcquisition = {
+    disposableOrigin: disposable,
+    claimedByPersistentConsumer: !disposable,
+  };
+  pendingAcquisition = acquisition;
   pendingStream = navigator.mediaDevices.getUserMedia(buildFrontCameraConstraints())
     .then(stream => {
       sharedStream = stream;
@@ -29,9 +61,25 @@ export async function getFrontCameraStream(): Promise<MediaStream> {
     })
     .finally(() => {
       pendingStream = null;
+      pendingAcquisition = null;
     });
 
-  return pendingStream;
+  return { claim, promise: pendingStream, acquisition };
+}
+
+export function discardFrontCameraRequest(
+  request: FrontCameraRequest,
+  stream: MediaStream,
+): boolean {
+  if (
+    request.claim !== claimGeneration
+    || request.acquisition?.disposableOrigin !== true
+    || request.acquisition.claimedByPersistentConsumer
+    || sharedStream !== stream
+  ) return false;
+  stream.getTracks().forEach(track => track.stop());
+  sharedStream = null;
+  return true;
 }
 
 export async function attachStream(video: HTMLVideoElement, stream: MediaStream): Promise<void> {
@@ -56,4 +104,5 @@ export function stopCameraStream(): void {
   }
   sharedStream = null;
   pendingStream = null;
+  pendingAcquisition = null;
 }

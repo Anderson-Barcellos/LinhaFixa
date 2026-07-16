@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { PreContextForm, PostContextForm } from '@/components/QuickContextForm';
 import { ExerciseCanvas } from '@/components/ExerciseCanvas';
@@ -9,7 +9,11 @@ import { saveSession, getTodayPreContext } from '@/services/storage';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { CalibrationReusePrompt } from '@/components/CalibrationReusePrompt';
 import { getCalibrationAssessment } from '@/services/gazeCalibration';
-import { getFrontCameraStream, stopCameraStream } from '@/services/cameraStream';
+import {
+  discardFrontCameraRequest,
+  requestFrontCameraStream,
+  stopCameraStream,
+} from '@/services/cameraStream';
 import { calibrationReuseDecision, currentOrientation, fullViewportRect } from '@/services/ocularSignalContract';
 import { requestMotionPermissionFromGesture, startMotionSensor, stopMotionSensor } from '@/services/motionSensor';
 import { resetPosturalBaseline } from '@/exercises/posturalStability';
@@ -42,11 +46,18 @@ export function ExercisePlayerScreen() {
   const [calibrationOffered, setCalibrationOffered] = useState(false);
   const [calibrationMismatchReasons, setCalibrationMismatchReasons] = useState<string[]>([]);
   const [forceRawSignal, setForceRawSignal] = useState(false);
+  const mountedRef = useRef(true);
+  const cameraPreflightGenerationRef = useRef(0);
 
-  useEffect(() => () => {
-    stopCameraStream();
-    stopMotionSensor();
-    resetPosturalBaseline();
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      cameraPreflightGenerationRef.current += 1;
+      stopCameraStream();
+      stopMotionSensor();
+      resetPosturalBaseline();
+    };
   }, []);
 
   // Prefill from the day's first session so repeat sessions start from the
@@ -74,8 +85,14 @@ export function ExercisePlayerScreen() {
       return;
     }
 
+    const generation = ++cameraPreflightGenerationRef.current;
+    const cameraRequest = requestFrontCameraStream();
     try {
-      const stream = await getFrontCameraStream();
+      const stream = await cameraRequest.promise;
+      if (!mountedRef.current || generation !== cameraPreflightGenerationRef.current) {
+        discardFrontCameraRequest(cameraRequest, stream);
+        return;
+      }
       const trackSettings = stream.getVideoTracks()[0]?.getSettings?.();
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
@@ -96,6 +113,7 @@ export function ExercisePlayerScreen() {
         setStage('RECALIBRATION_PROMPT');
       }
     } catch {
+      if (!mountedRef.current || generation !== cameraPreflightGenerationRef.current) return;
       setStage('CALIBRATION');
     }
   };
