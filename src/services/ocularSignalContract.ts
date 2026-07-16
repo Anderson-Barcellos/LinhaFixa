@@ -1,3 +1,5 @@
+import type { CalibrationAssessment } from './calibrationValidity';
+
 export type OrientationKind = 'portrait' | 'landscape';
 
 export interface SurfaceRect {
@@ -36,6 +38,11 @@ export interface CalibrationSignature {
 
 export interface CalibrationSignatureMatch {
   matches: boolean;
+  reasons: string[];
+}
+
+export interface CalibrationReuseDecision {
+  reusable: boolean;
   reasons: string[];
 }
 
@@ -93,6 +100,21 @@ export function calibrationSignatureMatches(
   }
 
   return { matches: reasons.length === 0, reasons };
+}
+
+export function calibrationReuseDecision(
+  assessment: CalibrationAssessment | null | undefined,
+  actual: CalibrationSignature,
+): CalibrationReuseDecision {
+  if (!assessment) {
+    return { reusable: false, reasons: ['sem avaliacao de calibracao aceita'] };
+  }
+  if (!assessment.accepted) {
+    return { reusable: false, reasons: ['calibracao rejeitada'] };
+  }
+
+  const geometry = calibrationSignatureMatches(assessment.signature, actual);
+  return { reusable: geometry.matches, reasons: geometry.reasons };
 }
 
 export function currentOrientation(width = window.innerWidth, height = window.innerHeight): OrientationKind {

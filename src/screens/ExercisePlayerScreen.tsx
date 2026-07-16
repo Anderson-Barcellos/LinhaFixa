@@ -7,14 +7,16 @@ import { generateTreatmentPlan } from '@/services/planner';
 import { checkContextSafety } from '@/services/safety';
 import { saveSession, getTodayPreContext } from '@/services/storage';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
-import { isCalibrated } from '@/services/gazeCalibration';
-import { stopCameraStream } from '@/services/cameraStream';
+import { CalibrationReusePrompt } from '@/components/CalibrationReusePrompt';
+import { getCalibrationAssessment } from '@/services/gazeCalibration';
+import { getFrontCameraStream, stopCameraStream } from '@/services/cameraStream';
+import { calibrationReuseDecision, currentOrientation, fullViewportRect } from '@/services/ocularSignalContract';
 import { requestMotionPermissionFromGesture, startMotionSensor, stopMotionSensor } from '@/services/motionSensor';
 import { resetPosturalBaseline } from '@/exercises/posturalStability';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
 import { PreTestContext, PostTestContext, TreatmentPlanResponse, SessionResult, ExerciseResult } from '@/types';
 
-type PlayerStage = 'PRE_CONTEXT' | 'LOADING_PLAN' | 'BLOCKED' | 'PRE_EXERCISE_INFO' | 'CALIBRATION' | 'EXERCISE' | 'POST_READING_RATING' | 'POST_CONTEXT' | 'SUMMARY';
+type PlayerStage = 'PRE_CONTEXT' | 'LOADING_PLAN' | 'BLOCKED' | 'PRE_EXERCISE_INFO' | 'CALIBRATION' | 'RECALIBRATION_PROMPT' | 'EXERCISE' | 'POST_READING_RATING' | 'POST_CONTEXT' | 'SUMMARY';
 
 export function ExercisePlayerScreen() {
   const navigate = useNavigate();
@@ -38,6 +40,8 @@ export function ExercisePlayerScreen() {
   const [readingRating, setReadingRating] = useState<string | null>(null);
   // Once the user has been offered calibration this session, don't prompt again.
   const [calibrationOffered, setCalibrationOffered] = useState(false);
+  const [calibrationMismatchReasons, setCalibrationMismatchReasons] = useState<string[]>([]);
+  const [forceRawSignal, setForceRawSignal] = useState(false);
 
   useEffect(() => () => {
     stopCameraStream();
@@ -59,8 +63,41 @@ export function ExercisePlayerScreen() {
       const motionPermission = await requestMotionPermissionFromGesture();
       if (motionPermission === 'granted') startMotionSensor();
     }
-    const needsCalibration = (profile?.cameraEnabled ?? false) && !isCalibrated() && !calibrationOffered;
-    setStage(needsCalibration ? 'CALIBRATION' : 'EXERCISE');
+    if (!(profile?.cameraEnabled ?? false) || forceRawSignal) {
+      setStage('EXERCISE');
+      return;
+    }
+
+    const assessment = getCalibrationAssessment();
+    if (!assessment) {
+      setStage(calibrationOffered ? 'EXERCISE' : 'CALIBRATION');
+      return;
+    }
+
+    try {
+      const stream = await getFrontCameraStream();
+      const trackSettings = stream.getVideoTracks()[0]?.getSettings?.();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const decision = calibrationReuseDecision(assessment, {
+        viewportWidth,
+        viewportHeight,
+        orientation: currentOrientation(viewportWidth, viewportHeight),
+        devicePixelRatio: window.devicePixelRatio || 1,
+        surfaceRect: fullViewportRect(viewportWidth, viewportHeight),
+        videoWidth: trackSettings?.width,
+        videoHeight: trackSettings?.height,
+        trackFrameRate: trackSettings?.frameRate,
+      });
+      if (decision.reusable) {
+        setStage('EXERCISE');
+      } else {
+        setCalibrationMismatchReasons(decision.reasons);
+        setStage('RECALIBRATION_PROMPT');
+      }
+    } catch {
+      setStage('CALIBRATION');
+    }
   };
 
   const handlePreContextSubmit = async () => {
@@ -204,9 +241,31 @@ export function ExercisePlayerScreen() {
     return (
       <CalibrationOverlay
         viewingDistanceCm={profile?.viewingDistanceCm ?? 40}
-        onComplete={() => { setCalibrationOffered(true); setStage('EXERCISE'); }}
-        onSkip={() => { setCalibrationOffered(true); setStage('EXERCISE'); }}
+        onComplete={() => {
+          setCalibrationOffered(true);
+          setForceRawSignal(false);
+          setCalibrationMismatchReasons([]);
+          setStage('EXERCISE');
+        }}
+        onSkip={() => {
+          setCalibrationOffered(true);
+          setForceRawSignal(true);
+          setStage('EXERCISE');
+        }}
         keepCameraOnClose
+      />
+    );
+  }
+
+  if (stage === 'RECALIBRATION_PROMPT') {
+    return (
+      <CalibrationReusePrompt
+        reasons={calibrationMismatchReasons}
+        onRecalibrate={() => setStage('CALIBRATION')}
+        onContinueRaw={() => {
+          setForceRawSignal(true);
+          setStage('EXERCISE');
+        }}
       />
     );
   }
@@ -221,6 +280,7 @@ export function ExercisePlayerScreen() {
            parameters={ex.parameters}
            onFinish={handleExerciseFinish}
            cameraEnabled={profile?.cameraEnabled ?? false}
+           forceRawSignal={forceRawSignal}
            viewingDistanceCm={profile?.viewingDistanceCm ?? 40}
            fontSizePreference={profile?.fontSizePreference ?? 'normal'}
          />

@@ -16,7 +16,8 @@ function makeContext(overrides: Record<string, unknown> = {}) {
       chunks: [{ text: 'texto', x: 0, y: 0, width: 100, height: 20 }],
       currentIndex: 0,
       intervals: [],
-      gazeSamples: [],
+      calibratedGazeSamples: [],
+      rawGazeSamples: [],
       lastTapTime: 0,
       fontPx: 32,
       contentReady: true,
@@ -56,18 +57,23 @@ test('assisted reading sizes the font by visual angle via degToPx, matching the 
   assert.equal(context.state.fontPx, 60);
 });
 
-test('assisted reading ignores raw MediaPipe gaze when calculating reading saccades', () => {
+test('forced-raw assisted reading produces raw MediaPipe metrics', () => {
   const { context, getFinished } = makeContext();
 
-  assistedReadingExercise.update(context);
-  context.timeMs = 40;
-  assistedReadingExercise.update(context);
+  for (let index = 0; index < 5; index++) {
+    context.timeMs = index * 40;
+    context.latestGaze = { t: context.timeMs, h: 0.2 + index * 0.1, v: 0.5 };
+    assistedReadingExercise.update(context);
+  }
   assistedReadingExercise.onInput(0, 0, context);
 
   const finished = getFinished();
-  assert.equal(context.state.gazeSamples.length, 0);
-  assert.equal(finished.saccadeMetrics.trackingAvailable, false);
-  assert.equal(finished.saccadeMetrics.signalSource, 'unavailable');
+  assert.equal(context.state.calibratedGazeSamples.length, 0);
+  assert.equal(context.state.rawGazeSamples.length, 5);
+  assert.equal(finished.saccadeMetrics.trackingAvailable, true);
+  assert.equal(finished.saccadeMetrics.signalSource, 'raw-mediapipe');
+  assert.equal(finished.calibratedSampleCount, 0);
+  assert.equal(finished.rawSampleCount, 5);
 });
 
 test('assisted reading samples calibrated MediaPipe gaze for reading saccades', () => {
@@ -78,7 +84,8 @@ test('assisted reading samples calibrated MediaPipe gaze for reading saccades', 
 
   assistedReadingExercise.update(context);
 
-  assert.deepEqual(context.state.gazeSamples, [{ t: 0, h: 0.25, v: 0.5 }]);
+  assert.deepEqual(context.state.calibratedGazeSamples, [{ t: 0, h: 0.25, v: 0.5 }]);
+  assert.deepEqual(context.state.rawGazeSamples, []);
 });
 
 test('assisted reading does not sample gaze while generated text is still loading', () => {
@@ -90,14 +97,15 @@ test('assisted reading does not sample gaze while generated text is still loadin
 
   assistedReadingExercise.update(context);
 
-  assert.deepEqual(context.state.gazeSamples, []);
+  assert.deepEqual(context.state.calibratedGazeSamples, []);
+  assert.deepEqual(context.state.rawGazeSamples, []);
 });
 
 test('assisted reading timeout before AI text loads returns an invalid incomplete result', () => {
   const { context } = makeContext();
   context.state.loading = true;
   context.state.contentReady = false;
-  context.state.gazeSamples = [
+  context.state.calibratedGazeSamples = [
     { t: 0, h: 0.2, v: 0.5 },
     { t: 40, h: 0.8, v: 0.5 },
   ];
@@ -113,7 +121,7 @@ test('assisted reading timeout before AI text loads returns an invalid incomplet
 
 test('assisted reading returns ocular metrics when the exercise times out', () => {
   const { context } = makeContext();
-  context.state.gazeSamples = [
+  context.state.calibratedGazeSamples = [
     { t: 0, h: 0.2, v: 0.5 },
     { t: 40, h: 0.21, v: 0.5 },
     { t: 80, h: 0.5, v: 0.5 },
@@ -128,4 +136,30 @@ test('assisted reading returns ocular metrics when the exercise times out', () =
   assert.equal(result?.saccadeMetrics.signalSource, 'calibrated-mediapipe');
   assert.deepEqual(result?.intervals, []);
   assert.equal(result?.textComplexity, 'facil');
+  assert.equal(result?.calibratedSampleCount, 6);
+  assert.equal(result?.rawSampleCount, 0);
+});
+
+test('assisted reading keeps mid-run calibrated and raw samples in separate units', () => {
+  const { context } = makeContext({
+    latestGazePoint: { x: 250, y: 300 },
+    latestGaze: { t: 0, h: 0.1, v: 0.5 },
+  });
+
+  assistedReadingExercise.update(context);
+  context.latestGazePoint = null;
+  for (let index = 1; index <= 5; index++) {
+    context.timeMs = index * 40;
+    context.latestGaze = { t: context.timeMs, h: 0.1 + index * 0.05, v: 0.5 };
+    assistedReadingExercise.update(context);
+  }
+
+  const result = assistedReadingExercise.getResultData?.(context);
+
+  assert.equal(context.state.calibratedGazeSamples.length, 1);
+  assert.equal(context.state.rawGazeSamples.length, 5);
+  assert.equal(result?.calibratedSampleCount, 1);
+  assert.equal(result?.rawSampleCount, 5);
+  assert.equal(result?.saccadeMetrics.signalSource, 'raw-mediapipe');
+  assert.equal(result?.saccadeMetrics.samplesValid, 5);
 });

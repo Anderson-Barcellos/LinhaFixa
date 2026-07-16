@@ -2,6 +2,7 @@ import { ExerciseImplementation } from './engine';
 import { getReadingContent } from '../services/contentGenerator';
 import { analyzeSaccades } from './saccadeAnalysis';
 import { readingFontAngleDeg } from '../services/viewingGeometry';
+import { selectCaptureSeries } from '../services/validationCapture';
 import { GazeSample } from '@/types';
 
 // roundRect isn't available in every browser; fall back to a plain rect.
@@ -17,6 +18,10 @@ function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w:
 
 function buildReadingResult(context: Parameters<ExerciseImplementation['update']>[0]) {
   const s = context.state;
+  const series = selectCaptureSeries(
+    s.calibratedGazeSamples ?? [],
+    s.rawGazeSamples ?? [],
+  );
   if (!s.contentReady) {
     return {
       score: 0,
@@ -24,17 +29,19 @@ function buildReadingResult(context: Parameters<ExerciseImplementation['update']
       textLoaded: false,
       textComplexity: context.parameters.textComplexity || 'facil',
       saccadeMetrics: analyzeSaccades([], { signalSource: 'unavailable' }),
+      calibratedSampleCount: series.calibratedSampleCount,
+      rawSampleCount: series.rawSampleCount,
     };
   }
 
-  const saccadeMetrics = analyzeSaccades(s.gazeSamples, {
-    signalSource: s.gazeSamples.length ? 'calibrated-mediapipe' : 'unavailable',
-  });
+  const saccadeMetrics = analyzeSaccades(series.samples, { signalSource: series.signalSource });
   return {
     intervals: s.intervals,
     textLoaded: true,
     textComplexity: context.parameters.textComplexity || 'facil',
     saccadeMetrics,
+    calibratedSampleCount: series.calibratedSampleCount,
+    rawSampleCount: series.rawSampleCount,
   };
 }
 
@@ -50,7 +57,8 @@ export const assistedReadingExercise: ExerciseImplementation = {
       chunks: [],
       currentIndex: 0,
       intervals: [] as number[],
-      gazeSamples: [] as GazeSample[],
+      calibratedGazeSamples: [] as GazeSample[],
+      rawGazeSamples: [] as GazeSample[],
       lastTapTime: context.timeMs,
       setupDone: false,
       loading: true,
@@ -68,7 +76,8 @@ export const assistedReadingExercise: ExerciseImplementation = {
         context.state.error = null;
         context.state.contentReady = true;
         context.state.setupDone = false; // Trigger re-setup
-        context.state.gazeSamples = [];
+        context.state.calibratedGazeSamples = [];
+        context.state.rawGazeSamples = [];
         context.state.lastTapTime = context.timeMs; // Reset time
       })
       .catch(() => {
@@ -115,15 +124,17 @@ export const assistedReadingExercise: ExerciseImplementation = {
       s.chunks.forEach((c: any) => c.y += offsetY);
     }
 
-    // Continuously sample calibrated webcam gaze only after the real reading text
-    // exists. Raw iris ratios are intentionally ignored here: reading saccades
-    // require calibration.
+    // Calibrated canvas ratios and raw iris ratios use different units. Keep them
+    // in mutually exclusive per-frame buffers so a source transition cannot create
+    // a fabricated saccade; result selection analyzes only the majority source.
     if (context.latestGazePoint && context.width > 0 && context.height > 0) {
-      s.gazeSamples.push({
+      s.calibratedGazeSamples.push({
         t: context.timeMs,
         h: context.latestGazePoint.x / context.width,
         v: context.latestGazePoint.y / context.height,
       });
+    } else if (context.latestGaze) {
+      s.rawGazeSamples.push({ ...context.latestGaze });
     }
   },
   draw: (context) => {

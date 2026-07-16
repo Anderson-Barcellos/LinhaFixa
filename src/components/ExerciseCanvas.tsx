@@ -3,7 +3,7 @@ import { registry } from '@/exercises/implementations';
 import { measuredSurfaceFromEntry, measuredSurfaceEquals, type MeasuredSurface } from '@/services/measuredSurface';
 import { ExerciseParameters } from '@/types';
 import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive, getBlinkScore, shouldDropGazeForBlink, getLastLandmarks } from '@/services/faceTracking';
-import { getCalibrationSignature, isCalibrated, predictNorm } from '@/services/gazeCalibration';
+import { getCalibrationAssessment, isCalibrated, predictNorm } from '@/services/gazeCalibration';
 import { interpupillaryPx, estimateDistanceCm, getDistanceAnchor, distanceWithinAnchorTolerance } from '@/services/viewingGeometry';
 import { attachStream, getFrontCameraStream } from '@/services/cameraStream';
 import { getMotionQuality } from '@/services/motionSensor';
@@ -11,7 +11,7 @@ import { createStimulusDistanceTracker, type StimulusDistanceSnapshot } from '@/
 import { createLiveStabilityTracker, getPosturalBaseline, summarizePosturalStability, toPosturalSample, type PosturalSample } from '@/exercises/posturalStability';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import {
-  calibrationSignatureMatches,
+  calibrationReuseDecision,
   currentOrientation,
   fullViewportRect,
   rectFromElement,
@@ -23,6 +23,7 @@ interface ExerciseCanvasProps {
   parameters: ExerciseParameters;
   onFinish: (score: number, headStillnessScore: number | null, extraData?: any) => void;
   cameraEnabled: boolean;
+  forceRawSignal: boolean;
   viewingDistanceCm?: number;
   fontSizePreference?: string;
 }
@@ -33,7 +34,7 @@ interface ExerciseCanvasProps {
 // the DPR, so PX_PER_CM correctly stays a CSS-px constant here.
 const PX_PER_CM = 37.8;
 
-export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled, viewingDistanceCm = 40, fontSizePreference = 'normal' }: ExerciseCanvasProps) {
+export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled, forceRawSignal, viewingDistanceCm = 40, fontSizePreference = 'normal' }: ExerciseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const contextRef = useRef<any>(null);
@@ -165,7 +166,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
         viewingDistanceCm,
         latestGaze: null,
         latestGazePoint: null,
-        isGazeCalibrated: cameraEnabled && isFaceTrackingActive() && isCalibrated(),
+        isGazeCalibrated: cameraEnabled && !forceRawSignal && isFaceTrackingActive() && isCalibrated(),
         fontSizePreference,
         finishExercise: (extraData?: any) => {
            if (!isRunning) return;
@@ -253,7 +254,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
                const viewportWidth = window.innerWidth;
                const viewportHeight = window.innerHeight;
                const trackSettings = ((videoRef.current.srcObject as MediaStream | null)?.getVideoTracks()[0])?.getSettings?.();
-               const signatureStatus = calibrationSignatureMatches(getCalibrationSignature(), {
+               const reuseDecision = calibrationReuseDecision(getCalibrationAssessment(), {
                  viewportWidth,
                  viewportHeight,
                  orientation: currentOrientation(viewportWidth, viewportHeight),
@@ -270,7 +271,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
                );
                // Extrapolated predictions are clamped border points, not measured
                // positions — rejected here so oculomotor metrics never ingest them.
-               exContext.latestGazePoint = signatureStatus.matches && localPoint.inBounds && distanceOk && !norm.extrapolated
+               exContext.latestGazePoint = reuseDecision.reusable && localPoint.inBounds && distanceOk && !norm.extrapolated
                  ? { x: localPoint.x, y: localPoint.y }
                  : null;
              } else {
@@ -312,7 +313,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
       videoFrameLoop?.stop();
       resizeObserver?.disconnect();
     };
-  }, [exerciseId, parameters, cameraEnabled, onFinish, viewingDistanceCm, fontSizePreference]);
+  }, [exerciseId, parameters, cameraEnabled, forceRawSignal, onFinish, viewingDistanceCm, fontSizePreference]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     const canvas = canvasRef.current;
