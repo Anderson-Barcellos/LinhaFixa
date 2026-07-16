@@ -93,6 +93,10 @@ export function discardFrontCameraRequest(
   return true;
 }
 
+export function retainFrontCameraRequest(request: FrontCameraRequest): void {
+  if (request.acquisition) request.acquisition.claimedByPersistentConsumer = true;
+}
+
 export async function attachStream(video: HTMLVideoElement, stream: MediaStream): Promise<void> {
   const needsAttach = video.srcObject !== stream;
   if (needsAttach) {

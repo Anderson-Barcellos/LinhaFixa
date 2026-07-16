@@ -12,6 +12,7 @@ import { getCalibrationAssessment } from '@/services/gazeCalibration';
 import {
   discardFrontCameraRequest,
   requestFrontCameraStream,
+  retainFrontCameraRequest,
   stopCameraStream,
 } from '@/services/cameraStream';
 import { calibrationReuseDecision, currentOrientation, fullViewportRect } from '@/services/ocularSignalContract';
@@ -20,6 +21,7 @@ import { resetPosturalBaseline } from '@/exercises/posturalStability';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
 import { PreTestContext, PostTestContext, TreatmentPlanResponse, SessionResult, ExerciseResult } from '@/types';
 import { formatSampleRateHz } from '@/services/sampleRatePresentation';
+import { createAsyncOperationGate, guardedAwait } from '@/services/asyncOperation';
 
 type PlayerStage = 'PRE_CONTEXT' | 'LOADING_PLAN' | 'BLOCKED' | 'PRE_EXERCISE_INFO' | 'CALIBRATION' | 'RECALIBRATION_PROMPT' | 'EXERCISE' | 'POST_READING_RATING' | 'POST_CONTEXT' | 'SUMMARY';
 
@@ -47,14 +49,12 @@ export function ExercisePlayerScreen() {
   const [calibrationOffered, setCalibrationOffered] = useState(false);
   const [calibrationMismatchReasons, setCalibrationMismatchReasons] = useState<string[]>([]);
   const [forceRawSignal, setForceRawSignal] = useState(false);
-  const mountedRef = useRef(true);
-  const cameraPreflightGenerationRef = useRef(0);
+  const cameraPreflightGateRef = useRef(createAsyncOperationGate());
 
   useEffect(() => {
-    mountedRef.current = true;
+    cameraPreflightGateRef.current.mount();
     return () => {
-      mountedRef.current = false;
-      cameraPreflightGenerationRef.current += 1;
+      cameraPreflightGateRef.current.unmount();
       stopCameraStream();
       stopMotionSensor();
       resetPosturalBaseline();
@@ -71,10 +71,18 @@ export function ExercisePlayerScreen() {
 
   // Decide whether to calibrate before the exercise, then enter it.
   const proceedToExercise = async () => {
+    const gate = cameraPreflightGateRef.current;
+    const operation = gate.begin();
     if (profile?.cameraEnabled ?? false) {
-      const motionPermission = await requestMotionPermissionFromGesture();
-      if (motionPermission === 'granted') startMotionSensor();
+      const motionPermission = await guardedAwait(
+        gate,
+        operation,
+        requestMotionPermissionFromGesture(),
+      );
+      if (!motionPermission.current) return;
+      if (motionPermission.value === 'granted') startMotionSensor();
     }
+    if (!gate.isCurrent(operation)) return;
     if (!(profile?.cameraEnabled ?? false) || forceRawSignal) {
       setStage('EXERCISE');
       return;
@@ -82,15 +90,15 @@ export function ExercisePlayerScreen() {
 
     const assessment = getCalibrationAssessment();
     if (!assessment) {
+      if (!gate.isCurrent(operation)) return;
       setStage(calibrationOffered ? 'EXERCISE' : 'CALIBRATION');
       return;
     }
 
-    const generation = ++cameraPreflightGenerationRef.current;
     const cameraRequest = requestFrontCameraStream();
     try {
       const stream = await cameraRequest.promise;
-      if (!mountedRef.current || generation !== cameraPreflightGenerationRef.current) {
+      if (!gate.isCurrent(operation)) {
         discardFrontCameraRequest(cameraRequest, stream);
         return;
       }
@@ -107,6 +115,11 @@ export function ExercisePlayerScreen() {
         videoHeight: trackSettings?.height,
         trackFrameRate: trackSettings?.frameRate,
       });
+      if (!gate.isCurrent(operation)) {
+        discardFrontCameraRequest(cameraRequest, stream);
+        return;
+      }
+      retainFrontCameraRequest(cameraRequest);
       if (decision.reusable) {
         setStage('EXERCISE');
       } else {
@@ -114,7 +127,7 @@ export function ExercisePlayerScreen() {
         setStage('RECALIBRATION_PROMPT');
       }
     } catch {
-      if (!mountedRef.current || generation !== cameraPreflightGenerationRef.current) return;
+      if (!gate.isCurrent(operation)) return;
       setStage('CALIBRATION');
     }
   };

@@ -11,7 +11,15 @@ import {
   cssPxPerDeg, distanceWithinAnchorTolerance,
 } from '@/services/viewingGeometry';
 import { isCalibrated, predictNorm, getAccuracyDeg, getCalibrationSignature, getCalibrationAssessment } from '@/services/gazeCalibration';
-import { attachStream, getActiveCameraStream, getFrontCameraStream, stopCameraStream } from '@/services/cameraStream';
+import {
+  attachStream,
+  discardFrontCameraRequest,
+  getActiveCameraStream,
+  getFrontCameraStream,
+  requestFrontCameraStream,
+  retainFrontCameraRequest,
+  stopCameraStream,
+} from '@/services/cameraStream';
 import {
   getMotionQuality,
   requestMotionPermissionFromGesture,
@@ -60,6 +68,7 @@ import { useMeasuredSurface } from '@/hooks/useMeasuredSurface';
 import { useModalDialog } from '@/hooks/useModalDialog';
 import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { formatSampleRateHz } from '@/services/sampleRatePresentation';
+import { createAsyncOperationGate, guardedAwait } from '@/services/asyncOperation';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import {
   calibrationSignatureMatches,
@@ -139,6 +148,7 @@ export function EyeTrackingTestScreen() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mountedRef = useRef(true);
+  const cameraStartupGateRef = useRef(createAsyncOperationGate());
   const { ref: surfaceHostRef, surface: measuredHost } = useMeasuredSurface<HTMLDivElement>();
 
   const [cameraState, setCameraState] = useState<CameraState>('idle');
@@ -418,8 +428,10 @@ export function EyeTrackingTestScreen() {
 
   useEffect(() => {
     mountedRef.current = true;
+    cameraStartupGateRef.current.mount();
     return () => {
       mountedRef.current = false;
+      cameraStartupGateRef.current.unmount();
       if (capturingRef.current) {
         finishCaptureRef.current('navigation-during-capture');
       }
@@ -457,28 +469,63 @@ export function EyeTrackingTestScreen() {
   }, [showCalibration]);
 
   const startCamera = async () => {
+    const gate = cameraStartupGateRef.current;
+    const operation = gate.begin();
     setCameraState('starting');
     setCaptureResult(null);
-    const motionPermission = await requestMotionPermissionFromGesture();
-    if (motionPermission === 'granted') {
+    const motionPermission = await guardedAwait(
+      gate,
+      operation,
+      requestMotionPermissionFromGesture(),
+    );
+    if (!motionPermission.current) return;
+    if (motionPermission.value === 'granted') {
       startMotionSensor();
+      if (!gate.isCurrent(operation)) {
+        stopMotionSensor();
+        return;
+      }
       setMotionQuality(getMotionQuality());
     }
-    await initFaceTracking();
+    const faceTracking = await guardedAwait(gate, operation, initFaceTracking());
+    if (!faceTracking.current) return;
     if (!isFaceTrackingActive()) {
       setCameraState('unavailable');
       return;
     }
+    const cameraRequest = requestFrontCameraStream();
+    let stream: MediaStream | null = null;
+    const discardStartupStream = () => {
+      if (!stream) return;
+      discardFrontCameraRequest(cameraRequest, stream);
+      if (streamRef.current === stream) streamRef.current = null;
+      if (videoRef.current?.srcObject === stream) videoRef.current.srcObject = null;
+    };
     try {
-      const stream = await getFrontCameraStream();
+      stream = await cameraRequest.promise;
+      if (!gate.isCurrent(operation)) {
+        discardStartupStream();
+        return;
+      }
       streamRef.current = stream;
       if (videoRef.current) {
         await attachStream(videoRef.current, stream);
+        if (!gate.isCurrent(operation)) {
+          discardStartupStream();
+          return;
+        }
       }
     } catch {
+      discardStartupStream();
+      if (!gate.isCurrent(operation)) return;
       setCameraState('unavailable');
       return;
     }
+    if (!gate.isCurrent(operation)) {
+      discardStartupStream();
+      return;
+    }
+    retainFrontCameraRequest(cameraRequest);
     setCameraState('running');
     runningRef.current = true;
     frameTimesRef.current = [];
