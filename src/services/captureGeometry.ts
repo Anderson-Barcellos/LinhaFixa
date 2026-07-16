@@ -19,11 +19,7 @@ export interface DiagnosticsSurface {
 const DESKTOP_MIN_WIDTH = 720;
 const DESKTOP_MAX_WIDTH = 1180;
 const DESKTOP_MIN_HEIGHT = 420;
-const DESKTOP_MAX_HEIGHT = 760;
-// Portrait desktop (vertical monitor): the 16:9 aspect would squash the surface into
-// a short strip, so the column fills the available height up to this ceiling instead.
-const DESKTOP_MAX_HEIGHT_PORTRAIT = 1280;
-const DESKTOP_TARGET_ASPECT = 16 / 9;
+const DESKTOP_MAX_HEIGHT = 1280;
 
 export function computeDiagnosticsSurface(input: DiagnosticsSurfaceInput): DiagnosticsSurface {
   const availableWidth = Math.max(0, input.availableWidth);
@@ -37,22 +33,18 @@ export function computeDiagnosticsSurface(input: DiagnosticsSurfaceInput): Diagn
   // the surface shrinks to fit instead of overflowing.
   const minWidth = Math.min(DESKTOP_MIN_WIDTH, availableWidth);
   const minHeight = Math.min(DESKTOP_MIN_HEIGHT, availableHeight);
-  const widthByBounds = clamp(availableWidth, minWidth, DESKTOP_MAX_WIDTH);
 
-  // Portrait desktop: height is the abundant axis, so the aspect coupling is dropped
-  // and the surface fills the column (more visible lines, less neck travel).
-  if (availableWidth < availableHeight) {
-    return {
-      mode: 'desktop',
-      width: Math.round(widthByBounds),
-      height: Math.round(clamp(availableHeight, minHeight, DESKTOP_MAX_HEIGHT_PORTRAIT)),
-    };
-  }
-
-  const heightFromAspect = widthByBounds / DESKTOP_TARGET_ASPECT;
-  const height = clamp(Math.min(availableHeight, heightFromAspect), minHeight, DESKTOP_MAX_HEIGHT);
-  const width = clamp(Math.min(widthByBounds, height * DESKTOP_TARGET_ASPECT), minWidth, DESKTOP_MAX_WIDTH);
-  return { mode: 'desktop', width: Math.round(width), height: Math.round(height) };
+  // Unified desktop rule: the surface always fills the measured box, each axis
+  // clamped independently (1180 wide × 1280 tall), regardless of orientation.
+  // Height is the clinically valuable axis — more visible lines means more of
+  // the reading flow is captured — so it is never traded off against width.
+  // The old 16:9 coupling below the width≈height boundary was cosmetic legacy
+  // and caused a visible jump (1181→664) the instant width crossed height.
+  return {
+    mode: 'desktop',
+    width: Math.round(clamp(availableWidth, minWidth, DESKTOP_MAX_WIDTH)),
+    height: Math.round(clamp(availableHeight, minHeight, DESKTOP_MAX_HEIGHT)),
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {
