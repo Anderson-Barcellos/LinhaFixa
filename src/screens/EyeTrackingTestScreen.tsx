@@ -48,6 +48,7 @@ import {
 import { getReadingContent } from '@/services/contentGenerator';
 import { diagnosticsLayoutMode } from '@/services/deviceProfile';
 import { computeDiagnosticsSurface } from '@/services/captureGeometry';
+import { useMeasuredSurface } from '@/hooks/useMeasuredSurface';
 import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import {
@@ -66,9 +67,6 @@ import {
 // Safety ceiling only: the capture normally ends when the reader clicks
 // "Terminei de ler", so the reading pace (not a fixed timer) sets the duration.
 const CAPTURE_SAFETY_CAP_MS = 120000;
-const DIAGNOSTICS_PANEL_WIDTH_PX = 288;
-const DIAGNOSTICS_HEADER_HEIGHT_PX = 73;
-const DIAGNOSTICS_DESKTOP_GUTTER_PX = 48; // horizontal padding + gap around canvas/panel
 
 // Opções de condição compartilhadas entre os botões do card e o resumo do acordeão.
 const LIGHTING_OPTIONS: [ValidationLighting, string][] = [['dim', 'Fraca'], ['normal', 'Normal'], ['bright', 'Forte']];
@@ -111,6 +109,7 @@ export function EyeTrackingTestScreen() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { ref: surfaceHostRef, surface: measuredHost } = useMeasuredSurface<HTMLDivElement>();
 
   const [cameraState, setCameraState] = useState<CameraState>('idle');
   const [viewportWidth, setViewportWidth] = useState(
@@ -749,21 +748,19 @@ export function EyeTrackingTestScreen() {
   // physical size of a CSS px differs from the 96dpi assumption behind the angular
   // stimulus sizes; the value is already persisted per capture via CaptureEnvironment.
   const displayScalePct = Math.round((typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1) * 100);
-  const diagnosticsSurface = computeDiagnosticsSurface({
-    viewportWidth,
-    viewportHeight,
-    layoutMode: diagnosticsLayout,
-    panelWidth: DIAGNOSTICS_PANEL_WIDTH_PX + DIAGNOSTICS_DESKTOP_GUTTER_PX,
-    headerHeight: DIAGNOSTICS_HEADER_HEIGHT_PX,
-  });
-  const readingSurfaceStyle: React.CSSProperties | undefined = isDesktopDiagnosticsLayout
-    ? {
-      width: `${diagnosticsSurface.width}px`,
-      height: `${diagnosticsSurface.height}px`,
-      maxWidth: '100%',
-      maxHeight: '100%',
-    }
-    : undefined;
+  const diagnosticsSurface = measuredHost
+    ? computeDiagnosticsSurface({
+      availableWidth: measuredHost.cssWidth,
+      availableHeight: measuredHost.cssHeight,
+      layoutMode: diagnosticsLayout,
+    })
+    : null;
+  // Antes da primeira medição do RO (1 frame), deixa o CSS preencher; o estilo
+  // dimensionado entra assim que a medida real existe — nunca maior que o host.
+  const readingSurfaceStyle: React.CSSProperties | undefined =
+    isDesktopDiagnosticsLayout && diagnosticsSurface
+      ? { width: `${diagnosticsSurface.width}px`, height: `${diagnosticsSurface.height}px` }
+      : undefined;
 
   const beginCalibration = () => {
     // Cinto de segurança: o painel expandido é overlay (rect estável), mas calibrar
@@ -1080,63 +1077,65 @@ export function EyeTrackingTestScreen() {
 
       {/* Main area: iPhone/touch stays stacked; only wide non-touch desktop gets a side panel. */}
       <div className={`flex-1 flex min-h-0 ${isDesktopDiagnosticsLayout ? 'flex-row justify-center gap-4 p-4' : isLandscape ? 'flex-row' : 'flex-col'}`}>
-        <div
-          className={`relative min-w-0 min-h-0 ${isDesktopDiagnosticsLayout ? 'self-center shrink-0 overflow-hidden rounded-2xl border-2 border-indigo-300/70 bg-slate-900/30 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_24px_70px_rgba(15,23,42,0.45)]' : 'flex-1'}`}
-          style={readingSurfaceStyle}
-          aria-label="Área fixa de leitura, captura e calibração"
-        >
-          <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
-          <div className="pointer-events-none absolute inset-0 z-10 rounded-2xl ring-1 ring-indigo-400/40">
-            <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-slate-950/80 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-indigo-100 shadow-lg backdrop-blur">
-              <span className="h-2 w-2 rounded-full bg-indigo-300" />
-              Área fixa de leitura e calibração
+        <div ref={surfaceHostRef} className="flex-1 min-w-0 min-h-0 flex items-center justify-center">
+          <div
+            className={`relative min-w-0 min-h-0 ${isDesktopDiagnosticsLayout ? 'shrink-0 overflow-hidden rounded-2xl border-2 border-indigo-300/70 bg-slate-900/30 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_24px_70px_rgba(15,23,42,0.45)]' : 'w-full h-full'}`}
+            style={readingSurfaceStyle}
+            aria-label="Área fixa de leitura, captura e calibração"
+          >
+            <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+            <div className="pointer-events-none absolute inset-0 z-10 rounded-2xl ring-1 ring-indigo-400/40">
+              <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-slate-950/80 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-indigo-100 shadow-lg backdrop-blur">
+                <span className="h-2 w-2 rounded-full bg-indigo-300" />
+                Área fixa de leitura e calibração
+              </div>
+              {/* Desktop only: on the phone it collides with the left chip and the
+                  compact surface is the element itself, not the computed bounds. */}
+              {isDesktopDiagnosticsLayout && diagnosticsSurface && (
+                <div className="absolute right-4 top-4 rounded-full bg-slate-950/70 px-3 py-1.5 text-[11px] font-semibold text-slate-200 backdrop-blur">
+                  {Math.round(diagnosticsSurface.width)}×{Math.round(diagnosticsSurface.height)} px
+                </div>
+              )}
+              <div className="absolute left-3 top-3 h-10 w-10 rounded-tl-2xl border-l-2 border-t-2 border-indigo-300/90" />
+              <div className="absolute right-3 top-3 h-10 w-10 rounded-tr-2xl border-r-2 border-t-2 border-indigo-300/90" />
+              <div className="absolute bottom-3 left-3 h-10 w-10 rounded-bl-2xl border-b-2 border-l-2 border-indigo-300/90" />
+              <div className="absolute bottom-3 right-3 h-10 w-10 rounded-br-2xl border-b-2 border-r-2 border-indigo-300/90" />
             </div>
-            {/* Desktop only: on the phone it collides with the left chip and the
-                compact surface is the element itself, not the computed bounds. */}
-            {isDesktopDiagnosticsLayout && (
-              <div className="absolute right-4 top-4 rounded-full bg-slate-950/70 px-3 py-1.5 text-[11px] font-semibold text-slate-200 backdrop-blur">
-                {Math.round(diagnosticsSurface.width)}×{Math.round(diagnosticsSurface.height)} px
+            {cameraState !== 'running' && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-slate-900/80">
+                {cameraState === 'idle' && (
+                  <>
+                    <Camera className="w-12 h-12 text-indigo-400 mb-4" />
+                    <p className="text-slate-300 max-w-md mb-6">
+                      Toque para iniciar a câmera frontal e, se o Safari permitir, os sensores
+                      de movimento para medir a estabilidade da posição do iPhone.
+                    </p>
+                    <button onClick={startCamera} className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold text-lg">
+                      Iniciar câmera + sensores
+                    </button>
+                  </>
+                )}
+                {cameraState === 'starting' && (
+                  <>
+                    <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
+                    <p className="text-slate-300">Preparando a câmera…</p>
+                  </>
+                )}
+                {cameraState === 'unavailable' && (
+                  <>
+                    <h2 className="text-2xl font-bold mb-3">Câmera indisponível</h2>
+                    <p className="text-slate-300 max-w-md mb-6">
+                      Não foi possível acessar a câmera (permissão negada ou contexto não seguro).
+                      No iPhone, a câmera só funciona em <span className="font-bold">HTTPS</span>.
+                    </p>
+                    <button onClick={startCamera} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold">
+                      Tentar novamente
+                    </button>
+                  </>
+                )}
               </div>
             )}
-            <div className="absolute left-3 top-3 h-10 w-10 rounded-tl-2xl border-l-2 border-t-2 border-indigo-300/90" />
-            <div className="absolute right-3 top-3 h-10 w-10 rounded-tr-2xl border-r-2 border-t-2 border-indigo-300/90" />
-            <div className="absolute bottom-3 left-3 h-10 w-10 rounded-bl-2xl border-b-2 border-l-2 border-indigo-300/90" />
-            <div className="absolute bottom-3 right-3 h-10 w-10 rounded-br-2xl border-b-2 border-r-2 border-indigo-300/90" />
           </div>
-          {cameraState !== 'running' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-slate-900/80">
-              {cameraState === 'idle' && (
-                <>
-                  <Camera className="w-12 h-12 text-indigo-400 mb-4" />
-                  <p className="text-slate-300 max-w-md mb-6">
-                    Toque para iniciar a câmera frontal e, se o Safari permitir, os sensores
-                    de movimento para medir a estabilidade da posição do iPhone.
-                  </p>
-                  <button onClick={startCamera} className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold text-lg">
-                    Iniciar câmera + sensores
-                  </button>
-                </>
-              )}
-              {cameraState === 'starting' && (
-                <>
-                  <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
-                  <p className="text-slate-300">Preparando a câmera…</p>
-                </>
-              )}
-              {cameraState === 'unavailable' && (
-                <>
-                  <h2 className="text-2xl font-bold mb-3">Câmera indisponível</h2>
-                  <p className="text-slate-300 max-w-md mb-6">
-                    Não foi possível acessar a câmera (permissão negada ou contexto não seguro).
-                    No iPhone, a câmera só funciona em <span className="font-bold">HTTPS</span>.
-                  </p>
-                  <button onClick={startCamera} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold">
-                    Tentar novamente
-                  </button>
-                </>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Diagnostics panel: desktop mantém o <aside> lateral fixo; compacto usa a
