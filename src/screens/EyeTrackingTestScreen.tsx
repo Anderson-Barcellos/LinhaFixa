@@ -10,7 +10,7 @@ import {
   interpupillaryPx, estimateDistanceCm, getDistanceAnchor, readingFontCssPx, readingFontAngleDeg,
   cssPxPerDeg, distanceWithinAnchorTolerance,
 } from '@/services/viewingGeometry';
-import { isCalibrated, predictNorm, getAccuracyDeg, getCalibrationSignature } from '@/services/gazeCalibration';
+import { isCalibrated, predictNorm, getAccuracyDeg, getCalibrationSignature, getCalibrationAssessment } from '@/services/gazeCalibration';
 import { attachStream, getActiveCameraStream, getFrontCameraStream, stopCameraStream } from '@/services/cameraStream';
 import {
   getMotionQuality,
@@ -20,6 +20,7 @@ import {
   type MotionQuality,
 } from '@/services/motionSensor';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
+import { CaptureValiditySummary } from '@/components/CaptureValiditySummary';
 import { DiagnosticsDrawer } from '@/components/DiagnosticsDrawer';
 import { DiagnosticsAccordion, type DiagnosticsSection } from '@/components/DiagnosticsAccordion';
 import type { DrawerVariant } from '@/services/diagnosticsDrawerLayout';
@@ -30,16 +31,22 @@ import {
   resetPosturalBaseline,
   summarizePosturalStability,
   toPosturalSample,
-  type PosturalStabilityMetrics,
   type PosturalSample,
 } from '@/exercises/posturalStability';
-import { CaptureEnvironment, GazeSample, PreTestContext, RecallQuestion, RecallTestResult, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
+import { AssessedValidationCapture, CaptureEnvironment, GazeSample, PreTestContext, RecallQuestion, RecallTestResult, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
 import { saveValidationCapture, getValidationCaptures, deleteValidationCapture, getTodayPreContext, saveRecallTest } from '@/services/storage';
 import { PreContextForm } from '@/components/QuickContextForm';
 import { RecallQuiz } from '@/components/RecallQuiz';
 import { getRecallText, getRecallQuestions, type RecallContent } from '@/services/recallService';
 import { summarizeAxisSignal, serializeValidationExport, selectCaptureSeries } from '@/services/validationCapture';
 import { summarizeSaccadeSignalQuality } from '@/services/signalQuality';
+import {
+  assessCaptureValidity,
+  countTrackingGaps,
+  pageInterruptionReason,
+  type CaptureInterruptionReason,
+} from '@/services/captureValidity';
+import { persistValidationCapture, type CapturePersistenceStatus } from '@/services/capturePersistence';
 import {
   summarizeFunctionalVisualSignal,
   type FunctionalVisualSignalSummary,
@@ -53,11 +60,14 @@ import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import {
   calibrationSignatureMatches,
+  calibrationReuseDecision,
   currentOrientation,
   rectFromElement,
   viewportNormToRectPoint,
   type SurfaceRect,
+  type CalibrationReuseDecision,
 } from '@/services/ocularSignalContract';
+import type { CalibrationAssessment } from '@/services/calibrationValidity';
 
 // Standalone diagnostics screen: shows reading text, runs the front camera and
 // overlays a live gaze dot + detection status so we can validate that the eyes are
@@ -96,6 +106,22 @@ interface LiveSnapshot {
   coverage: number; // % of recent frames with a face
 }
 
+interface CaptureStartSnapshot {
+  captureId: string;
+  monotonicStart: number;
+  wallClockTimestamp: number;
+  conditions: ValidationConditions;
+  context?: PreTestContext;
+  calibrationAssessment: CalibrationAssessment | null;
+  compatibility: CalibrationReuseDecision;
+  environment: CaptureEnvironment;
+}
+
+interface CaptureReportState {
+  capture: AssessedValidationCapture;
+  persistence: CapturePersistenceStatus;
+}
+
 const EMPTY_LIVE: LiveSnapshot = {
   faceFound: false, eyesFound: false, h: null, v: null,
   yaw: null, pitch: null, roll: null, fps: 0, coverage: 0,
@@ -128,7 +154,7 @@ export function EyeTrackingTestScreen() {
   const [readingTextState, setReadingTextState] = useState<ReadingTextState>('loading');
   const [capturing, setCapturing] = useState(false);
   const [captureElapsed, setCaptureElapsed] = useState(0);
-  const [captureResult, setCaptureResult] = useState<{ metrics: SaccadeMetrics; coverage: number; postural: PosturalStabilityMetrics; environment?: CaptureEnvironment; calibratedSampleCount?: number; rawSampleCount?: number; extrapolatedSampleCount?: number } | null>(null);
+  const [captureResult, setCaptureResult] = useState<CaptureReportState | null>(null);
   const [motionQuality, setMotionQuality] = useState<MotionQuality>(() => getMotionQuality());
   const [liveSignal, setLiveSignal] = useState<FunctionalVisualSignalSummary>(EMPTY_VISUAL_SIGNAL);
   const [conditions, setConditions] = useState<ValidationConditions>({
@@ -191,7 +217,9 @@ export function EyeTrackingTestScreen() {
 
   // Capture state.
   const capturingRef = useRef(false);
-  const captureStartRef = useRef(0);
+  const captureStartSnapshotRef = useRef<CaptureStartSnapshot | null>(null);
+  const finishCaptureRef = useRef<(interruption?: CaptureInterruptionReason | null) => void>(() => {});
+  const persistenceInFlightRef = useRef<Set<string>>(new Set());
   // Calibrated predictions and raw iris ratios use different units/gains, so each
   // source accumulates in its own buffer; finishCapture analyzes the majority buffer
   // only (selectCaptureSeries) — mixing them creates unit jumps the detector reads
@@ -208,12 +236,6 @@ export function EyeTrackingTestScreen() {
   // Per-frame IPD-based distance estimates gathered during the capture; their median
   // becomes the capture's geometric provenance (distanceEstimatedCm).
   const captureDistanceSamplesRef = useRef<number[]>([]);
-  // The frame loop closure is created once when the camera starts; reading conditions
-  // through a ref keeps the auto-finish path (timer inside the loop) from persisting a
-  // stale condition tag when the user changed lighting/posture after starting.
-  const conditionsRef = useRef(conditions);
-  useEffect(() => { conditionsRef.current = conditions; }, [conditions]);
-
   useEffect(() => { textRef.current = text; layoutRef.current = null; }, [text]);
 
   useEffect(() => {
@@ -339,9 +361,11 @@ export function EyeTrackingTestScreen() {
     return lines;
   };
 
-  const stopCamera = () => {
+  const stopCamera = (finishActiveCapture = true) => {
+    if (finishActiveCapture && capturingRef.current) finishCaptureRef.current(null);
     runningRef.current = false;
     capturingRef.current = false;
+    captureStartSnapshotRef.current = null;
     frozenFontPxRef.current = null;
     setCapturing(false);
     frameLoopRef.current?.stop();
@@ -360,7 +384,7 @@ export function EyeTrackingTestScreen() {
     visualSignalSamplesRef.current = [];
   };
 
-  useEffect(() => () => stopCamera(), []); // cleanup on unmount
+  useEffect(() => () => stopCamera(false), []); // cleanup on unmount
 
   useEffect(() => {
     const id = window.setInterval(() => setMotionQuality(getMotionQuality()), 250);
@@ -574,7 +598,13 @@ export function EyeTrackingTestScreen() {
 
       // Measured capture.
       if (capturingRef.current) {
-        const tMs = ts - captureStartRef.current;
+        const captureStart = captureStartSnapshotRef.current;
+        if (!captureStart) {
+          capturingRef.current = false;
+          setCapturing(false);
+          return;
+        }
+        const tMs = ts - captureStart.monotonicStart;
         captureTotalRef.current += 1;
         if (faceFound) captureFaceRef.current += 1;
         if (pose) posturalSamplesRef.current.push(toPosturalSample(pose));
@@ -619,10 +649,12 @@ export function EyeTrackingTestScreen() {
       setContextFormOpen(true);
       return;
     }
-    // Freeze the stimulus geometry for the whole measurement window.
+    const startSnapshot = buildCaptureStartSnapshot();
+    if (!startSnapshot) return;
+    // Freeze the stimulus geometry and provenance for the whole measurement window.
     frozenFontPxRef.current = Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
+    captureStartSnapshotRef.current = startSnapshot;
     capturingRef.current = true;
-    captureStartRef.current = performance.now();
     captureCalSamplesRef.current = [];
     captureRawSamplesRef.current = [];
     captureExtrapolatedRef.current = 0;
@@ -636,79 +668,156 @@ export function EyeTrackingTestScreen() {
     setCapturing(true);
   };
 
-  const finishCapture = () => {
+  const finishCapture = (interruption: CaptureInterruptionReason | null = null) => {
     if (!capturingRef.current) return;
+    // The synchronous lock is deliberately first: pagehide + visibilitychange can
+    // arrive back-to-back, and only the first event may own this immutable record.
     capturingRef.current = false;
     frozenFontPxRef.current = null;
     setCapturing(false);
-    const durationMs = performance.now() - captureStartRef.current;
-    const series = selectCaptureSeries(captureCalSamplesRef.current, captureRawSamplesRef.current);
+    const startSnapshot = captureStartSnapshotRef.current;
+    captureStartSnapshotRef.current = null;
+    if (!startSnapshot) return;
+
+    // Copy every mutable buffer before analysis or async persistence begins.
+    const calibratedSamples = captureCalSamplesRef.current.slice();
+    const rawSamples = captureRawSamplesRef.current.slice();
+    const posturalSamples = posturalSamplesRef.current.slice();
+    const distanceSamples = captureDistanceSamplesRef.current.slice();
+    const extrapolatedSampleCount = captureExtrapolatedRef.current;
+    const faceFrames = captureFaceRef.current;
+    const totalFrames = captureTotalRef.current;
+    const motionHighMovement = captureShakeRef.current;
+
+    const durationMs = Math.max(0, performance.now() - startSnapshot.monotonicStart);
+    const series = selectCaptureSeries(calibratedSamples, rawSamples);
     const metrics = analyzeSaccades(series.samples, { signalSource: series.signalSource });
-    const environment = buildCaptureEnvironment(metrics);
-    const coverage = captureTotalRef.current
-      ? (captureFaceRef.current / captureTotalRef.current) * 100
+    const measuredRates = readCameraPipelineTelemetry(videoRef.current, {
+      detectionFps: liveRef.current.fps,
+      ocularSampleRateHz: metrics.sampleRateHz,
+    }).measured;
+    const environment: CaptureEnvironment = {
+      ...startSnapshot.environment,
+      viewport: { ...startSnapshot.environment.viewport },
+      surfaceRect: { ...startSnapshot.environment.surfaceRect },
+      video: { ...startSnapshot.environment.video },
+      camera: { ...startSnapshot.environment.camera },
+      rates: measuredRates,
+    };
+    const coverage = totalFrames
+      ? (faceFrames / totalFrames) * 100
       : 0;
     const finalMotionQuality = getMotionQuality();
-    const postural = summarizePosturalStability(posturalSamplesRef.current, {
+    const postural = summarizePosturalStability(posturalSamples, {
       baseline: getPosturalBaseline(),
-      motionHighMovement: captureShakeRef.current,
+      motionHighMovement,
       motionStatus: finalMotionQuality.status,
       motionDeltaDeg: finalMotionQuality.deltaDeg,
       motionConfidence: finalMotionQuality.confidence,
       durationMs,
       faceCoverage: coverage,
     });
-    setCaptureResult({
-      metrics, coverage, postural, environment,
-      calibratedSampleCount: series.calibratedSampleCount,
-      rawSampleCount: series.rawSampleCount,
-      extrapolatedSampleCount: captureExtrapolatedRef.current,
-    });
 
     // Persist the tagged capture so PACK 1 thresholds can be calibrated on real data.
     const samples = series.samples.slice();
-    const conditionsAtFinish = conditionsRef.current;
     // Geometric provenance: median of the live distance estimates (robust to blinks
     // and brief tracking losses) and the px/deg it implies, so normalized amplitudes
     // stay convertible to degrees offline.
-    const distSamples = captureDistanceSamplesRef.current.slice().sort((a, b) => a - b);
+    const distSamples = distanceSamples.sort((a, b) => a - b);
     const distanceEstimatedCm = distSamples.length ? distSamples[Math.floor(distSamples.length / 2)] : undefined;
-    const capture: ValidationCapture = {
-      id: Date.now().toString(),
-      timestamp: Date.now(),
-      conditions: conditionsAtFinish,
-      context: preContextRef.current ?? undefined,
+    const validity = assessCaptureValidity({
+      assessedAt: Date.now(),
+      durationMs,
+      coverage,
+      signalSource: series.signalSource,
+      selectedSourceRatio: series.selectedSourceRatio,
+      sampleRateHz: metrics.sampleRateHz,
+      calibrationAccepted: startSnapshot.calibrationAssessment?.accepted === true,
+      calibrationCompatible: startSnapshot.compatibility.reusable,
+      gapCount: countTrackingGaps(samples),
+      interruption,
+    });
+    const capture = {
+      id: startSnapshot.captureId,
+      timestamp: startSnapshot.wallClockTimestamp,
+      durationMs,
+      conditions: startSnapshot.conditions,
+      context: startSnapshot.context,
       coverage,
       calibrated: series.signalSource === 'calibrated-mediapipe',
       metrics,
       postural,
       axis: summarizeAxisSignal(samples),
       environment,
+      calibrationAssessment: startSnapshot.calibrationAssessment ?? undefined,
+      validity,
       sampleCount: samples.length,
       samples,
       distanceEstimatedCm,
-      pxPerDegAtCapture: cssPxPerDeg(distanceEstimatedCm ?? conditionsAtFinish.distanceCm),
-      canvasWidthPx: canvasRef.current?.clientWidth,
-      orientation: currentOrientation(),
+      pxPerDegAtCapture: cssPxPerDeg(distanceEstimatedCm ?? startSnapshot.conditions.distanceCm),
+      canvasWidthPx: environment.surfaceRect.width,
+      orientation: environment.viewport.orientation,
       calibratedSampleCount: series.calibratedSampleCount,
       rawSampleCount: series.rawSampleCount,
-      extrapolatedSampleCount: captureExtrapolatedRef.current,
-    };
-    saveValidationCapture(capture)
-      .then(() => setCaptures(prev => [capture, ...prev]))
-      .catch(() => {/* keep the on-screen report even if persistence fails */});
+      extrapolatedSampleCount,
+    } satisfies AssessedValidationCapture;
+    // Report first, persist second. A slow/failing IndexedDB can never hide evidence.
+    setCaptureResult({ capture, persistence: 'saving' });
+    void persistCaptureAndPublish(capture);
 
     // Recall mode: the reading just ended, generate the quiz over the text that was
     // actually on screen. The capture above is saved either way — only the quiz is
     // at the mercy of the AI call.
     lastRecallCaptureRef.current = { captureId: capture.id, readingDurationMs: Math.round(durationMs) };
-    if (testModeRef.current === 'recall' && recallContentRef.current) {
+    if (!interruption && testModeRef.current === 'recall' && recallContentRef.current) {
       setRecallGenState('generating');
       getRecallQuestions(recallContentRef.current.text)
         .then(questions => { setRecallQuiz(questions); setRecallGenState('idle'); })
         .catch(() => setRecallGenState('error'));
     }
   };
+
+  const persistCaptureAndPublish = async (capture: AssessedValidationCapture) => {
+    if (persistenceInFlightRef.current.has(capture.id)) return;
+    persistenceInFlightRef.current.add(capture.id);
+    try {
+      const result = await persistValidationCapture(capture, saveValidationCapture);
+      setCaptureResult(previous => (
+        previous?.capture === capture ? result : previous
+      ));
+      if (result.persistence === 'saved') {
+        setCaptures(previous => (
+          previous.some(item => item.id === capture.id) ? previous : [capture, ...previous]
+        ));
+      }
+    } finally {
+      persistenceInFlightRef.current.delete(capture.id);
+    }
+  };
+
+  const retryCapturePersistence = () => {
+    const report = captureResult;
+    if (!report || report.persistence !== 'failed') return;
+    const capture = report.capture;
+    setCaptureResult({ capture, persistence: 'saving' });
+    void persistCaptureAndPublish(capture);
+  };
+
+  finishCaptureRef.current = finishCapture;
+
+  useEffect(() => {
+    const onVisibility = () => {
+      const reason = pageInterruptionReason('visibilitychange', document.visibilityState);
+      if (reason) finishCaptureRef.current(reason);
+    };
+    const onPageHide = () => finishCaptureRef.current('pagehide-during-capture');
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+    };
+  }, []);
 
   const removeCapture = (id: string) => {
     deleteValidationCapture(id)
@@ -770,18 +879,15 @@ export function EyeTrackingTestScreen() {
     setShowCalibration(true);
   };
 
-  const buildCaptureEnvironment = (metrics: SaccadeMetrics): CaptureEnvironment | undefined => {
+  const buildCaptureStartSnapshot = (): CaptureStartSnapshot | null => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) return undefined;
-    const telemetry = readCameraPipelineTelemetry(video, {
-      detectionFps: liveRef.current.fps,
-      ocularSampleRateHz: metrics.sampleRateHz,
-    });
+    if (!video || !canvas) return null;
+    const telemetry = readCameraPipelineTelemetry(video);
     const width = window.innerWidth;
     const height = window.innerHeight;
-    return {
-      layoutMode: diagnosticsLayout,
+    const environment: CaptureEnvironment = {
+      layoutMode: diagnosticsLayoutMode({ viewportWidth: width, hasTouch: IS_MOBILE }),
       viewport: {
         width,
         height,
@@ -796,7 +902,32 @@ export function EyeTrackingTestScreen() {
         frameRate: telemetry.negotiated.frameRate,
         maxFrameRate: telemetry.capabilities?.frameRate?.max,
       },
-      rates: telemetry.measured,
+      rates: {},
+    };
+    const calibrationAssessment = getCalibrationAssessment();
+    const compatibility = calibrationReuseDecision(calibrationAssessment, {
+      viewportWidth: environment.viewport.width,
+      viewportHeight: environment.viewport.height,
+      orientation: environment.viewport.orientation,
+      devicePixelRatio: environment.viewport.devicePixelRatio,
+      surfaceRect: environment.surfaceRect,
+      videoWidth: environment.video.width || environment.camera.width,
+      videoHeight: environment.video.height || environment.camera.height,
+      trackFrameRate: environment.camera.frameRate,
+    });
+    const monotonicStart = performance.now();
+    const wallClockTimestamp = Date.now();
+    return {
+      captureId: typeof globalThis.crypto?.randomUUID === 'function'
+        ? globalThis.crypto.randomUUID()
+        : `${wallClockTimestamp}-${Math.round(monotonicStart * 1000)}`,
+      monotonicStart,
+      wallClockTimestamp,
+      conditions: { ...conditions },
+      context: preContextRef.current ? { ...preContextRef.current } : undefined,
+      calibrationAssessment,
+      compatibility,
+      environment,
     };
   };
 
@@ -821,8 +952,9 @@ export function EyeTrackingTestScreen() {
     : readingTextState === 'error'
       ? 'Texto de leitura indisponível; capture depois que a IA responder.'
       : null;
-  const captureSummary = captureResult
-    ? summarizeReadingDynamics(captureResult.metrics, captureResult.coverage)
+  const reportedCapture = captureResult?.capture ?? null;
+  const captureSummary = reportedCapture
+    ? summarizeReadingDynamics(reportedCapture.metrics, reportedCapture.coverage)
     : null;
 
   const Chip = ({ ok, label, neutral }: { key?: React.Key; ok: boolean; label: string; neutral?: boolean }) => (
@@ -1004,7 +1136,7 @@ export function EyeTrackingTestScreen() {
   );
 
   const stopCameraButton = cameraState === 'running' ? (
-    <button onClick={stopCamera} className="flex items-center justify-center gap-2 px-4 py-2 text-slate-400 hover:text-slate-200 text-sm">
+    <button onClick={() => stopCamera()} className="flex items-center justify-center gap-2 px-4 py-2 text-slate-400 hover:text-slate-200 text-sm">
       <RotateCcw className="w-4 h-4" /> Parar câmera
     </button>
   ) : null;
@@ -1042,7 +1174,7 @@ export function EyeTrackingTestScreen() {
         </button>
       ) : (
         <button
-          onClick={finishCapture}
+          onClick={() => finishCapture()}
           aria-label="Terminei de ler"
           className="flex items-center gap-1 p-2.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold"
         >
@@ -1185,7 +1317,7 @@ export function EyeTrackingTestScreen() {
               </button>
             ) : (
               <button
-                onClick={finishCapture}
+                onClick={() => finishCapture()}
                 className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold"
               >
                 <Check className="w-4 h-4" /> Terminei de ler ({Math.floor(captureElapsed / 1000)}s)
@@ -1268,9 +1400,9 @@ export function EyeTrackingTestScreen() {
       )}
 
       {/* Capture report */}
-      {captureResult && !recallQuiz && recallGenState === 'idle' && (
+      {captureResult && reportedCapture && !recallQuiz && recallGenState === 'idle' && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-900/90 p-6">
-          <div className="bg-slate-800 rounded-3xl p-8 max-w-lg w-full border border-white/10">
+          <div className="bg-slate-800 rounded-3xl p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto border border-white/10">
             <div className="flex items-center gap-2 mb-1">
               <Eye className="w-5 h-5 text-indigo-400" />
               <h2 className="text-2xl font-bold">Dinâmica ocular capturada</h2>
@@ -1279,6 +1411,22 @@ export function EyeTrackingTestScreen() {
               Estimativa experimental por webcam. Prioriza movimento relativo, ritmo e eventos
               de leitura; não promete palavra exata nem detecta microssacadas.
             </p>
+
+            <CaptureValiditySummary capture={reportedCapture} />
+            <div className="flex items-center justify-between gap-3 mb-4 text-xs">
+              <span className={captureResult.persistence === 'saved' ? 'text-emerald-300' : captureResult.persistence === 'failed' ? 'text-rose-300' : 'text-slate-400'}>
+                {captureResult.persistence === 'saved'
+                  ? 'Captura salva'
+                  : captureResult.persistence === 'failed'
+                    ? 'Registro não salvo'
+                    : 'Salvando captura…'}
+              </span>
+              {captureResult.persistence === 'failed' && (
+                <button onClick={retryCapturePersistence} className="px-3 py-1.5 rounded-lg bg-rose-500/15 text-rose-200 hover:bg-rose-500/25 font-bold">
+                  Tentar salvar novamente
+                </button>
+              )}
+            </div>
 
             {recallOutcome && (
               <div className="rounded-2xl bg-indigo-500/15 border border-indigo-400/30 p-4 mb-4 flex items-center justify-between gap-3">
@@ -1290,98 +1438,78 @@ export function EyeTrackingTestScreen() {
               </div>
             )}
 
-            {captureResult.metrics.trackingAvailable && captureSummary ? (
+            {reportedCapture.metrics.trackingAvailable && captureSummary ? (
               <>
                 <div className="rounded-2xl bg-slate-900/70 border border-white/10 p-4 mb-4">
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                      captureSummary.signalQuality.tone === 'emerald'
-                        ? 'bg-emerald-500/15 text-emerald-300'
-                        : captureSummary.signalQuality.tone === 'rose'
-                          ? 'bg-rose-500/15 text-rose-300'
-                          : 'bg-amber-500/15 text-amber-300'
-                    }`}>
-                      {captureSummary.signalQuality.label}
-                    </span>
-                    <span className="px-2.5 py-1 rounded-full bg-indigo-500/15 text-indigo-300 text-xs font-bold">
-                      {captureSummary.signalQuality.sourceLabel}
-                    </span>
-                    <span className="px-2.5 py-1 rounded-full bg-slate-700 text-slate-200 text-xs font-bold">
-                      {captureSummary.signalQuality.sampleRateLabel}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 mb-2">{captureSummary.signalLabel} · {captureSummary.positionLabel}</p>
+                  <p className="text-xs text-slate-400 mb-2">{captureSummary.positionLabel}</p>
                   <p className="text-sm text-slate-200 font-medium">{captureSummary.primaryInsight}</p>
-                  <p className="text-xs text-slate-400 mt-2">{captureSummary.confidenceNote}</p>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <Metric label="Cobertura (rosto)" value={`${captureResult.coverage.toFixed(0)}%`} big />
-                  <Metric label="Amostras válidas" value={String(captureResult.metrics.samplesValid)} big />
-                  <Metric label="Taxa efetiva" value={captureResult.metrics.sampleRateHz ? `${captureResult.metrics.sampleRateHz} Hz` : 'N/D'} big />
-                  <Metric label="Fonte" value={sourceConsistencyLabel(captureResult.metrics.signalSource, captureResult.calibratedSampleCount, captureResult.rawSampleCount)} big />
-                  {(captureResult.extrapolatedSampleCount ?? 0) > 0 && (
-                    <Metric label="Extrapolação rejeitada" value={`${captureResult.extrapolatedSampleCount} frames`} big />
+                  <Metric label="Cobertura (rosto)" value={`${reportedCapture.coverage.toFixed(0)}%`} big />
+                  <Metric label="Amostras válidas" value={String(reportedCapture.metrics.samplesValid)} big />
+                  <Metric label="Taxa efetiva" value={reportedCapture.metrics.sampleRateHz ? `${reportedCapture.metrics.sampleRateHz} Hz` : 'N/D'} big />
+                  <Metric label="Fonte" value={sourceConsistencyLabel(reportedCapture.metrics.signalSource, reportedCapture.calibratedSampleCount, reportedCapture.rawSampleCount)} big />
+                  {(reportedCapture.extrapolatedSampleCount ?? 0) > 0 && (
+                    <Metric label="Extrapolação rejeitada" value={`${reportedCapture.extrapolatedSampleCount} frames`} big />
                   )}
-                  <Metric label="Sacadas" value={String(captureResult.metrics.saccadeCount)} big />
-                  <Metric label="Regressões" value={String(captureResult.metrics.regressionCount)} big />
-                  <Metric label="Retornos de linha" value={captureResult.metrics.lineReturnCount != null ? String(captureResult.metrics.lineReturnCount) : 'N/D'} big />
-                  <Metric label="Amplitude média" value={captureResult.metrics.meanSaccadeAmplitude != null ? captureResult.metrics.meanSaccadeAmplitude.toFixed(3) : 'não estimável'} big />
-                  <Metric label="Fixação média" value={captureResult.metrics.meanFixationMs != null ? `${captureResult.metrics.meanFixationMs.toFixed(0)} ms` : 'não estimável'} big />
+                  <Metric label="Sacadas" value={String(reportedCapture.metrics.saccadeCount)} big />
+                  <Metric label="Regressões" value={String(reportedCapture.metrics.regressionCount)} big />
+                  <Metric label="Retornos de linha" value={reportedCapture.metrics.lineReturnCount != null ? String(reportedCapture.metrics.lineReturnCount) : 'N/D'} big />
                 </div>
-                {captureResult.environment && (
+                {reportedCapture.environment && (
                   <div className="rounded-2xl bg-slate-900/70 border border-white/10 p-4 mt-4">
                     <div className="flex items-center justify-between gap-3 mb-3">
                       <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide">Ambiente e câmera</h3>
                       <span className="px-2.5 py-1 rounded-full bg-slate-700 text-slate-200 text-xs font-bold">
-                        {captureResult.environment.layoutMode === 'desktop' ? 'Layout desktop' : 'Layout compacto'}
+                        {reportedCapture.environment.layoutMode === 'desktop' ? 'Layout desktop' : 'Layout compacto'}
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      <Metric label="Câmera negociada" value={cameraNegotiatedLabel(captureResult.environment)} />
-                      <Metric label="Vídeo recebido" value={videoSizeLabel(captureResult.environment)} />
-                      <Metric label="FPS câmera" value={rateLabel(captureResult.environment.camera.frameRate)} />
-                      <Metric label="FPS detecção" value={rateLabel(captureResult.environment.rates.detectionFps)} />
-                      <Metric label="Taxa ocular" value={rateLabel(captureResult.environment.rates.ocularSampleRateHz)} />
-                      <Metric label="Superfície" value={surfaceSizeLabel(captureResult.environment)} />
+                      <Metric label="Câmera negociada" value={cameraNegotiatedLabel(reportedCapture.environment)} />
+                      <Metric label="Vídeo recebido" value={videoSizeLabel(reportedCapture.environment)} />
+                      <Metric label="FPS câmera" value={rateLabel(reportedCapture.environment.camera.frameRate)} />
+                      <Metric label="FPS detecção" value={rateLabel(reportedCapture.environment.rates.detectionFps)} />
+                      <Metric label="Taxa ocular" value={rateLabel(reportedCapture.environment.rates.ocularSampleRateHz)} />
+                      <Metric label="Superfície" value={surfaceSizeLabel(reportedCapture.environment)} />
                     </div>
                   </div>
                 )}
               </>
             ) : (
               <p className="text-amber-300 font-medium">
-                Detecção insuficiente para estimar sacadas ({captureResult.metrics.samplesValid} amostras,
-                cobertura {captureResult.coverage.toFixed(0)}%). Ajuste o enquadramento, a iluminação e a
+                Detecção insuficiente para estimar sacadas ({reportedCapture.metrics.samplesValid} amostras,
+                cobertura {reportedCapture.coverage.toFixed(0)}%). Ajuste o enquadramento, a iluminação e a
                 distância e tente novamente.
               </p>
             )}
 
-            {captureResult.postural.status !== 'insufficient' && (
+            {reportedCapture.postural.status !== 'insufficient' && (
               <div className="rounded-2xl bg-slate-900/70 border border-white/10 p-4 mt-4">
                 <div className="flex flex-wrap items-center gap-2 mb-2">
                   <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                    captureResult.postural.status === 'stable'
+                    reportedCapture.postural.status === 'stable'
                       ? 'bg-emerald-500/15 text-emerald-300'
                       : 'bg-amber-500/15 text-amber-300'
                   }`}>
-                    {captureResult.postural.label}
+                    {reportedCapture.postural.label}
                   </span>
                   <span className="px-2.5 py-1 rounded-full bg-slate-700 text-slate-200 text-xs font-bold">
-                    Estabilidade cervical {captureResult.postural.cervicalStability}%
+                    Estabilidade cervical {reportedCapture.postural.cervicalStability}%
                   </span>
                   <span className="px-2.5 py-1 rounded-full bg-slate-700 text-slate-200 text-xs font-bold">
-                    {captureResult.postural.baselineApplied ? 'Baseline aplicado' : 'Sem baseline'}
+                    {reportedCapture.postural.baselineApplied ? 'Baseline aplicado' : 'Sem baseline'}
                   </span>
                   <span className="ml-auto text-xs text-slate-400">
-                    Confiança {confidenceLabel(captureResult.postural.confidence)}
+                    Confiança {confidenceLabel(reportedCapture.postural.confidence)}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 mb-3">
-                  <Metric label="Delta aparelho" value={captureResult.postural.motionDeltaDeg != null ? `${captureResult.postural.motionDeltaDeg.toFixed(1)}°` : 'N/D'} />
-                  <Metric label="Taxa postura" value={captureResult.postural.sampleRateHz ? `${captureResult.postural.sampleRateHz} Hz` : 'N/D'} />
-                  <Metric label="Yaw Δ" value={captureResult.postural.baselineApplied ? captureResult.postural.yawOffset.toFixed(1) : 'N/D'} />
-                  <Metric label="Pitch Δ" value={captureResult.postural.baselineApplied ? captureResult.postural.pitchOffset.toFixed(1) : 'N/D'} />
+                  <Metric label="Delta aparelho" value={reportedCapture.postural.motionDeltaDeg != null ? `${reportedCapture.postural.motionDeltaDeg.toFixed(1)}°` : 'N/D'} />
+                  <Metric label="Taxa postura" value={reportedCapture.postural.sampleRateHz ? `${reportedCapture.postural.sampleRateHz} Hz` : 'N/D'} />
+                  <Metric label="Yaw Δ" value={reportedCapture.postural.baselineApplied ? reportedCapture.postural.yawOffset.toFixed(1) : 'N/D'} />
+                  <Metric label="Pitch Δ" value={reportedCapture.postural.baselineApplied ? reportedCapture.postural.pitchOffset.toFixed(1) : 'N/D'} />
                 </div>
-                <p className="text-xs text-slate-400">{captureResult.postural.insight}</p>
+                <p className="text-xs text-slate-400">{reportedCapture.postural.insight}</p>
               </div>
             )}
 
@@ -1432,6 +1560,7 @@ export function EyeTrackingTestScreen() {
                   const quality = summarizeSaccadeSignalQuality(c.metrics, {
                     coverage: c.coverage,
                     calibrated: c.calibrated,
+                    validity: c.validity,
                   });
                   return (
                   <div key={c.id} className="rounded-xl bg-slate-900/70 border border-white/10 p-3">

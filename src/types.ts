@@ -1,4 +1,6 @@
 import type { PosturalStabilityMetrics } from '@/exercises/posturalStability';
+import type { CalibrationAssessment } from '@/services/calibrationValidity';
+import type { CaptureValiditySnapshot } from '@/services/captureValidity';
 
 export interface UserProfile {
   name: string;
@@ -239,7 +241,17 @@ export interface ValidationCapture {
   calibratedSampleCount?: number; // frames that produced a calibrated sample
   rawSampleCount?: number;        // frames that fell back to the raw iris ratio
   extrapolatedSampleCount?: number; // frames whose calibrated prediction was rejected as extrapolation (clamped outside [0,1])
+  // Validity-v1 evidence. Optional only so captures persisted before the contract
+  // remain readable; every newly-created capture satisfies AssessedValidationCapture.
+  durationMs?: number;
+  calibrationAssessment?: CalibrationAssessment;
+  validity?: CaptureValiditySnapshot;
 }
+
+export type AssessedValidationCapture = ValidationCapture & {
+  durationMs: number;
+  validity: CaptureValiditySnapshot;
+};
 
 // --- Reading + Recall test ---
 // AI-generated intermediate text read inside the diagnostics capture window, followed

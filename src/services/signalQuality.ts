@@ -1,4 +1,9 @@
 import { SaccadeMetrics } from '@/types';
+import {
+  captureValidityOrLegacy,
+  describeCaptureValidity,
+  type CaptureValiditySnapshot,
+} from './captureValidity';
 
 export type SignalQualityGrade = 'comparavel' | 'exploratorio' | 'baixo-sinal';
 
@@ -15,6 +20,9 @@ export interface SaccadeSignalQuality {
 export interface SaccadeSignalQualityOptions {
   coverage?: number | null;
   calibrated?: boolean | null;
+  // Persisted captures must pass this key even when its legacy value is undefined;
+  // that distinguishes unassessed history from non-capture live summaries.
+  validity?: CaptureValiditySnapshot;
 }
 
 const MIN_VALID_SAMPLES = 5;
@@ -27,6 +35,40 @@ export function summarizeSaccadeSignalQuality(
   metrics: SaccadeMetrics,
   options: SaccadeSignalQualityOptions = {}
 ): SaccadeSignalQuality {
+  if ('validity' in options) {
+    const validity = captureValidityOrLegacy(options.validity);
+    const presentation = describeCaptureValidity(validity);
+    const source = options.validity
+      ? validity.signalSource
+      : metrics.signalSource ?? (options.calibrated ? 'calibrated-mediapipe' : undefined);
+    const sourceLabel = source === 'calibrated-mediapipe'
+      ? 'Calibrado'
+      : source === 'raw-mediapipe'
+        ? 'Bruto'
+        : 'Indisponível';
+    const measuredRate = options.validity ? validity.sampleRateHz : metrics.sampleRateHz;
+    const measuredCoverage = options.validity ? validity.coverage : options.coverage;
+    const sampleRateLabel = measuredRate != null
+      ? `${Math.round(measuredRate)} Hz`
+      : 'taxa não medida';
+    const coverageLabel = measuredCoverage != null
+      ? `${Math.round(measuredCoverage)}% cobertura`
+      : 'cobertura não medida';
+    return {
+      grade: validity.grade === 'comparable'
+        ? 'comparavel'
+        : validity.grade === 'invalid'
+          ? 'baixo-sinal'
+          : 'exploratorio',
+      label: presentation.label,
+      detail: presentation.primary,
+      sourceLabel,
+      sampleRateLabel,
+      coverageLabel,
+      tone: presentation.tone,
+    };
+  }
+
   const source = metrics.signalSource ?? (options.calibrated ? 'calibrated-mediapipe' : undefined);
   const sourceLabel = source === 'calibrated-mediapipe'
     ? 'Calibrado'
