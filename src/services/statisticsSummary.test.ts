@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildOcularReadingSeries, buildStatisticsSummary } from './statisticsSummary';
+import {
+  buildDiagnosticInsightPayload,
+  buildOcularReadingSeries,
+  buildStatisticsSummary,
+  partitionOcularReadingSeries,
+  resolveSelectedOcularGroupKey,
+} from './statisticsSummary';
 import { SessionResult, ValidationCapture } from '@/types';
+import type { CaptureValiditySnapshot } from './captureValidity';
 
 const baseSymptoms = {
   dorOcular: 2,
@@ -40,6 +47,8 @@ test('builds dynamic section summaries from sessions and validation captures', (
           timestamp: 1700000000000,
           extraData: {
             intervals: [900, 1100, 1000],
+            orientation: 'portrait',
+            validity: validity('comparable'),
             saccadeMetrics: {
               trackingAvailable: true,
               samplesValid: 320,
@@ -94,6 +103,9 @@ test('builds dynamic section summaries from sessions and validation captures', (
       axis: { hStd: 0.12, hRange: 0.44, vStd: 0.04, vRange: 0.11 },
       sampleCount: 430,
       samples: [],
+      orientation: 'portrait',
+      durationMs: 20_000,
+      validity: validity('comparable'),
     },
   ];
 
@@ -305,6 +317,9 @@ test('nullable fixation estimates stay null in the series and are ignored by sum
     axis: { hStd: 0, hRange: 0, vStd: 0, vRange: 0 },
     sampleCount: 300,
     samples: [],
+    orientation: 'portrait',
+    durationMs: 20_000,
+    validity: validity('comparable'),
   } satisfies ValidationCapture;
 
   const series = buildOcularReadingSeries([], [capture]);
@@ -322,4 +337,200 @@ test('nullable fixation estimates stay null in the series and are ignored by sum
   assert.doesNotMatch(summary.sections.reading.insight, /fixação média de 0 ms/);
   assert.match(mixedSummary.sections.reading.insight, /fixacao media de 420 ms/);
   assert.doesNotMatch(mixedSummary.sections.reading.insight, /fixacao media de 210 ms/);
+});
+
+function validity(
+  grade: CaptureValiditySnapshot['grade'],
+  overrides: Partial<CaptureValiditySnapshot> = {},
+): CaptureValiditySnapshot {
+  return {
+    contractVersion: 1,
+    assessedAt: 1700000000000,
+    grade,
+    reasonCodes: grade === 'comparable'
+      ? []
+      : grade === 'invalid'
+        ? ['page-hidden-during-capture']
+        : ['capture-coarse-temporal'],
+    durationMs: 20_000,
+    coverage: 92,
+    signalSource: 'calibrated-mediapipe',
+    selectedSourceRatio: 0.96,
+    sampleRateHz: grade === 'exploratory' ? 30 : 60,
+    temporalTier: grade === 'exploratory' ? 'coarse-temporal' : 'high-temporal',
+    gapCount: 0,
+    interruption: grade === 'invalid' ? 'page-hidden-during-capture' : null,
+    ...overrides,
+  };
+}
+
+function diagnosticCapture(
+  id: string,
+  timestamp: number,
+  snapshot?: CaptureValiditySnapshot,
+  orientation: ValidationCapture['orientation'] = 'portrait',
+  meanFixationMs: number | null = 400,
+): ValidationCapture {
+  return {
+    id,
+    timestamp,
+    durationMs: snapshot?.durationMs ?? undefined,
+    conditions: { lighting: 'normal', distanceCm: 40, posture: 'upright' },
+    coverage: snapshot?.coverage ?? 90,
+    calibrated: snapshot?.signalSource === 'calibrated-mediapipe',
+    metrics: {
+      trackingAvailable: snapshot?.signalSource !== 'unavailable',
+      samplesValid: 360,
+      signalSource: snapshot?.signalSource ?? 'raw-mediapipe',
+      sampleRateHz: snapshot?.sampleRateHz ?? undefined,
+      saccadeCount: 12,
+      regressionCount: 2,
+      lineReturnCount: 1,
+      meanSaccadeAmplitude: meanFixationMs === null ? null : 0.1,
+      meanFixationMs,
+    },
+    postural: {
+      status: 'stable',
+      samples: 200,
+      cervicalStability: 90,
+      sustainedTiltDeg: 1,
+      rotationRange: 2,
+      highMovement: false,
+      confidence: 'high',
+      label: 'Postura estável',
+      insight: 'Postura estável.',
+    },
+    axis: { hStd: 0.1, hRange: 0.4, vStd: 0.04, vRange: 0.1 },
+    orientation,
+    sampleCount: 360,
+    samples: [],
+    validity: snapshot,
+  };
+}
+
+test('partitions comparable captures by orientation, temporal tier and source while retaining audit records', () => {
+  const portraitA = diagnosticCapture('portrait-a', 100, validity('comparable'));
+  const portraitB = diagnosticCapture('portrait-b', 200, validity('comparable'), 'portrait', null);
+  const landscape = diagnosticCapture('landscape', 300, validity('comparable'), 'landscape');
+  const coarse = diagnosticCapture('coarse', 400, validity('exploratory'));
+  const interrupted = diagnosticCapture('interrupted', 500, validity('invalid'));
+  const legacy = diagnosticCapture('legacy', 600, undefined);
+
+  const points = buildOcularReadingSeries([], [portraitA, portraitB, landscape, coarse, interrupted, legacy]);
+  const partition = partitionOcularReadingSeries(points);
+
+  assert.equal(partition.comparableGroups.length, 2);
+  assert.deepEqual(partition.comparableGroups.map(group => group.points.map(point => point.id)), [
+    ['portrait-a', 'portrait-b'],
+    ['landscape'],
+  ]);
+  assert.match(partition.comparableGroups[0].key, /portrait/);
+  assert.match(partition.comparableGroups[0].key, /high-temporal/);
+  assert.match(partition.comparableGroups[0].key, /calibrated-mediapipe/);
+  assert.match(partition.comparableGroups[0].label, /Retrato/);
+  assert.deepEqual(partition.audit.map(point => point.id), ['coarse', 'interrupted', 'legacy']);
+  assert.equal(partition.audit[0].comparisonKey, 'portrait|coarse-temporal|calibrated-mediapipe');
+  assert.equal(partition.comparableGroups[0].points[1].meanFixationMs, null);
+  assert.equal(partition.audit[2].validity.assessedAt, null);
+  assert.deepEqual(legacy.validity, undefined, 'read-time normalization must not mutate storage objects');
+});
+
+test('routes comparable captures with missing orientation to audit instead of inventing a key', () => {
+  const capture = diagnosticCapture('missing-orientation', 100, validity('comparable'));
+  delete capture.orientation;
+  const point = buildOcularReadingSeries([], [capture])[0];
+  const partition = partitionOcularReadingSeries([point]);
+
+  assert.equal(point.comparisonKey, null);
+  assert.equal(partition.comparableGroups.length, 0);
+  assert.deepEqual(partition.audit.map(item => item.id), ['missing-orientation']);
+});
+
+test('treats reading sessions without a validity snapshot as exploratory legacy audit records', () => {
+  const session: SessionResult = {
+    id: 'legacy-reading',
+    timestamp: 100,
+    durationSec: 30,
+    exercises: [{
+      exerciseId: 'assistedReading',
+      completed: true,
+      score: 70,
+      headStillnessScore: 80,
+      timestamp: 100,
+      parametersUsed: {
+        targetSizeMm: 10,
+        speedDegPerSec: 1,
+        amplitudeDeg: 12,
+        lineSpacingMultiplier: 1.4,
+        contrastMode: 'light',
+        durationSec: 30,
+      },
+      extraData: {
+        saccadeMetrics: {
+          trackingAvailable: true,
+          samplesValid: 300,
+          signalSource: 'calibrated-mediapipe',
+          sampleRateHz: 60,
+          saccadeCount: 10,
+          regressionCount: 1,
+          meanSaccadeAmplitude: 0.1,
+          meanFixationMs: 380,
+        },
+      },
+    }],
+  };
+
+  const partition = partitionOcularReadingSeries(buildOcularReadingSeries([session], []));
+  assert.equal(partition.comparableGroups.length, 0);
+  assert.equal(partition.audit[0].validity.grade, 'exploratory');
+  assert.deepEqual(partition.audit[0].validity.reasonCodes, ['legacy-unassessed']);
+});
+
+test('statistics aggregate ocular dynamics only from comparable points and preserve audit counts', () => {
+  const comparable = diagnosticCapture('comparable', 100, validity('comparable'), 'portrait', 400);
+  const exploratory = diagnosticCapture('exploratory', 200, validity('exploratory'), 'portrait', 1000);
+  exploratory.metrics.saccadeCount = 99;
+  const invalid = diagnosticCapture('invalid', 300, validity('invalid'), 'portrait', null);
+
+  const summary = buildStatisticsSummary([], [comparable, exploratory, invalid]);
+
+  assert.equal(summary.sections.reading.value, '12');
+  assert.match(summary.sections.reading.insight, /fixacao media de 400 ms/);
+  assert.equal(summary.overview.ocularValidity.comparable, 1);
+  assert.equal(summary.overview.ocularValidity.exploratory, 1);
+  assert.equal(summary.overview.ocularValidity.invalid, 1);
+  assert.match(summary.sections.diagnostics.insight, /1 comparável/);
+  assert.match(summary.sections.diagnostics.insight, /2 para auditoria/);
+});
+
+test('builds separated AI diagnostic arrays without a combined trend payload', () => {
+  const comparable = diagnosticCapture('comparable', 100, validity('comparable'));
+  const audit = diagnosticCapture('audit', 200, validity('exploratory', {
+    reasonCodes: ['capture-source-inconsistent'],
+    selectedSourceRatio: 0.75,
+  }));
+  const partition = partitionOcularReadingSeries(buildOcularReadingSeries([], [comparable, audit]));
+  const payload = buildDiagnosticInsightPayload(partition);
+
+  assert.deepEqual(Object.keys(payload).sort(), ['auditDiagnosticCaptures', 'comparableDiagnosticCaptures']);
+  assert.equal(payload.comparableDiagnosticCaptures[0].validity.grade, 'comparable');
+  assert.equal(payload.comparableDiagnosticCaptures[0].validity.temporalTier, 'high-temporal');
+  assert.equal(payload.comparableDiagnosticCaptures[0].validity.selectedSourceRatio, 0.96);
+  assert.equal(payload.comparableDiagnosticCaptures[0].validity.durationMs, 20_000);
+  assert.deepEqual(payload.auditDiagnosticCaptures[0].validity.reasonCodes, ['capture-source-inconsistent']);
+  assert.equal(payload.auditDiagnosticCaptures[0].comparisonExclusionReason, null);
+  assert.equal('diagnosticCaptures' in payload, false);
+});
+
+test('keeps a valid group selection and otherwise falls back to the group with the newest point', () => {
+  const partition = partitionOcularReadingSeries(buildOcularReadingSeries([], [
+    diagnosticCapture('older-portrait', 100, validity('comparable'), 'portrait'),
+    diagnosticCapture('newer-landscape', 200, validity('comparable'), 'landscape'),
+  ]));
+  const portraitKey = partition.comparableGroups.find(group => group.label.includes('Retrato'))!.key;
+  const landscapeKey = partition.comparableGroups.find(group => group.label.includes('Paisagem'))!.key;
+
+  assert.equal(resolveSelectedOcularGroupKey(partition.comparableGroups, portraitKey), portraitKey);
+  assert.equal(resolveSelectedOcularGroupKey(partition.comparableGroups, 'removed-group'), landscapeKey);
+  assert.equal(resolveSelectedOcularGroupKey([], landscapeKey), null);
 });

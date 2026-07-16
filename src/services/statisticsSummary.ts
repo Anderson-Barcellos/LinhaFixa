@@ -1,6 +1,10 @@
 import { SessionResult, SymptomRating, ValidationCapture } from '@/types';
 import { PosturalStabilityMetrics } from '@/exercises/posturalStability';
 import { summarizeSaccadeSignalQuality, type SaccadeSignalQuality } from '@/services/signalQuality';
+import {
+  captureValidityOrLegacy,
+  type CaptureValiditySnapshot,
+} from '@/services/captureValidity';
 
 export interface OcularReadingPoint {
   id: string;
@@ -17,6 +21,38 @@ export interface OcularReadingPoint {
   meanFixationMs: number | null;
   samplesValid: number;
   coverage: number | null;
+  validity: CaptureValiditySnapshot;
+  comparisonKey: string | null;
+  orientation: 'portrait' | 'landscape' | null;
+  saveProvenance: 'saved-session' | 'saved-capture';
+}
+
+export interface OcularComparableGroup {
+  key: string;
+  label: string;
+  points: OcularReadingPoint[];
+}
+
+export interface OcularSeriesPartition {
+  comparableGroups: OcularComparableGroup[];
+  audit: OcularReadingPoint[];
+}
+
+export interface DiagnosticInsightRecord {
+  id: string;
+  date: string;
+  orientation: OcularReadingPoint['orientation'];
+  saccades: number;
+  regressions: number;
+  lineReturns: number | null;
+  meanFixationMs: number | null;
+  samplesValid: number;
+  coverage: number | null;
+  comparisonExclusionReason: 'missing-comparison-context' | null;
+  validity: Pick<
+    CaptureValiditySnapshot,
+    'grade' | 'reasonCodes' | 'temporalTier' | 'signalSource' | 'selectedSourceRatio' | 'durationMs'
+  >;
 }
 
 export interface StatisticSectionSummary {
@@ -38,6 +74,11 @@ export interface StatisticsSummary {
     // null when the history only has legacy symptom sessions.
     wellbeingDelta: number | null;
     latestTimestamp: number | null;
+    ocularValidity: {
+      comparable: number;
+      exploratory: number;
+      invalid: number;
+    };
   };
   sections: {
     training: StatisticSectionSummary;
@@ -71,6 +112,9 @@ export function buildStatisticsSummary(
     ...sessions.map(s => s.timestamp),
     ...captures.map(c => c.timestamp)
   ) || null;
+  const ocularPartition = partitionOcularReadingSeries(buildOcularReadingSeries(sessions, captures));
+  const comparableOcularPoints = ocularPartition.comparableGroups.flatMap(group => group.points);
+  const auditGrades = ocularPartition.audit.map(point => point.validity.grade);
 
   return {
     overview: {
@@ -81,12 +125,17 @@ export function buildStatisticsSummary(
       averageStillness,
       wellbeingDelta,
       latestTimestamp,
+      ocularValidity: {
+        comparable: comparableOcularPoints.length,
+        exploratory: auditGrades.filter(grade => grade === 'exploratory').length,
+        invalid: auditGrades.filter(grade => grade === 'invalid').length,
+      },
     },
     sections: {
       training: trainingSummary(sortedSessions, exerciseCount, totalMinutes),
       symptoms: wellbeingSummary(sortedSessions, wellbeingDelta, legacySymptomDelta),
-      reading: readingSummary(sessions, captures),
-      diagnostics: diagnosticsSummary(sortedCaptures),
+      reading: readingSummary(sessions, comparableOcularPoints, ocularPartition.audit),
+      diagnostics: diagnosticsSummary(sortedCaptures, comparableOcularPoints, ocularPartition.audit),
       posture: postureSummary(posturalSamples, averageStillness),
     },
   };
@@ -96,15 +145,18 @@ export function buildOcularReadingSeries(
   sessions: SessionResult[],
   captures: ValidationCapture[]
 ): OcularReadingPoint[] {
-  const readingPoints = sessions.flatMap(session =>
+  const readingPoints: Array<OcularReadingPoint | null> = sessions.flatMap(session =>
     session.exercises
       .filter(exercise => exercise.exerciseId === 'assistedReading')
       .map((exercise, index) => {
         const metrics = exercise.extraData?.saccadeMetrics;
-        if (!metrics?.trackingAvailable) return null;
+        if (!metrics) return null;
+        const validity = captureValidityOrLegacy(exercise.extraData?.validity);
+        const orientation = normalizeOrientation(exercise.extraData?.orientation);
         const signalQuality = summarizeSaccadeSignalQuality(metrics, {
           coverage: exercise.extraData?.signalCoverage ?? null,
           calibrated: metrics.signalSource === 'calibrated-mediapipe',
+          validity: exercise.extraData?.validity,
         });
         return {
           id: `${session.id}-reading-${index}`,
@@ -121,12 +173,19 @@ export function buildOcularReadingSeries(
           meanFixationMs: metrics.meanFixationMs !== null ? Math.round(metrics.meanFixationMs) : null,
           samplesValid: metrics.samplesValid,
           coverage: null,
+          validity,
+          comparisonKey: comparisonKey(validity, orientation),
+          orientation,
+          saveProvenance: 'saved-session' as const,
         };
       })
   );
 
-  const capturePoints = captures.map(capture => {
-    if (!capture.metrics.trackingAvailable) return null;
+  const capturePoints: OcularReadingPoint[] = captures.map(capture => {
+    const validity = captureValidityOrLegacy(capture.validity);
+    const orientation = normalizeOrientation(
+      capture.orientation ?? capture.environment?.viewport.orientation,
+    );
     const signalQuality = summarizeSaccadeSignalQuality(capture.metrics, {
       coverage: capture.coverage,
       calibrated: capture.calibrated,
@@ -149,12 +208,82 @@ export function buildOcularReadingSeries(
         : null,
       samplesValid: capture.metrics.samplesValid,
       coverage: Math.round(capture.coverage),
+      validity,
+      comparisonKey: comparisonKey(validity, orientation),
+      orientation,
+      saveProvenance: 'saved-capture' as const,
     };
   });
 
   return [...readingPoints, ...capturePoints]
     .filter((point): point is OcularReadingPoint => point !== null)
     .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+export function partitionOcularReadingSeries(points: OcularReadingPoint[]): OcularSeriesPartition {
+  const groups = new Map<string, OcularComparableGroup>();
+  const audit: OcularReadingPoint[] = [];
+
+  for (const point of points) {
+    if (point.validity.grade !== 'comparable' || point.comparisonKey === null) {
+      audit.push(point);
+      continue;
+    }
+    const existing = groups.get(point.comparisonKey);
+    if (existing) {
+      existing.points.push(point);
+    } else {
+      groups.set(point.comparisonKey, {
+        key: point.comparisonKey,
+        label: comparisonLabel(point),
+        points: [point],
+      });
+    }
+  }
+
+  return {
+    comparableGroups: [...groups.values()].map(group => ({
+      ...group,
+      points: [...group.points].sort((a, b) => a.timestamp - b.timestamp),
+    })),
+    audit: [...audit].sort((a, b) => a.timestamp - b.timestamp),
+  };
+}
+
+export function resolveSelectedOcularGroupKey(
+  groups: OcularComparableGroup[],
+  currentKey: string | null,
+): string | null {
+  if (currentKey && groups.some(group => group.key === currentKey)) return currentKey;
+
+  let newestKey: string | null = null;
+  let newestTimestamp = Number.NEGATIVE_INFINITY;
+  for (const group of groups) {
+    for (const point of group.points) {
+      if (point.timestamp > newestTimestamp) {
+        newestTimestamp = point.timestamp;
+        newestKey = group.key;
+      }
+    }
+  }
+  return newestKey;
+}
+
+export function buildDiagnosticInsightPayload(partition: OcularSeriesPartition): {
+  comparableDiagnosticCaptures: DiagnosticInsightRecord[];
+  auditDiagnosticCaptures: DiagnosticInsightRecord[];
+} {
+  const comparable = partition.comparableGroups
+    .flatMap(group => group.points)
+    .filter(point => point.sourceKind === 'capture')
+    .map(diagnosticInsightRecord);
+  const audit = partition.audit
+    .filter(point => point.sourceKind === 'capture')
+    .map(diagnosticInsightRecord);
+  return {
+    comparableDiagnosticCaptures: comparable,
+    auditDiagnosticCaptures: audit,
+  };
 }
 
 function trainingSummary(
@@ -219,7 +348,8 @@ function wellbeingSummary(
 
 function readingSummary(
   sessions: SessionResult[],
-  captures: ValidationCapture[]
+  comparablePoints: OcularReadingPoint[],
+  auditPoints: OcularReadingPoint[],
 ): StatisticSectionSummary {
   const readingExercises = sessions
     .flatMap(s => s.exercises)
@@ -227,37 +357,20 @@ function readingSummary(
   const intervals = readingExercises.flatMap(e =>
     Array.isArray(e.extraData?.intervals) ? e.extraData.intervals as number[] : []
   );
-  const readingMetrics = [
-    ...readingExercises.map(e => e.extraData?.saccadeMetrics),
-    ...captures.map(c => c.metrics),
-  ].filter(m => m?.trackingAvailable);
-  const qualityCounts = [
-    ...readingExercises.map(e => e.extraData?.saccadeMetrics
-      ? summarizeSaccadeSignalQuality(e.extraData.saccadeMetrics, {
-        coverage: e.extraData?.signalCoverage ?? null,
-        calibrated: e.extraData.saccadeMetrics.signalSource === 'calibrated-mediapipe',
-      }).grade
-      : null),
-    ...captures.map(c => summarizeSaccadeSignalQuality(c.metrics, {
-      coverage: c.coverage,
-      calibrated: c.calibrated,
-      validity: c.validity,
-    }).grade),
-  ].filter(Boolean);
 
-  if (readingExercises.length === 0 && captures.length === 0) {
+  if (readingExercises.length === 0 && comparablePoints.length === 0 && auditPoints.length === 0) {
     return section('Leitura', 'N/D', 'sem dados', 'Historico ainda sem exercicios de leitura ou capturas diagnosticas para resumir ritmo ocular.', 'slate');
   }
 
   const avgInterval = average(intervals);
-  const totalSaccades = sum(readingMetrics.map(m => m.saccadeCount));
-  const totalRegressions = sum(readingMetrics.map(m => m.regressionCount));
-  const lineReturnValues = readingMetrics
-    .map(m => m.lineReturnCount)
+  const totalSaccades = sum(comparablePoints.map(point => point.saccades));
+  const totalRegressions = sum(comparablePoints.map(point => point.regressions));
+  const lineReturnValues = comparablePoints
+    .map(point => point.lineReturns)
     .filter((v): v is number => typeof v === 'number');
   const totalLineReturns = lineReturnValues.length ? sum(lineReturnValues) : null;
-  const fixationValues = readingMetrics
-    .map(m => m.meanFixationMs)
+  const fixationValues = comparablePoints
+    .map(point => point.meanFixationMs)
     .filter((value): value is number => value !== null && Number.isFinite(value));
   const avgFixation = average(fixationValues);
   const ocularPieces = [
@@ -268,14 +381,12 @@ function readingSummary(
       : 'fixação média não estimável',
   ].filter(Boolean);
 
-  if (readingMetrics.length) {
+  if (comparablePoints.length) {
     const touchNote = avgInterval !== null
       ? ` Toque medio de ${formatInteger(avgInterval)} ms aparece apenas como ritmo de avanco manual, nao como medida ocular.`
       : '';
-    const comparable = qualityCounts.filter(q => q === 'comparavel').length;
-    const qualityNote = comparable > 0
-      ? ` ${comparable} ${plural(comparable, 'ponto comparavel', 'pontos comparaveis')} por sinal calibrado.`
-      : ' Dados oculares atuais ficam como exploratorios ate haver sinal calibrado suficiente.';
+    const comparable = comparablePoints.length;
+    const qualityNote = ` ${comparable} ${plural(comparable, 'ponto comparavel', 'pontos comparaveis')} por sinal calibrado; ${auditPoints.length} ${plural(auditPoints.length, 'registro permanece', 'registros permanecem')} para auditoria.`;
     return section(
       'Leitura',
       String(totalSaccades),
@@ -285,23 +396,43 @@ function readingSummary(
     );
   }
 
+  const auditNote = auditPoints.length > 0
+    ? ` ${auditPoints.length} ${plural(auditPoints.length, 'registro ocular foi mantido', 'registros oculares foram mantidos')} para auditoria, sem entrar na tendência.`
+    : '';
   return section(
     'Leitura',
     avgInterval !== null ? `${formatInteger(avgInterval)} ms` : 'N/D',
     avgInterval !== null ? 'avanco manual' : 'sem sinal ocular',
     avgInterval !== null
       ? `Ha leitura salva, mas sem sinal ocular suficiente; o toque medio de ${formatInteger(avgInterval)} ms e apenas acompanhamento manual.`
-      : 'Ha leitura salva, mas sem sinal ocular suficiente para resumir sacadas e fixacoes.',
+      : `Não há captura comparável para resumir sacadas e fixações.${auditNote}`,
     'amber'
   );
 }
 
-function diagnosticsSummary(captures: ValidationCapture[]): StatisticSectionSummary {
+function diagnosticsSummary(
+  captures: ValidationCapture[],
+  comparablePoints: OcularReadingPoint[],
+  auditPoints: OcularReadingPoint[],
+): StatisticSectionSummary {
   if (captures.length === 0) {
     return section('Capturas', '0', 'diagnosticas', 'Area ainda sem capturas diagnosticas salvas; cobertura, eixo H/V e sacadas entram aqui apos a primeira captura.', 'slate');
   }
-  const latest = captures[0];
-  const avgCoverage = average(captures.map(c => c.coverage)) ?? 0;
+  const captureComparable = comparablePoints.filter(point => point.sourceKind === 'capture');
+  const captureAudit = auditPoints.filter(point => point.sourceKind === 'capture');
+  if (captureComparable.length === 0) {
+    return section(
+      'Capturas',
+      'N/D',
+      'sem tendência comparável',
+      `${captures.length} ${plural(captures.length, 'captura diagnóstica salva', 'capturas diagnósticas salvas')}; ${captureAudit.length} para auditoria e nenhuma apta a comparação temporal.`,
+      captureAudit.some(point => point.validity.grade === 'invalid') ? 'rose' : 'amber',
+    );
+  }
+  const comparableIds = new Set(captureComparable.map(point => point.id));
+  const comparableCaptures = captures.filter(capture => comparableIds.has(capture.id));
+  const latest = [...comparableCaptures].sort((a, b) => b.timestamp - a.timestamp)[0];
+  const avgCoverage = average(captureComparable.map(point => point.coverage).filter((value): value is number => value !== null)) ?? 0;
   const hRange = latest.axis.hRange;
   const vRange = latest.axis.vRange;
   const axisTone = hRange >= vRange * 1.4
@@ -311,9 +442,65 @@ function diagnosticsSummary(captures: ValidationCapture[]): StatisticSectionSumm
     'Capturas',
     `${formatInteger(avgCoverage)}%`,
     'cobertura media',
-    `${captures.length} ${plural(captures.length, 'captura diagnostica', 'capturas diagnosticas')}; ultima com ${formatInteger(latest.coverage)}% de cobertura, ${latest.metrics.saccadeCount} sacadas, ${latest.metrics.regressionCount} regressoes${latest.metrics.lineReturnCount != null ? `, ${latest.metrics.lineReturnCount} retornos de linha` : ''} e ${axisTone}.`,
+    `${captureComparable.length} ${plural(captureComparable.length, 'comparável', 'comparáveis')} e ${captureAudit.length} para auditoria; última comparável com ${formatInteger(latest.coverage)}% de cobertura, ${latest.metrics.saccadeCount} sacadas, ${latest.metrics.regressionCount} regressões${latest.metrics.lineReturnCount != null ? `, ${latest.metrics.lineReturnCount} retornos de linha` : ''} e ${axisTone}.`,
     avgCoverage >= 80 ? 'emerald' : 'amber'
   );
+}
+
+function comparisonKey(
+  validity: CaptureValiditySnapshot,
+  orientation: OcularReadingPoint['orientation'],
+): string | null {
+  if (
+    orientation === null
+    || validity.signalSource === null
+    || validity.temporalTier === 'insufficient-temporal'
+  ) return null;
+  return `${orientation}|${validity.temporalTier}|${validity.signalSource}`;
+}
+
+function normalizeOrientation(value: unknown): OcularReadingPoint['orientation'] {
+  return value === 'portrait' || value === 'landscape' ? value : null;
+}
+
+function comparisonLabel(point: OcularReadingPoint): string {
+  const orientation = point.orientation === 'portrait' ? 'Retrato' : 'Paisagem';
+  const tier = point.validity.temporalTier === 'high-temporal'
+    ? '≥45 Hz'
+    : point.validity.temporalTier === 'coarse-temporal'
+      ? '24–44 Hz'
+      : '<24 Hz';
+  const source = point.validity.signalSource === 'calibrated-mediapipe'
+    ? 'Calibrado'
+    : point.validity.signalSource === 'raw-mediapipe'
+      ? 'Bruto'
+      : 'Sem fonte';
+  return `${orientation} · ${tier} · ${source}`;
+}
+
+function diagnosticInsightRecord(point: OcularReadingPoint): DiagnosticInsightRecord {
+  return {
+    id: point.id,
+    date: new Date(point.timestamp).toISOString(),
+    orientation: point.orientation,
+    saccades: point.saccades,
+    regressions: point.regressions,
+    lineReturns: point.lineReturns,
+    meanFixationMs: point.meanFixationMs,
+    samplesValid: point.samplesValid,
+    coverage: point.coverage,
+    comparisonExclusionReason: point.validity.grade === 'comparable' && point.comparisonKey === null
+      ? 'missing-comparison-context'
+      : null,
+    validity: {
+      grade: point.validity.grade,
+      reasonCodes: [...point.validity.reasonCodes],
+      temporalTier: point.validity.temporalTier,
+      signalSource: point.validity.signalSource,
+      selectedSourceRatio: point.validity.selectedSourceRatio,
+      durationMs: point.validity.durationMs,
+    },
+  };
 }
 
 function postureSummary(

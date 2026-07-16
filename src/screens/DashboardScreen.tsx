@@ -2,8 +2,16 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSessions, getValidationCaptures } from '@/services/storage';
 import { apiUrl } from '@/services/apiBase';
-import { buildOcularReadingSeries, buildStatisticsSummary, StatisticSectionSummary } from '@/services/statisticsSummary';
+import {
+  buildDiagnosticInsightPayload,
+  buildOcularReadingSeries,
+  buildStatisticsSummary,
+  partitionOcularReadingSeries,
+  resolveSelectedOcularGroupKey,
+  type StatisticSectionSummary,
+} from '@/services/statisticsSummary';
 import { summarizeSaccadeSignalQuality } from '@/services/signalQuality';
+import { describeCaptureValidity } from '@/services/captureValidity';
 import { SessionResult, ValidationCapture } from '@/types';
 import { Activity, ArrowLeft, Clock, Eye, AlertTriangle, Smile, Sparkles, Download, BookOpen, ClipboardCheck, TrendingDown, BarChart3 } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ZAxis } from 'recharts';
@@ -15,6 +23,7 @@ export function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [insight, setInsight] = useState<string | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
+  const [selectedOcularGroupKey, setSelectedOcularGroupKey] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -72,6 +81,25 @@ export function DashboardScreen() {
     () => buildOcularReadingSeries(sessions, captures),
     [sessions, captures]
   );
+  const ocularPartition = useMemo(
+    () => partitionOcularReadingSeries(ocularSeries),
+    [ocularSeries]
+  );
+  const resolvedOcularGroupKey = useMemo(
+    () => resolveSelectedOcularGroupKey(ocularPartition.comparableGroups, selectedOcularGroupKey),
+    [ocularPartition, selectedOcularGroupKey]
+  );
+  const selectedOcularGroup = useMemo(
+    () => ocularPartition.comparableGroups.find(group => group.key === resolvedOcularGroupKey) ?? null,
+    [ocularPartition, resolvedOcularGroupKey]
+  );
+
+  useEffect(() => {
+    setSelectedOcularGroupKey(current => resolveSelectedOcularGroupKey(
+      ocularPartition.comparableGroups,
+      current,
+    ));
+  }, [ocularPartition]);
 
   const summaryCards = useMemo<{ id: string; icon: React.ComponentType<{ className?: string }>; summary: StatisticSectionSummary }[]>(() => [
     { id: 'training', icon: Activity, summary: statisticsSummary.sections.training },
@@ -112,27 +140,7 @@ export function DashboardScreen() {
               insight: s.insight,
             })),
             sessions: summaryPayload,
-            diagnosticCaptures: captures.slice(0, 8).map(c => ({
-              date: new Date(c.timestamp).toISOString(),
-              coverage: c.coverage,
-              calibrated: c.calibrated,
-              sampleCount: c.sampleCount,
-              saccades: c.metrics.saccadeCount,
-              regressions: c.metrics.regressionCount,
-              lineReturns: c.metrics.lineReturnCount ?? null,
-              meanFixationMs: c.metrics.meanFixationMs,
-              signalQuality: summarizeSaccadeSignalQuality(c.metrics, { coverage: c.coverage, calibrated: c.calibrated, validity: c.validity }).label,
-              signalSource: c.metrics.signalSource,
-              sampleRateHz: c.metrics.sampleRateHz,
-              posturalLabel: c.postural.label,
-              cervicalStability: c.postural.cervicalStability,
-              posturalBaselineApplied: c.postural.baselineApplied,
-              motionStatus: c.postural.motionStatus,
-              motionDeltaDeg: c.postural.motionDeltaDeg,
-              horizontalRange: c.axis.hRange,
-              verticalRange: c.axis.vRange,
-              conditions: c.conditions,
-            })),
+            ...buildDiagnosticInsightPayload(ocularPartition),
           }
         })
       });
@@ -221,7 +229,45 @@ export function DashboardScreen() {
             </div>
 
             {ocularSeries.length > 0 && (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+              <div className="space-y-6 mb-8">
+                <div className="bg-white rounded-3xl p-5 sm:p-8 shadow-sm border border-slate-100 min-w-0">
+                  <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-6">
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-800 mb-2">Tendência ocular comparável</h3>
+                      <p className="text-slate-500 font-medium max-w-2xl">
+                        Cada série mantém orientação, perfil temporal e fonte iguais. Registros fora desse contrato ficam somente na auditoria.
+                      </p>
+                    </div>
+                    {ocularPartition.comparableGroups.length > 1 && (
+                      <div className="flex flex-wrap gap-2" aria-label="Selecionar grupo ocular comparável">
+                        {ocularPartition.comparableGroups.map(group => (
+                          <button
+                            key={group.key}
+                            type="button"
+                            onClick={() => setSelectedOcularGroupKey(group.key)}
+                            aria-pressed={selectedOcularGroup?.key === group.key}
+                            className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors ${selectedOcularGroup?.key === group.key ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                          >
+                            {group.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {selectedOcularGroup ? (
+                    <div className="inline-flex max-w-full px-3 py-1.5 mb-2 rounded-full bg-indigo-50 text-indigo-700 text-xs font-bold">
+                      {selectedOcularGroup.label} · {selectedOcularGroup.points.length} {selectedOcularGroup.points.length === 1 ? 'registro' : 'registros'}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-900 font-medium">
+                      Ainda não há registros comparáveis. Os dados exploratórios e inválidos continuam visíveis abaixo para auditoria.
+                    </div>
+                  )}
+                </div>
+
+                {selectedOcularGroup && (
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 min-w-0">
                   <h3 className="text-xl font-bold text-slate-800 mb-2">Sacadas e regressões pelo olhar</h3>
                   <p className="text-slate-500 font-medium mb-6">
@@ -229,7 +275,7 @@ export function DashboardScreen() {
                   </p>
                   <div className="h-72 w-full min-w-0">
                     <ResponsiveContainer width="100%" height="100%" minWidth={280} minHeight={200}>
-                      <BarChart data={ocularSeries} margin={{ top: 12, right: 12, bottom: 12, left: -16 }}>
+                      <BarChart data={selectedOcularGroup.points} margin={{ top: 12, right: 12, bottom: 12, left: -16 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                         <XAxis dataKey="label" stroke="#94a3b8" tickLine={false} axisLine={false} />
                         <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} allowDecimals={false} />
@@ -250,7 +296,7 @@ export function DashboardScreen() {
                   </p>
                   <div className="h-72 w-full min-w-0">
                     <ResponsiveContainer width="100%" height="100%" minWidth={280} minHeight={200}>
-                      <LineChart data={ocularSeries} margin={{ top: 12, right: 12, bottom: 12, left: -10 }}>
+                      <LineChart data={selectedOcularGroup.points} margin={{ top: 12, right: 12, bottom: 12, left: -10 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                         <XAxis dataKey="label" stroke="#94a3b8" tickLine={false} axisLine={false} />
                         <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} unit=" ms" />
@@ -260,6 +306,55 @@ export function DashboardScreen() {
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
+                </div>
+                  </div>
+                )}
+
+                <div className="bg-white rounded-3xl p-5 sm:p-8 shadow-sm border border-slate-100">
+                  <h3 className="text-xl font-bold text-slate-800 mb-2">Registros para auditoria</h3>
+                  <p className="text-slate-500 font-medium mb-5">
+                    Exploratórios, inválidos, legados ou sem geometria completa permanecem consultáveis, mas não entram nos gráficos de tendência.
+                  </p>
+                  {ocularPartition.audit.length > 0 ? (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                      {[...ocularPartition.audit].sort((a, b) => b.timestamp - a.timestamp).map(point => {
+                        const presentation = describeCaptureValidity(point.validity);
+                        const missingComparisonContext = point.validity.grade === 'comparable' && point.comparisonKey === null;
+                        return (
+                          <article key={`${point.sourceKind}-${point.id}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 min-w-0">
+                            <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                              <div className="min-w-0">
+                                <div className="font-bold text-slate-800 truncate">{point.sourceLabel} · {point.label}</div>
+                                <div className="text-xs text-slate-500 mt-1">
+                                  {missingComparisonContext ? 'Orientação ou contexto insuficiente para formar uma série comparável' : presentation.primary}
+                                </div>
+                              </div>
+                              <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${presentation.tone === 'rose' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {presentation.label}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                              <AuditFact label="Taxa" value={point.validity.sampleRateHz != null ? `${Math.round(point.validity.sampleRateHz)} Hz` : 'não medida'} />
+                              <AuditFact label="Fonte" value={point.signalSourceLabel} />
+                              <AuditFact label="Orientação" value={orientationLabel(point.orientation)} />
+                              <AuditFact label="Persistência" value={point.saveProvenance === 'saved-capture' ? 'Captura salva' : 'Sessão salva'} />
+                            </div>
+                            <p className="text-xs text-slate-500 mt-3 break-words">
+                              Motivos: {missingComparisonContext
+                                ? 'contexto de comparação incompleto'
+                                : presentation.reasons.length > 0
+                                  ? presentation.reasons.join('; ')
+                                  : 'metadados insuficientes para comparação'}.
+                            </p>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4 text-emerald-800 font-medium">
+                      Nenhum registro pendente de auditoria neste histórico.
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -411,6 +506,19 @@ function CapStat({ label, value }: { label: string; value: string }) {
       <div className="text-[11px] text-slate-400 font-bold uppercase tracking-wide mt-1">{label}</div>
     </div>
   );
+}
+
+function AuditFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="font-bold text-slate-700 break-words">{value}</div>
+      <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wide mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+function orientationLabel(orientation: 'portrait' | 'landscape' | null): string {
+  return orientation === 'portrait' ? 'Retrato' : orientation === 'landscape' ? 'Paisagem' : 'não medida';
 }
 
 export function formatEstimatedMilliseconds(value: number | null): string {
