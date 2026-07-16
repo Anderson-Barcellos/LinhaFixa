@@ -1,19 +1,24 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  acceptPendingCalibration,
   addCalibrationSample,
   fitCalibration,
+  getAccuracyDeg,
+  getCalibrationAssessment,
   getCalibrationSignature,
   isCalibrated,
+  predictPendingNorm,
   predictNorm,
+  rejectCalibration,
   resetCalibration,
-  setCalibrationSignature,
 } from './gazeCalibration';
+import { assessCalibration } from './calibrationValidity';
 import { GAZE_FEATURE_LENGTH } from './faceTracking';
 import type { CalibrationSignature } from './ocularSignalContract';
 
-test('calibration signature is stored defensively and reset with calibration', () => {
-  const signature: CalibrationSignature = {
+function signature(): CalibrationSignature {
+  return {
     viewportWidth: 932,
     viewportHeight: 430,
     orientation: 'landscape',
@@ -23,14 +28,115 @@ test('calibration signature is stored defensively and reset with calibration', (
     videoHeight: 720,
     trackFrameRate: 60,
   };
+}
 
-  setCalibrationSignature(signature);
-  signature.surfaceRect.width = 10;
+function assessment(options: { accepted: boolean; id?: string; meanErrorDeg?: number }) {
+  const fitSampleCounts = Array(9).fill(12);
+  const errorsDeg = Array(12).fill(options.meanErrorDeg ?? 2);
+  if (!options.accepted) fitSampleCounts[0] = 11;
+  return assessCalibration({
+    id: options.id ?? 'calibration-transaction',
+    createdAt: 100,
+    fitSampleCounts,
+    validationPoints: Array.from({ length: 5 }, () => ({
+      sampleCount: 12,
+      errorsDeg: [...errorsDeg],
+      extrapolatedCount: 0,
+    })),
+    signature: signature(),
+  });
+}
 
-  assert.equal(getCalibrationSignature()?.surfaceRect.width, 932);
+function seedRidgeFixture() {
+  let seed = 12345;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0xffffffff;
+  };
+  const wx = Array.from({ length: GAZE_FEATURE_LENGTH }, (_, i) => (i === 2 ? 0.0008 : 0.01 * ((i % 3) - 1)));
+  const wy = Array.from({ length: GAZE_FEATURE_LENGTH }, (_, i) => (i === 2 ? -0.0006 : 0.01 * ((i % 2) ? 1 : -1)));
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+  const built: { features: number[]; target: { x: number; y: number } }[] = [];
+
+  for (let n = 0; n < 40; n++) {
+    const features = Array.from({ length: GAZE_FEATURE_LENGTH }, (_, i) =>
+      i === 2 ? (rand() - 0.5) * 40 : rand()
+    );
+    let tx = 0.5, ty = 0.4;
+    for (let i = 0; i < GAZE_FEATURE_LENGTH; i++) {
+      tx += wx[i] * features[i];
+      ty += wy[i] * features[i];
+    }
+    const target = { x: clamp01(tx), y: clamp01(ty) };
+    built.push({ features, target });
+    addCalibrationSample(features, target);
+  }
+
+  return built;
+}
+
+test('fit produces only a pending model until accepted evidence activates it', () => {
+  resetCalibration();
+  const built = seedRidgeFixture();
+
+  assert.equal(fitCalibration(), true);
+  assert.equal(isCalibrated(), false);
+  assert.equal(predictNorm(built[0].features), null);
+  assert.ok(predictPendingNorm(built[0].features));
+});
+
+test('rejected evidence cannot activate and rejection clears calibration state', () => {
+  resetCalibration();
+  const built = seedRidgeFixture();
+  assert.equal(fitCalibration(), true);
+
+  const rejected = assessment({ accepted: false });
+  assert.equal(rejected.accepted, false);
+  assert.equal(acceptPendingCalibration(rejected), false);
+  assert.equal(isCalibrated(), false);
+
+  assert.equal(acceptPendingCalibration(assessment({ accepted: true, meanErrorDeg: 1.5 })), true);
+  assert.equal(getAccuracyDeg(), 1.5);
+  assert.ok(getCalibrationSignature());
+  assert.equal(fitCalibration(), true);
+
+  rejectCalibration(rejected);
+  assert.equal(isCalibrated(), false);
+  assert.equal(predictNorm(built[0].features), null);
+  assert.equal(predictPendingNorm(built[0].features), null);
+  assert.equal(getCalibrationSignature(), null);
+  assert.equal(getAccuracyDeg(), null);
+  assert.deepEqual(getCalibrationAssessment(), rejected);
+});
+
+test('accepted evidence atomically activates pending model and is stored defensively', () => {
+  resetCalibration();
+  const built = seedRidgeFixture();
+  assert.equal(fitCalibration(), true);
+
+  const accepted = assessment({ accepted: true, meanErrorDeg: 2.5 });
+  assert.equal(acceptPendingCalibration(accepted), true);
+  assert.equal(isCalibrated(), true);
+  assert.ok(predictNorm(built[0].features));
+  assert.equal(predictPendingNorm(built[0].features), null);
+  assert.equal(getAccuracyDeg(), 2.5);
+
+  accepted.reasonCodes.push('calibration-high-mean-error');
+  accepted.fitSampleCounts[0] = 0;
+  accepted.signature.surfaceRect.width = 10;
+
+  const stored = getCalibrationAssessment();
+  assert.ok(stored);
+  assert.deepEqual(stored!.reasonCodes, []);
+  assert.equal(stored!.fitSampleCounts[0], 12);
+  assert.equal(stored!.signature.surfaceRect.width, 932);
+  stored!.signature.surfaceRect.width = 20;
+  assert.equal(getCalibrationAssessment()!.signature.surfaceRect.width, 932);
+  assert.equal(getCalibrationSignature()!.surfaceRect.width, 932);
 
   resetCalibration();
   assert.equal(getCalibrationSignature(), null);
+  assert.equal(getCalibrationAssessment(), null);
 });
 
 test('ridge recovers a linear mapping despite a feature on a 100x scale (z-score)', () => {
@@ -68,6 +174,8 @@ test('ridge recovers a linear mapping despite a feature on a 100x scale (z-score
   }
 
   assert.equal(fitCalibration(), true);
+  assert.equal(isCalibrated(), false);
+  assert.equal(acceptPendingCalibration(assessment({ accepted: true })), true);
   assert.equal(isCalibrated(), true);
 
   // Predictions on the training points should recover the targets with small error.
@@ -103,6 +211,7 @@ test('predictNorm flags extrapolation instead of passing clamped border points a
     addCalibrationSample(features, target);
   }
   assert.equal(fitCalibration(), true);
+  assert.equal(acceptPendingCalibration(assessment({ accepted: true })), true);
 
   // In-range features → prediction inside [0,1], no extrapolation flag.
   const inside = predictNorm(Array.from({ length: GAZE_FEATURE_LENGTH }, () => 0.5));

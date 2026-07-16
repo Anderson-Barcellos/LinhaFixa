@@ -12,6 +12,7 @@
 // gaze. Head movement and lighting changes degrade it; recalibration fixes drift.
 
 import { GAZE_FEATURE_LENGTH } from './faceTracking';
+import type { CalibrationAssessment } from './calibrationValidity';
 import type { CalibrationSignature } from './ocularSignalContract';
 
 interface Sample {
@@ -23,39 +24,43 @@ interface Sample {
 // a few hundred samples.
 const LAMBDA = 1e-3;
 
+interface CalibrationModel {
+  weightsX: number[];
+  weightsY: number[];
+  featureMean: number[];
+  featureStd: number[];
+}
+
+export interface GazePrediction {
+  x: number;
+  y: number;
+  extrapolated: boolean;
+}
+
 let samples: Sample[] = [];
-let weightsX: number[] | null = null; // length GAZE_FEATURE_LENGTH + 1 (bias first)
-let weightsY: number[] | null = null;
-// Per-feature mean/std captured at fit time. Features are standardized before the ridge
-// solve (and again at prediction) because they live on wildly different scales — iris
-// ratios and blendshapes in [0,1] but head yaw/pitch ×100 — which otherwise mis-conditions
-// the normal equations and makes the uniform ridge penalty meaningless for the large-scale
-// terms. Length GAZE_FEATURE_LENGTH (feature dims only; the bias is not standardized).
-let featureMean: number[] | null = null;
-let featureStd: number[] | null = null;
+let pendingModel: CalibrationModel | null = null;
+let activeModel: CalibrationModel | null = null;
+let calibrationAssessment: CalibrationAssessment | null = null;
 let accuracyDeg: number | null = null; // validation accuracy, for display
 let calibrationSignature: CalibrationSignature | null = null;
 
 export function resetCalibration() {
   samples = [];
-  weightsX = null;
-  weightsY = null;
-  featureMean = null;
-  featureStd = null;
+  pendingModel = null;
+  activeModel = null;
+  calibrationAssessment = null;
   accuracyDeg = null;
   calibrationSignature = null;
 }
 
-// Standardize a raw feature vector with per-feature mean/std (defaulting to the stored
-// model stats, but overridable so fitCalibration can standardize with local stats before
-// committing them to module state). A zero std (a feature that never varied during
-// calibration) maps to 0 so it contributes nothing.
+// Standardize a raw feature vector with the fit-local or model-owned mean/std.
+// A zero std (a feature that never varied during calibration) maps to 0 so it
+// contributes nothing.
 function standardizeFeatures(
   features: number[],
-  mean: number[] | null = featureMean,
-  std: number[] | null = featureStd,
+  mean: number[],
+  std: number[],
 ): number[] {
-  if (!mean || !std) return features.slice();
   return features.map((v, i) => {
     const s = std[i];
     return s > 1e-9 ? (v - mean[i]) / s : 0;
@@ -110,6 +115,7 @@ function solveLinearSystem(A: number[][], B: number[][]): number[][] | null {
 // Fit the ridge-regression models for X and Y from the buffered samples. Returns
 // true on success. Needs enough samples to be meaningful.
 export function fitCalibration(): boolean {
+  pendingModel = null;
   if (samples.length < GAZE_FEATURE_LENGTH + 2) return false;
 
   const d = GAZE_FEATURE_LENGTH + 1; // + bias
@@ -151,17 +157,19 @@ export function fitCalibration(): boolean {
   const sol = solveLinearSystem(A, B);
   if (!sol) return false;
 
-  // Commit standardization stats and weights together, only on success, so a failed
-  // solve never leaves the model in a half-calibrated state.
-  featureMean = mean;
-  featureStd = std;
-  weightsX = sol.map(r => r[0]);
-  weightsY = sol.map(r => r[1]);
+  // Commit standardization stats and weights together to a pending model. It becomes
+  // active only after the independent evidence contract accepts this calibration.
+  pendingModel = {
+    featureMean: mean,
+    featureStd: std,
+    weightsX: sol.map(r => r[0]),
+    weightsY: sol.map(r => r[1]),
+  };
   return true;
 }
 
 export function isCalibrated(): boolean {
-  return weightsX !== null && weightsY !== null;
+  return activeModel !== null && calibrationAssessment?.accepted === true;
 }
 
 // Predict the normalized [0,1] screen position of gaze for a feature vector.
@@ -170,33 +178,67 @@ export function isCalibrated(): boolean {
 // axis: the returned point is clamped for safe display, but a clamped border
 // point is a fabricated position, not a measured one — consumers must not
 // treat it as a valid fixation at the edge.
-export function predictNorm(features: number[]): { x: number; y: number; extrapolated: boolean } | null {
-  if (!weightsX || !weightsY || features.length !== GAZE_FEATURE_LENGTH) return null;
-  const row = [1, ...standardizeFeatures(features)];
+export function predictNorm(features: number[]): GazePrediction | null {
+  return predictWithModel(activeModel, features);
+}
+
+export function predictPendingNorm(features: number[]): GazePrediction | null {
+  return predictWithModel(pendingModel, features);
+}
+
+function predictWithModel(model: CalibrationModel | null, features: number[]): GazePrediction | null {
+  if (!model || features.length !== GAZE_FEATURE_LENGTH) return null;
+  const row = [1, ...standardizeFeatures(features, model.featureMean, model.featureStd)];
   let x = 0, y = 0;
   for (let i = 0; i < row.length; i++) {
-    x += row[i] * weightsX[i];
-    y += row[i] * weightsY[i];
+    x += row[i] * model.weightsX[i];
+    y += row[i] * model.weightsY[i];
   }
   const extrapolated = x < 0 || x > 1 || y < 0 || y > 1;
   const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
   return { x: clamp01(x), y: clamp01(y), extrapolated };
 }
 
-// Store/read the validation accuracy (mean error in degrees) for display in the UI.
-export function setAccuracyDeg(deg: number | null) {
-  accuracyDeg = deg;
+export function acceptPendingCalibration(assessment: CalibrationAssessment): boolean {
+  if (!assessment.accepted || !pendingModel) return false;
+
+  const acceptedAssessment = cloneAssessment(assessment);
+  activeModel = pendingModel;
+  pendingModel = null;
+  calibrationAssessment = acceptedAssessment;
+  calibrationSignature = cloneSignature(acceptedAssessment.signature);
+  accuracyDeg = acceptedAssessment.meanErrorDeg;
+  return true;
 }
+
+export function rejectCalibration(assessment?: CalibrationAssessment | null): void {
+  pendingModel = null;
+  activeModel = null;
+  calibrationAssessment = assessment ? cloneAssessment(assessment) : null;
+  accuracyDeg = null;
+  calibrationSignature = null;
+}
+
+export function getCalibrationAssessment(): CalibrationAssessment | null {
+  return calibrationAssessment ? cloneAssessment(calibrationAssessment) : null;
+}
+
 export function getAccuracyDeg(): number | null {
   return accuracyDeg;
 }
 
-export function setCalibrationSignature(signature: CalibrationSignature | null) {
-  calibrationSignature = signature ? cloneSignature(signature) : null;
-}
-
 export function getCalibrationSignature(): CalibrationSignature | null {
   return calibrationSignature ? cloneSignature(calibrationSignature) : null;
+}
+
+function cloneAssessment(assessment: CalibrationAssessment): CalibrationAssessment {
+  return {
+    ...assessment,
+    reasonCodes: [...assessment.reasonCodes],
+    fitSampleCounts: [...assessment.fitSampleCounts],
+    validationSampleCounts: [...assessment.validationSampleCounts],
+    signature: cloneSignature(assessment.signature),
+  };
 }
 
 function cloneSignature(signature: CalibrationSignature): CalibrationSignature {

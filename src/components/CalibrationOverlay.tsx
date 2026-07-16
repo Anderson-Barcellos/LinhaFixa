@@ -1,8 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLandmarks, estimateHeadPose, getBlinkScore, shouldDropGazeForBlink } from '@/services/faceTracking';
 import {
-  resetCalibration, addCalibrationSample, fitCalibration, predictNorm, setAccuracyDeg, setCalibrationSignature,
+  acceptPendingCalibration,
+  addCalibrationSample,
+  fitCalibration,
+  predictPendingNorm,
+  rejectCalibration,
+  resetCalibration,
 } from '@/services/gazeCalibration';
+import {
+  assessCalibration,
+  type CalibrationAssessment,
+  type CalibrationReasonCode,
+  type CalibrationValidationPointEvidence,
+} from '@/services/calibrationValidity';
 import { interpupillaryPx, setDistanceAnchor, resetDistanceAnchor } from '@/services/viewingGeometry';
 import { attachStream, getFrontCameraStream, stopCameraStream } from '@/services/cameraStream';
 import { setMotionBaseline, stopMotionSensor } from '@/services/motionSensor';
@@ -43,7 +54,16 @@ const MAX_POINT_MS = 2200;      // avoid hanging forever on dropped video frames
 const MIN_SAMPLES_PER_POINT = 12;
 const PX_PER_CM = 37.8;         // CSS reference (~96 dpi); used only for the deg readout
 
-type Phase = 'warmup' | 'calibrating' | 'validating' | 'done' | 'unavailable';
+const CALIBRATION_REASON_TEXT: Record<CalibrationReasonCode, string> = {
+  'calibration-insufficient-target-samples': 'Não houve amostras suficientes em todos os pontos.',
+  'calibration-missing-fit-points': 'A grade de calibração não foi concluída.',
+  'calibration-missing-validation-points': 'A verificação independente não foi concluída.',
+  'calibration-high-mean-error': 'O erro médio ficou acima do limite de 5°.',
+  'calibration-high-p95-error': 'A variação do erro ficou acima do limite de 8°.',
+  'calibration-extrapolated-validation': 'O modelo extrapolou fora da região calibrada.',
+};
+
+type Phase = 'warmup' | 'calibrating' | 'validating' | 'done' | 'rejected' | 'unavailable';
 
 export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keepCameraOnClose = false, surfaceRect, compactChrome = false }: CalibrationOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -51,6 +71,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   const [mode, setMode] = useState<'calib' | 'valid'>('calib');
   const [index, setIndex] = useState(0);
   const [accuracyDeg, setAccuracy] = useState<number | null>(null);
+  const [rejection, setRejection] = useState<{
+    assessment: CalibrationAssessment;
+    failedPointHadNoSamples: boolean;
+  } | null>(null);
 
   // Transient per-point state lives in refs so the rAF loop is not re-created.
   const runningRef = useRef(true);
@@ -59,11 +83,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   const idxRef = useRef(0);
   const pointStartRef = useRef(0);
   const collectedRef = useRef(0);
-  const validErrorsRef = useRef<number[]>([]);
-  // Per-point accumulator of PER-SAMPLE prediction errors (deg). Averaging errors —
-  // not predictions — keeps the reported accuracy honest: averaging predictions first
-  // would cancel noise and understate the real per-frame error.
-  const validAccumRef = useRef<{ errSum: number; n: number }>({ errSum: 0, n: 0 });
+  const fitSampleCountsRef = useRef<number[]>(Array(CALIB_POINTS.length).fill(0));
+  const validationEvidenceRef = useRef<CalibrationValidationPointEvidence[]>(
+    createEmptyValidationEvidence(),
+  );
   // IPD (px) samples gathered across the routine; their median anchors distance estimation.
   const ipdSamplesRef = useRef<number[]>([]);
   const posturalSamplesRef = useRef<PosturalSample[]>([]);
@@ -83,7 +106,44 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     const startPoint = () => {
       pointStartRef.current = performance.now();
       collectedRef.current = 0;
-      validAccumRef.current = { errSum: 0, n: 0 };
+    };
+
+    const buildSignature = () => {
+      const video = videoRef.current;
+      const trackSettings = ((video?.srcObject as MediaStream | null)?.getVideoTracks()[0])?.getSettings?.();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      return {
+        viewportWidth,
+        viewportHeight,
+        orientation: currentOrientation(viewportWidth, viewportHeight),
+        devicePixelRatio: window.devicePixelRatio || 1,
+        surfaceRect: activeSurfaceRect(),
+        videoWidth: video?.videoWidth || trackSettings?.width,
+        videoHeight: video?.videoHeight || trackSettings?.height,
+        trackFrameRate: trackSettings?.frameRate,
+      };
+    };
+
+    const buildAssessment = (): CalibrationAssessment => {
+      const signature = buildSignature();
+      const createdAt = Date.now();
+      return assessCalibration({
+        id: `calibration-${createdAt}`,
+        createdAt,
+        fitSampleCounts: fitSampleCountsRef.current,
+        validationPoints: validationEvidenceRef.current,
+        signature,
+      });
+    };
+
+    const rejectAttempt = (assessment: CalibrationAssessment, failedPointHadNoSamples: boolean) => {
+      rejectCalibration(assessment);
+      resetDistanceAnchor();
+      resetPosturalBaseline();
+      setAccuracy(null);
+      setRejection({ assessment, failedPointHadNoSamples });
+      setPhaseBoth('rejected');
     };
 
     const setup = async () => {
@@ -92,6 +152,9 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
       resetPosturalBaseline();
       ipdSamplesRef.current = [];
       posturalSamplesRef.current = [];
+      fitSampleCountsRef.current = Array(CALIB_POINTS.length).fill(0);
+      validationEvidenceRef.current = createEmptyValidationEvidence();
+      setRejection(null);
       await initFaceTracking();
       if (!isFaceTrackingActive()) {
         setPhaseBoth('unavailable');
@@ -147,8 +210,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
             if (ipd) ipdSamplesRef.current.push(ipd);
             if (phaseNow === 'calibrating') {
               addCalibrationSample(feat, targetAbs);
+              fitSampleCountsRef.current[idxRef.current] += 1;
+              collectedRef.current += 1;
             } else {
-              const pred = predictNorm(feat);
+              const pred = predictPendingNorm(feat);
               if (pred) {
                 // pred and targetAbs are both viewport-normalized (the model is
                 // trained on surface targets projected to viewport coords).
@@ -156,22 +221,22 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
                   (pred.x - targetAbs.x) * window.innerWidth,
                   (pred.y - targetAbs.y) * window.innerHeight
                 );
-                validAccumRef.current.errSum += errPx / pxPerDeg;
-                validAccumRef.current.n += 1;
+                const evidence = validationEvidenceRef.current[idxRef.current];
+                evidence.errorsDeg.push(errPx / pxPerDeg);
+                evidence.sampleCount += 1;
+                if (pred.extrapolated) evidence.extrapolatedCount += 1;
+                collectedRef.current += 1;
               }
             }
-            collectedRef.current += 1;
           }
 
           const collectionElapsed = elapsed - SETTLE_MS;
           const hasEnoughSamples = collectedRef.current >= MIN_SAMPLES_PER_POINT && collectionElapsed >= MIN_POINT_MS;
-          const timedOutWithSignal = collectedRef.current > 0 && collectionElapsed >= MAX_POINT_MS;
+          const timedOut = collectionElapsed >= MAX_POINT_MS;
 
-          if (hasEnoughSamples || timedOutWithSignal) {
-            // Close out validation point: record its mean PER-SAMPLE error (deg).
-            if (phaseNow === 'validating' && validAccumRef.current.n > 0) {
-              validErrorsRef.current.push(validAccumRef.current.errSum / validAccumRef.current.n);
-            }
+          if (timedOut && collectedRef.current < MIN_SAMPLES_PER_POINT) {
+            rejectAttempt(buildAssessment(), collectedRef.current === 0);
+          } else if (hasEnoughSamples) {
 
             const nextIdx = idxRef.current + 1;
             if (nextIdx < points.length) {
@@ -183,42 +248,30 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
               if (!ok) {
                 setPhaseBoth('unavailable');
               } else {
-                validErrorsRef.current = [];
                 setPhaseBoth('validating');
                 setModeBoth('valid');
                 setIdxBoth(0);
                 startPoint();
               }
             } else {
-              // Validation finished: compute and store accuracy. The loop keeps
-              // idling (rescheduled below) so "Recalibrar" can resume it.
-              const errs = validErrorsRef.current;
-              const meanDeg = errs.length ? errs.reduce((a, b) => a + b, 0) / errs.length : null;
-              setAccuracyDeg(meanDeg);
-              setAccuracy(meanDeg);
-              // Anchor distance estimation: median IPD (robust to blinks) at the profile distance.
-              const ipds = ipdSamplesRef.current.slice().sort((a, b) => a - b);
-              if (ipds.length) {
-                const medianIpd = ipds[Math.floor(ipds.length / 2)];
-                setDistanceAnchor({ distanceCm: viewingDistanceCm, ipdPx: medianIpd });
+              const assessment = buildAssessment();
+              if (acceptPendingCalibration(assessment)) {
+                setAccuracy(assessment.meanErrorDeg);
+                // Anchor distance estimation only after the calibration model and
+                // its evidence have been accepted in the same transaction.
+                const ipds = ipdSamplesRef.current.slice().sort((a, b) => a - b);
+                if (ipds.length) {
+                  const medianIpd = ipds[Math.floor(ipds.length / 2)];
+                  setDistanceAnchor({ distanceCm: viewingDistanceCm, ipdPx: medianIpd });
+                }
+                setPosturalBaseline(summarizePosturalBaseline(posturalSamplesRef.current));
+                setMotionBaseline('calibration');
+                setPhaseBoth('done');
+              } else if (!assessment.accepted) {
+                rejectAttempt(assessment, false);
+              } else {
+                setPhaseBoth('unavailable');
               }
-              const trackSettings = ((video.srcObject as MediaStream | null)?.getVideoTracks()[0])?.getSettings?.();
-              const viewportWidth = window.innerWidth;
-              const viewportHeight = window.innerHeight;
-              const surface = activeSurfaceRect();
-              setCalibrationSignature({
-                viewportWidth,
-                viewportHeight,
-                orientation: currentOrientation(viewportWidth, viewportHeight),
-                devicePixelRatio: window.devicePixelRatio || 1,
-                surfaceRect: surface,
-                videoWidth: video.videoWidth || trackSettings?.width,
-                videoHeight: video.videoHeight || trackSettings?.height,
-                trackFrameRate: trackSettings?.frameRate,
-              });
-              setPosturalBaseline(summarizePosturalBaseline(posturalSamplesRef.current));
-              setMotionBaseline('calibration');
-              setPhaseBoth('done');
             }
           }
         }
@@ -245,14 +298,15 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     resetPosturalBaseline();
     ipdSamplesRef.current = [];
     posturalSamplesRef.current = [];
-    validErrorsRef.current = [];
+    fitSampleCountsRef.current = Array(CALIB_POINTS.length).fill(0);
+    validationEvidenceRef.current = createEmptyValidationEvidence();
     phaseRef.current = 'calibrating';
     modeRef.current = 'calib';
     idxRef.current = 0;
     pointStartRef.current = performance.now();
     collectedRef.current = 0;
-    validAccumRef.current = { errSum: 0, n: 0 };
     setAccuracy(null);
+    setRejection(null);
     setMode('calib');
     setIndex(0);
     setPhase('calibrating');
@@ -381,6 +435,25 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
         </div>
       )}
 
+      {phase === 'rejected' && rejection && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-white text-center p-6">
+          <h2 className="text-3xl font-bold mb-4">Calibração não aceita</h2>
+          <p className="text-slate-300 max-w-md mb-8">
+            {rejection.failedPointHadNoSamples
+              ? 'Rosto/olhos não foram detectados neste ponto.'
+              : CALIBRATION_REASON_TEXT[rejection.assessment.reasonCodes[0]]}
+          </p>
+          <div className="flex flex-col sm:flex-row gap-4">
+            <button onClick={restart} className="px-10 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-lg font-bold">
+              Tentar novamente
+            </button>
+            <button onClick={onSkip} className="px-10 py-4 bg-slate-700 hover:bg-slate-600 text-white rounded-2xl text-lg font-bold">
+              Continuar sem calibração
+            </button>
+          </div>
+        </div>
+      )}
+
       {(phase === 'calibrating' || phase === 'validating') && (
         <button onClick={onSkip} className="absolute bottom-3 md:bottom-6 right-4 md:right-6 px-5 py-2 text-slate-400 hover:text-slate-200 text-sm">
           Pular calibração
@@ -428,4 +501,12 @@ function targetToViewportNorm(target: { x: number; y: number }, rect: SurfaceRec
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function createEmptyValidationEvidence(): CalibrationValidationPointEvidence[] {
+  return Array.from({ length: VALID_POINTS.length }, () => ({
+    sampleCount: 0,
+    errorsDeg: [],
+    extrapolatedCount: 0,
+  }));
 }
