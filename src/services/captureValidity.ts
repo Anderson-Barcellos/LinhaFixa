@@ -70,18 +70,19 @@ export function countTrackingGaps(
   samples: GazeSample[],
   thresholdMs: number = CAPTURE_VALIDITY_THRESHOLDS.trackingGapMs,
 ): number {
-  const finiteTimestamps = samples
-    .map(sample => sample.t)
-    .filter(Number.isFinite)
-    .sort((a, b) => a - b);
-  const invalidTimestampCount = samples.length - finiteTimestamps.length;
-  const safeThreshold = Number.isFinite(thresholdMs) && thresholdMs >= 0
-    ? thresholdMs
-    : CAPTURE_VALIDITY_THRESHOLDS.trackingGapMs;
+  if (
+    !Number.isFinite(thresholdMs)
+    || thresholdMs < 0
+    || samples.some(sample => !Number.isFinite(sample.t) || sample.t < 0)
+  ) {
+    return -1;
+  }
 
-  let gaps = invalidTimestampCount;
-  for (let index = 1; index < finiteTimestamps.length; index += 1) {
-    if (finiteTimestamps[index] - finiteTimestamps[index - 1] > safeThreshold) gaps += 1;
+  const timestamps = samples.map(sample => sample.t).sort((a, b) => a - b);
+
+  let gaps = 0;
+  for (let index = 1; index < timestamps.length; index += 1) {
+    if (timestamps[index] - timestamps[index - 1] > thresholdMs) gaps += 1;
   }
   return gaps;
 }

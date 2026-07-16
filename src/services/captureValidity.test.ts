@@ -110,6 +110,40 @@ test('countTrackingGaps sorts a copy and counts only deltas strictly above the t
   assert.equal(countTrackingGaps(samples, 201), 0);
 });
 
+test('countTrackingGaps preserves invalid timestamp evidence as a finite invalid sentinel', () => {
+  for (const invalidTimestamp of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+    const gapCount = countTrackingGaps([
+      { t: 0, h: 0.5, v: 0.5 },
+      { t: invalidTimestamp, h: 0.5, v: 0.5 },
+    ]);
+
+    assert.equal(gapCount, -1, `timestamp ${String(invalidTimestamp)}`);
+    const snapshot = assessCaptureValidity(validInput({ gapCount }));
+    assert.equal(snapshot.grade, 'invalid');
+    assert.deepEqual(snapshot.reasonCodes, ['capture-tracking-gap']);
+    assert.equal(snapshot.gapCount, 0);
+    assert.equal(Number.isFinite(snapshot.gapCount), true);
+  }
+});
+
+test('countTrackingGaps preserves invalid threshold evidence as a finite invalid sentinel', () => {
+  const samples: GazeSample[] = [
+    { t: 0, h: 0.5, v: 0.5 },
+    { t: 201, h: 0.5, v: 0.5 },
+  ];
+
+  for (const invalidThreshold of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+    const gapCount = countTrackingGaps(samples, invalidThreshold);
+
+    assert.equal(gapCount, -1, `threshold ${String(invalidThreshold)}`);
+    const snapshot = assessCaptureValidity(validInput({ gapCount }));
+    assert.equal(snapshot.grade, 'invalid');
+    assert.deepEqual(snapshot.reasonCodes, ['capture-tracking-gap']);
+    assert.equal(snapshot.gapCount, 0);
+    assert.equal(Number.isFinite(snapshot.gapCount), true);
+  }
+});
+
 test('assessCaptureValidity records both page interruption reasons as invalid', () => {
   for (const interruption of ['page-hidden-during-capture', 'pagehide-during-capture'] as const) {
     const snapshot = assessCaptureValidity(validInput({ interruption }));
