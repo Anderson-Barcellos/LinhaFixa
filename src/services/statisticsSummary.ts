@@ -1,4 +1,10 @@
-import { SessionResult, SymptomRating, ValidationCapture } from '@/types';
+import {
+  SessionResult,
+  SymptomRating,
+  ValidationCapture,
+  type PreTestContext,
+  type ValidationConditions,
+} from '@/types';
 import { PosturalStabilityMetrics } from '@/exercises/posturalStability';
 import { summarizeSaccadeSignalQuality, type SaccadeSignalQuality } from '@/services/signalQuality';
 import {
@@ -48,6 +54,20 @@ export interface DiagnosticInsightRecord {
   meanFixationMs: number | null;
   samplesValid: number;
   coverage: number | null;
+  calibrated: boolean;
+  sampleCount: number;
+  signalQuality: string;
+  signalSource: CaptureValiditySnapshot['signalSource'];
+  sampleRateHz: number | null;
+  posturalLabel: string;
+  cervicalStability: number;
+  posturalBaselineApplied: boolean | null;
+  motionStatus: PosturalStabilityMetrics['motionStatus'] | null;
+  motionDeltaDeg: number | null;
+  horizontalRange: number;
+  verticalRange: number;
+  conditions: ValidationConditions;
+  context: PreTestContext | null;
   comparisonExclusionReason: 'missing-comparison-context' | null;
   validity: Pick<
     CaptureValiditySnapshot,
@@ -78,6 +98,10 @@ export interface StatisticsSummary {
       comparable: number;
       exploratory: number;
       invalid: number;
+      trendEligible: number;
+      audit: number;
+      missingComparisonContext: number;
+      total: number;
     };
   };
   sections: {
@@ -114,7 +138,7 @@ export function buildStatisticsSummary(
   ) || null;
   const ocularPartition = partitionOcularReadingSeries(buildOcularReadingSeries(sessions, captures));
   const comparableOcularPoints = ocularPartition.comparableGroups.flatMap(group => group.points);
-  const auditGrades = ocularPartition.audit.map(point => point.validity.grade);
+  const allOcularPoints = [...comparableOcularPoints, ...ocularPartition.audit];
 
   return {
     overview: {
@@ -126,9 +150,15 @@ export function buildStatisticsSummary(
       wellbeingDelta,
       latestTimestamp,
       ocularValidity: {
-        comparable: comparableOcularPoints.length,
-        exploratory: auditGrades.filter(grade => grade === 'exploratory').length,
-        invalid: auditGrades.filter(grade => grade === 'invalid').length,
+        comparable: allOcularPoints.filter(point => point.validity.grade === 'comparable').length,
+        exploratory: allOcularPoints.filter(point => point.validity.grade === 'exploratory').length,
+        invalid: allOcularPoints.filter(point => point.validity.grade === 'invalid').length,
+        trendEligible: comparableOcularPoints.length,
+        audit: ocularPartition.audit.length,
+        missingComparisonContext: ocularPartition.audit.filter(point => (
+          point.validity.grade === 'comparable' && point.comparisonKey === null
+        )).length,
+        total: allOcularPoints.length,
       },
     },
     sections: {
@@ -269,17 +299,31 @@ export function resolveSelectedOcularGroupKey(
   return newestKey;
 }
 
-export function buildDiagnosticInsightPayload(partition: OcularSeriesPartition): {
+export function buildDiagnosticInsightPayload(
+  partition: OcularSeriesPartition,
+  captures: ValidationCapture[],
+): {
   comparableDiagnosticCaptures: DiagnosticInsightRecord[];
   auditDiagnosticCaptures: DiagnosticInsightRecord[];
 } {
-  const comparable = partition.comparableGroups
-    .flatMap(group => group.points)
-    .filter(point => point.sourceKind === 'capture')
-    .map(diagnosticInsightRecord);
-  const audit = partition.audit
-    .filter(point => point.sourceKind === 'capture')
-    .map(diagnosticInsightRecord);
+  const captureById = new Map(captures.map(capture => [capture.id, capture]));
+  const newestGlobal = [
+    ...partition.comparableGroups.flatMap(group => group.points.map(point => ({
+      point,
+      bucket: 'comparable' as const,
+    }))),
+    ...partition.audit.map(point => ({ point, bucket: 'audit' as const })),
+  ]
+    .filter(item => item.point.sourceKind === 'capture' && captureById.has(item.point.id))
+    .sort((a, b) => b.point.timestamp - a.point.timestamp)
+    .slice(0, 8);
+
+  const comparable = newestGlobal
+    .filter(item => item.bucket === 'comparable')
+    .map(item => diagnosticInsightRecord(item.point, captureById.get(item.point.id)!));
+  const audit = newestGlobal
+    .filter(item => item.bucket === 'audit')
+    .map(item => diagnosticInsightRecord(item.point, captureById.get(item.point.id)!));
   return {
     comparableDiagnosticCaptures: comparable,
     auditDiagnosticCaptures: audit,
@@ -452,15 +496,31 @@ function comparisonKey(
   orientation: OcularReadingPoint['orientation'],
 ): string | null {
   if (
-    orientation === null
-    || validity.signalSource === null
-    || validity.temporalTier === 'insufficient-temporal'
+    !isOrientation(orientation)
+    || !isComparableTemporalTier(validity.temporalTier)
+    || !isComparableSignalSource(validity.signalSource)
   ) return null;
   return `${orientation}|${validity.temporalTier}|${validity.signalSource}`;
 }
 
 function normalizeOrientation(value: unknown): OcularReadingPoint['orientation'] {
-  return value === 'portrait' || value === 'landscape' ? value : null;
+  return isOrientation(value) ? value : null;
+}
+
+function isOrientation(value: unknown): value is NonNullable<OcularReadingPoint['orientation']> {
+  return value === 'portrait' || value === 'landscape';
+}
+
+function isComparableTemporalTier(
+  value: unknown,
+): value is Exclude<CaptureValiditySnapshot['temporalTier'], 'insufficient-temporal'> {
+  return value === 'high-temporal' || value === 'coarse-temporal';
+}
+
+function isComparableSignalSource(
+  value: unknown,
+): value is 'calibrated-mediapipe' | 'raw-mediapipe' {
+  return value === 'calibrated-mediapipe' || value === 'raw-mediapipe';
 }
 
 function comparisonLabel(point: OcularReadingPoint): string {
@@ -478,7 +538,10 @@ function comparisonLabel(point: OcularReadingPoint): string {
   return `${orientation} · ${tier} · ${source}`;
 }
 
-function diagnosticInsightRecord(point: OcularReadingPoint): DiagnosticInsightRecord {
+function diagnosticInsightRecord(
+  point: OcularReadingPoint,
+  capture: ValidationCapture,
+): DiagnosticInsightRecord {
   return {
     id: point.id,
     date: new Date(point.timestamp).toISOString(),
@@ -488,7 +551,21 @@ function diagnosticInsightRecord(point: OcularReadingPoint): DiagnosticInsightRe
     lineReturns: point.lineReturns,
     meanFixationMs: point.meanFixationMs,
     samplesValid: point.samplesValid,
-    coverage: point.coverage,
+    coverage: capture.coverage,
+    calibrated: capture.calibrated,
+    sampleCount: capture.sampleCount,
+    signalQuality: point.signalQuality.label,
+    signalSource: capture.metrics.signalSource ?? point.validity.signalSource,
+    sampleRateHz: capture.metrics.sampleRateHz ?? point.validity.sampleRateHz,
+    posturalLabel: capture.postural.label,
+    cervicalStability: capture.postural.cervicalStability,
+    posturalBaselineApplied: capture.postural.baselineApplied ?? null,
+    motionStatus: capture.postural.motionStatus ?? null,
+    motionDeltaDeg: capture.postural.motionDeltaDeg ?? null,
+    horizontalRange: capture.axis.hRange,
+    verticalRange: capture.axis.vRange,
+    conditions: { ...capture.conditions },
+    context: capture.context ? { ...capture.context } : null,
     comparisonExclusionReason: point.validity.grade === 'comparable' && point.comparisonKey === null
       ? 'missing-comparison-context'
       : null,

@@ -140,7 +140,7 @@ export function DashboardScreen() {
               insight: s.insight,
             })),
             sessions: summaryPayload,
-            ...buildDiagnosticInsightPayload(ocularPartition),
+            ...buildDiagnosticInsightPayload(ocularPartition, captures),
           }
         })
       });

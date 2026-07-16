@@ -397,6 +397,9 @@ function diagnosticCapture(
       rotationRange: 2,
       highMovement: false,
       confidence: 'high',
+      baselineApplied: true,
+      motionStatus: 'stable',
+      motionDeltaDeg: 1.5,
       label: 'Postura estável',
       insight: 'Postura estável.',
     },
@@ -444,6 +447,67 @@ test('routes comparable captures with missing orientation to audit instead of in
   assert.equal(point.comparisonKey, null);
   assert.equal(partition.comparableGroups.length, 0);
   assert.deepEqual(partition.audit.map(item => item.id), ['missing-orientation']);
+});
+
+test('comparison keys fail closed for missing, unknown or insufficient runtime enum values', () => {
+  const cases: Array<{ name: string; capture: ValidationCapture }> = [];
+  const missingOrientation = diagnosticCapture('missing-orientation-runtime', 1, validity('comparable'));
+  delete missingOrientation.orientation;
+  cases.push({ name: 'missing orientation', capture: missingOrientation });
+
+  const unknownOrientation = diagnosticCapture('unknown-orientation', 2, validity('comparable'));
+  unknownOrientation.orientation = 'square' as ValidationCapture['orientation'];
+  cases.push({ name: 'unknown orientation', capture: unknownOrientation });
+
+  const nullOrientation = diagnosticCapture('null-orientation', 3, validity('comparable'));
+  nullOrientation.orientation = null as unknown as ValidationCapture['orientation'];
+  cases.push({ name: 'null orientation', capture: nullOrientation });
+
+  for (const [name, tier] of [
+    ['missing tier', undefined],
+    ['null tier', null],
+    ['unknown tier', 'ultra-temporal'],
+    ['insufficient tier', 'insufficient-temporal'],
+  ] as const) {
+    cases.push({
+      name,
+      capture: diagnosticCapture(name, cases.length + 3, validity('comparable', {
+        temporalTier: tier as CaptureValiditySnapshot['temporalTier'],
+      })),
+    });
+  }
+
+  for (const [name, source] of [
+    ['missing source', undefined],
+    ['null source', null],
+    ['unknown source', 'synthetic-source'],
+    ['unavailable source', 'unavailable'],
+  ] as const) {
+    cases.push({
+      name,
+      capture: diagnosticCapture(name, cases.length + 3, validity('comparable', {
+        signalSource: source as CaptureValiditySnapshot['signalSource'],
+      })),
+    });
+  }
+
+  for (const item of cases) {
+    const point = buildOcularReadingSeries([], [item.capture])[0];
+    const partition = partitionOcularReadingSeries([point]);
+    assert.equal(point.comparisonKey, null, item.name);
+    assert.equal(partition.comparableGroups.length, 0, item.name);
+    assert.deepEqual(partition.audit.map(audit => audit.id), [item.capture.id], item.name);
+  }
+
+  const allowedRawCoarse = diagnosticCapture('allowed-raw-coarse', 100, validity('exploratory', {
+    signalSource: 'raw-mediapipe',
+    temporalTier: 'coarse-temporal',
+    sampleRateHz: 30,
+  }));
+  assert.equal(
+    buildOcularReadingSeries([], [allowedRawCoarse])[0].comparisonKey,
+    'portrait|coarse-temporal|raw-mediapipe',
+  );
 });
 
 test('treats reading sessions without a validity snapshot as exploratory legacy audit records', () => {
@@ -499,6 +563,10 @@ test('statistics aggregate ocular dynamics only from comparable points and prese
   assert.equal(summary.overview.ocularValidity.comparable, 1);
   assert.equal(summary.overview.ocularValidity.exploratory, 1);
   assert.equal(summary.overview.ocularValidity.invalid, 1);
+  assert.equal(summary.overview.ocularValidity.trendEligible, 1);
+  assert.equal(summary.overview.ocularValidity.audit, 2);
+  assert.equal(summary.overview.ocularValidity.missingComparisonContext, 0);
+  assert.equal(summary.overview.ocularValidity.total, 3);
   assert.match(summary.sections.diagnostics.insight, /1 comparável/);
   assert.match(summary.sections.diagnostics.insight, /2 para auditoria/);
 });
@@ -508,18 +576,78 @@ test('builds separated AI diagnostic arrays without a combined trend payload', (
   const audit = diagnosticCapture('audit', 200, validity('exploratory', {
     reasonCodes: ['capture-source-inconsistent'],
     selectedSourceRatio: 0.75,
-  }));
+  }), 'portrait', null);
   const partition = partitionOcularReadingSeries(buildOcularReadingSeries([], [comparable, audit]));
-  const payload = buildDiagnosticInsightPayload(partition);
+  comparable.context = { venvanseTakenAt: '08:00', sleepHours: 7, mood: 4, feeling: 4 };
+  comparable.conditions.note = 'ambiente controlado';
+  const payload = buildDiagnosticInsightPayload(partition, [comparable, audit]);
 
   assert.deepEqual(Object.keys(payload).sort(), ['auditDiagnosticCaptures', 'comparableDiagnosticCaptures']);
   assert.equal(payload.comparableDiagnosticCaptures[0].validity.grade, 'comparable');
   assert.equal(payload.comparableDiagnosticCaptures[0].validity.temporalTier, 'high-temporal');
   assert.equal(payload.comparableDiagnosticCaptures[0].validity.selectedSourceRatio, 0.96);
   assert.equal(payload.comparableDiagnosticCaptures[0].validity.durationMs, 20_000);
+  assert.equal(payload.comparableDiagnosticCaptures[0].posturalLabel, 'Postura estável');
+  assert.equal(payload.comparableDiagnosticCaptures[0].cervicalStability, 90);
+  assert.equal(payload.comparableDiagnosticCaptures[0].posturalBaselineApplied, true);
+  assert.equal(payload.comparableDiagnosticCaptures[0].motionStatus, 'stable');
+  assert.equal(payload.comparableDiagnosticCaptures[0].motionDeltaDeg, 1.5);
+  assert.equal(payload.comparableDiagnosticCaptures[0].horizontalRange, 0.4);
+  assert.equal(payload.comparableDiagnosticCaptures[0].verticalRange, 0.1);
+  assert.deepEqual(payload.comparableDiagnosticCaptures[0].conditions, comparable.conditions);
+  assert.deepEqual(payload.comparableDiagnosticCaptures[0].context, comparable.context);
+  assert.notEqual(payload.comparableDiagnosticCaptures[0].conditions, comparable.conditions);
+  assert.notEqual(payload.comparableDiagnosticCaptures[0].context, comparable.context);
   assert.deepEqual(payload.auditDiagnosticCaptures[0].validity.reasonCodes, ['capture-source-inconsistent']);
+  assert.equal(payload.auditDiagnosticCaptures[0].meanFixationMs, null);
   assert.equal(payload.auditDiagnosticCaptures[0].comparisonExclusionReason, null);
   assert.equal('diagnosticCaptures' in payload, false);
+});
+
+test('limits the separated AI payload to the eight newest captures globally', () => {
+  const captures = Array.from({ length: 10 }, (_, index) => {
+    const ordinal = index + 1;
+    return diagnosticCapture(
+      `capture-${ordinal}`,
+      ordinal * 100,
+      validity(ordinal % 2 === 0 ? 'comparable' : 'exploratory'),
+      ordinal % 3 === 0 ? 'landscape' : 'portrait',
+    );
+  });
+  const partition = partitionOcularReadingSeries(buildOcularReadingSeries([], captures));
+  const payload = buildDiagnosticInsightPayload(partition, captures);
+  const comparableIds = payload.comparableDiagnosticCaptures.map(item => item.id);
+  const auditIds = payload.auditDiagnosticCaptures.map(item => item.id);
+
+  assert.equal(comparableIds.length + auditIds.length, 8);
+  assert.deepEqual([...comparableIds, ...auditIds].sort(), [
+    'capture-10', 'capture-3', 'capture-4', 'capture-5',
+    'capture-6', 'capture-7', 'capture-8', 'capture-9',
+  ]);
+  assert.deepEqual(comparableIds, ['capture-10', 'capture-8', 'capture-6', 'capture-4']);
+  assert.deepEqual(auditIds, ['capture-9', 'capture-7', 'capture-5', 'capture-3']);
+});
+
+test('ocular validity counts reconcile grade, trend eligibility and audit exclusion', () => {
+  const missingContext = diagnosticCapture('comparable-missing-context', 100, validity('comparable'));
+  delete missingContext.orientation;
+  const summary = buildStatisticsSummary([], [missingContext]);
+
+  assert.deepEqual(summary.overview.ocularValidity, {
+    comparable: 1,
+    exploratory: 0,
+    invalid: 0,
+    trendEligible: 0,
+    audit: 1,
+    missingComparisonContext: 1,
+    total: 1,
+  });
+  assert.equal(
+    summary.overview.ocularValidity.comparable
+      + summary.overview.ocularValidity.exploratory
+      + summary.overview.ocularValidity.invalid,
+    summary.overview.ocularValidity.total,
+  );
 });
 
 test('keeps a valid group selection and otherwise falls back to the group with the newest point', () => {
