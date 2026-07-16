@@ -9,17 +9,12 @@ import { PosturalStabilityMetrics } from '@/exercises/posturalStability';
 import { summarizeSaccadeSignalQuality, type SaccadeSignalQuality } from '@/services/signalQuality';
 import {
   captureValidityOrLegacy,
-  classifyTemporalTier,
+  validatePersistedCaptureValidityForTrend,
+  type PersistedValidityTrendExclusionReason,
   type CaptureValiditySnapshot,
 } from '@/services/captureValidity';
 
-export type TrendExclusionReason =
-  | 'unsupported-validity-contract'
-  | 'malformed-validity-snapshot'
-  | 'validity-grade-not-comparable'
-  | 'validity-contract-contradiction'
-  | 'temporal-tier-not-high'
-  | 'signal-source-not-calibrated'
+export type TrendExclusionReason = PersistedValidityTrendExclusionReason
   | 'missing-comparison-context';
 
 export interface OcularReadingPoint {
@@ -550,38 +545,8 @@ function trendEligibility(
   validity: CaptureValiditySnapshot,
   orientation: OcularReadingPoint['orientation'],
 ): { key: string | null; reason: TrendExclusionReason | null } {
-  const runtime = validity as unknown as Record<string, unknown>;
-  if (runtime.contractVersion !== 1) {
-    return { key: null, reason: 'unsupported-validity-contract' };
-  }
-  if (
-    !Array.isArray(runtime.reasonCodes)
-    || !runtime.reasonCodes.every(reason => typeof reason === 'string')
-    || (runtime.assessedAt !== null && (
-      typeof runtime.assessedAt !== 'number'
-      || !Number.isFinite(runtime.assessedAt)
-      || runtime.assessedAt < 0
-    ))
-  ) {
-    return { key: null, reason: 'malformed-validity-snapshot' };
-  }
-  if (runtime.grade !== 'comparable') {
-    return { key: null, reason: 'validity-grade-not-comparable' };
-  }
-  if (
-    runtime.reasonCodes.length !== 0
-    || typeof runtime.sampleRateHz !== 'number'
-    || !Number.isFinite(runtime.sampleRateHz)
-    || classifyTemporalTier(runtime.sampleRateHz) !== runtime.temporalTier
-  ) {
-    return { key: null, reason: 'validity-contract-contradiction' };
-  }
-  if (runtime.temporalTier !== 'high-temporal') {
-    return { key: null, reason: 'temporal-tier-not-high' };
-  }
-  if (runtime.signalSource !== 'calibrated-mediapipe') {
-    return { key: null, reason: 'signal-source-not-calibrated' };
-  }
+  const validation = validatePersistedCaptureValidityForTrend(validity);
+  if (!validation.eligible) return { key: null, reason: validation.reason };
   if (!isOrientation(orientation)) {
     return { key: null, reason: 'missing-comparison-context' };
   }

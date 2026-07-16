@@ -514,7 +514,7 @@ test('trend eligibility fails closed for malformed and unsupported runtime snaps
     ['unsupported version', { contractVersion: 2 }, 'unsupported-validity-contract'],
     ['missing reasons', { reasonCodes: undefined }, 'malformed-validity-snapshot'],
     ['coarse contradiction', { temporalTier: 'coarse-temporal', sampleRateHz: 60 }, 'validity-contract-contradiction'],
-    ['raw comparable', { signalSource: 'raw-mediapipe' }, 'signal-source-not-calibrated'],
+    ['raw comparable', { signalSource: 'raw-mediapipe' }, 'validity-contract-contradiction'],
   ] as const) {
     const capture = diagnosticCapture(name, 200, validity('comparable', overrides as Partial<CaptureValiditySnapshot>));
     const point = buildOcularReadingSeries([], [capture])[0];
@@ -529,6 +529,26 @@ test('trend eligibility requires exact v1 comparable high-temporal calibrated ev
   const point = buildOcularReadingSeries([], [capture])[0];
   assert.equal(point.comparisonKey, 'portrait|high-temporal|calibrated-mediapipe');
   assert.equal(point.comparisonExclusionReason, null);
+});
+
+test('every comparable snapshot contradiction is audited with the canonical derived reason', () => {
+  for (const [name, override] of [
+    ['pagehide', { interruption: 'pagehide-during-capture' }],
+    ['null assessment', { assessedAt: null }],
+    ['short duration', { durationMs: 19_999 }],
+    ['low coverage', { coverage: 79 }],
+    ['low ratio', { selectedSourceRatio: 0.8 }],
+    ['gap', { gapCount: 1 }],
+  ] as const) {
+    const capture = diagnosticCapture(
+      name,
+      100,
+      validity('comparable', override as Partial<CaptureValiditySnapshot>),
+    );
+    const partition = partitionOcularReadingSeries(buildOcularReadingSeries([], [capture]));
+    assert.equal(partition.comparableGroups.length, 0, name);
+    assert.equal(partition.audit[0].comparisonExclusionReason, 'validity-contract-contradiction', name);
+  }
 });
 
 test('treats reading sessions without a validity snapshot as exploratory legacy audit records', () => {

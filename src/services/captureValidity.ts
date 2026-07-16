@@ -20,6 +20,12 @@ export type CaptureValidityReasonCode =
   | CaptureInterruptionReason
   | 'legacy-unassessed';
 
+export type PersistedValidityTrendExclusionReason =
+  | 'unsupported-validity-contract'
+  | 'malformed-validity-snapshot'
+  | 'validity-grade-not-comparable'
+  | 'validity-contract-contradiction';
+
 export const CAPTURE_VALIDITY_THRESHOLDS = Object.freeze({
   minimumDurationMs: 20_000,
   minimumCoveragePercent: 80,
@@ -207,6 +213,45 @@ const REASON_TEXT: Record<CaptureValidityReasonCode, string> = {
   'legacy-unassessed': 'Captura legada sem avaliação de validade',
 };
 
+export function validatePersistedCaptureValidityForTrend(snapshot: unknown): {
+  eligible: boolean;
+  reason: PersistedValidityTrendExclusionReason | null;
+} {
+  if (!snapshot || typeof snapshot !== 'object') {
+    return { eligible: false, reason: 'malformed-validity-snapshot' };
+  }
+  const value = snapshot as Record<string, unknown>;
+  if (value.contractVersion !== 1) {
+    return { eligible: false, reason: 'unsupported-validity-contract' };
+  }
+  if (!persistedValidityShapeIsVerifiable(value)) {
+    return { eligible: false, reason: 'malformed-validity-snapshot' };
+  }
+  if (value.grade !== 'comparable') {
+    return { eligible: false, reason: 'validity-grade-not-comparable' };
+  }
+  const coherent = typeof value.assessedAt === 'number'
+    && Number.isFinite(value.assessedAt)
+    && value.assessedAt >= 0
+    && typeof value.durationMs === 'number'
+    && value.durationMs >= CAPTURE_VALIDITY_THRESHOLDS.minimumDurationMs
+    && typeof value.coverage === 'number'
+    && value.coverage >= CAPTURE_VALIDITY_THRESHOLDS.minimumCoveragePercent
+    && typeof value.selectedSourceRatio === 'number'
+    && value.selectedSourceRatio >= CAPTURE_VALIDITY_THRESHOLDS.minimumSelectedSourceRatio
+    && typeof value.sampleRateHz === 'number'
+    && value.sampleRateHz >= CAPTURE_VALIDITY_THRESHOLDS.highTemporalRateHz
+    && value.temporalTier === 'high-temporal'
+    && classifyTemporalTier(value.sampleRateHz) === value.temporalTier
+    && value.signalSource === 'calibrated-mediapipe'
+    && value.gapCount === 0
+    && value.interruption === null
+    && (value.reasonCodes as unknown[]).length === 0;
+  return coherent
+    ? { eligible: true, reason: null }
+    : { eligible: false, reason: 'validity-contract-contradiction' };
+}
+
 const GRADE_PRESENTATION = {
   comparable: { label: 'Comparável', tone: 'emerald', fallback: 'Captura apta para comparação' },
   exploratory: { label: 'Exploratória', tone: 'amber', fallback: 'Captura disponível apenas para exploração' },
@@ -270,4 +315,46 @@ function isSignalSource(value: unknown): value is NonNullable<SaccadeMetrics['si
   return value === 'calibrated-mediapipe'
     || value === 'raw-mediapipe'
     || value === 'unavailable';
+}
+
+function persistedValidityShapeIsVerifiable(value: Record<string, unknown>): boolean {
+  const reasonCodes = value.reasonCodes;
+  return (value.grade === 'comparable' || value.grade === 'exploratory' || value.grade === 'invalid')
+    && Array.isArray(reasonCodes)
+    && reasonCodes.every(reason => typeof reason === 'string' && reason in REASON_TEXT)
+    && nullableFiniteAtLeast(value.assessedAt, 0)
+    && nullableFiniteAtLeast(value.durationMs, 0)
+    && nullableFiniteInRange(value.coverage, 0, 100)
+    && (value.signalSource === null || isSignalSource(value.signalSource))
+    && nullableFiniteInRange(value.selectedSourceRatio, 0, 1)
+    && nullableFiniteAtLeast(value.sampleRateHz, 0)
+    && (
+      value.temporalTier === 'high-temporal'
+      || value.temporalTier === 'coarse-temporal'
+      || value.temporalTier === 'insufficient-temporal'
+    )
+    && typeof value.gapCount === 'number'
+    && Number.isSafeInteger(value.gapCount)
+    && value.gapCount >= 0
+    && (value.interruption === null || isCaptureInterruptionReason(value.interruption));
+}
+
+function nullableFiniteAtLeast(value: unknown, minimum: number): boolean {
+  return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= minimum);
+}
+
+function nullableFiniteInRange(value: unknown, minimum: number, maximum: number): boolean {
+  return value === null || (
+    typeof value === 'number'
+    && Number.isFinite(value)
+    && value >= minimum
+    && value <= maximum
+  );
+}
+
+function isCaptureInterruptionReason(value: unknown): value is CaptureInterruptionReason {
+  return value === 'page-hidden-during-capture'
+    || value === 'pagehide-during-capture'
+    || value === 'navigation-during-capture'
+    || value === 'camera-stopped-during-capture';
 }

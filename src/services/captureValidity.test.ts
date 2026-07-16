@@ -9,6 +9,7 @@ import {
   describeCaptureValidity,
   describeCaptureValidityContract,
   pageInterruptionReason,
+  validatePersistedCaptureValidityForTrend,
   type CaptureValidityInput,
   type CaptureValidityReasonCode,
   type CaptureValiditySnapshot,
@@ -371,4 +372,47 @@ test('CaptureValiditySnapshot signalSource remains aligned to the real SaccadeMe
     'unavailable',
   ];
   assert.deepEqual(sources, ['calibrated-mediapipe', 'raw-mediapipe', 'unavailable']);
+});
+
+test('persisted comparable v1 validator accepts only internally coherent evidence', () => {
+  const valid = assessCaptureValidity(validInput());
+  assert.deepEqual(validatePersistedCaptureValidityForTrend(valid), { eligible: true, reason: null });
+
+  const cases: Array<[string, Partial<CaptureValiditySnapshot>]> = [
+    ['null assessedAt', { assessedAt: null }],
+    ['short duration', { durationMs: 19_999 }],
+    ['low coverage', { coverage: 79.99 }],
+    ['low selected ratio', { selectedSourceRatio: 0.899 }],
+    ['tracking gap', { gapCount: 1 }],
+    ['pagehide interruption', { interruption: 'pagehide-during-capture' }],
+    ['coarse rate promoted to high tier', { sampleRateHz: 44.99, temporalTier: 'high-temporal' }],
+    ['raw source marked comparable', { signalSource: 'raw-mediapipe' }],
+    ['reasons on comparable grade', { reasonCodes: ['capture-tracking-gap'] }],
+  ];
+  for (const [name, override] of cases) {
+    const snapshot = { ...valid, ...override };
+    const before = JSON.stringify(snapshot);
+    assert.deepEqual(validatePersistedCaptureValidityForTrend(snapshot), {
+      eligible: false,
+      reason: 'validity-contract-contradiction',
+    }, name);
+    assert.equal(JSON.stringify(snapshot), before, `${name} must not mutate`);
+  }
+});
+
+test('persisted validity validator distinguishes unsupported, malformed and non-comparable snapshots', () => {
+  const valid = assessCaptureValidity(validInput());
+  assert.deepEqual(validatePersistedCaptureValidityForTrend({ ...valid, contractVersion: 2 }), {
+    eligible: false,
+    reason: 'unsupported-validity-contract',
+  });
+  assert.deepEqual(validatePersistedCaptureValidityForTrend({ ...valid, reasonCodes: undefined }), {
+    eligible: false,
+    reason: 'malformed-validity-snapshot',
+  });
+  const exploratory = assessCaptureValidity(validInput({ sampleRateHz: 30 }));
+  assert.deepEqual(validatePersistedCaptureValidityForTrend(exploratory), {
+    eligible: false,
+    reason: 'validity-grade-not-comparable',
+  });
 });
