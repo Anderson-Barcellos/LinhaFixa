@@ -69,6 +69,8 @@ test('validateSaccadeDetector matches every jump on a clean following run', () =
   assert.equal(metrics.falsePositivesPerMin, 0);
   // Gaze steps one DT after (t - 160) crosses the switch; detector tStart is the
   // sample before the step, so latency lands within [gazeLatency - DT, gazeLatency + DT].
+  assert.ok(metrics.medianLatencyMs !== null);
+  assert.ok(metrics.meanAmplitudeGain !== null);
   assert.ok(metrics.medianLatencyMs >= 160 - DT && metrics.medianLatencyMs <= 160 + DT,
     `median latency ${metrics.medianLatencyMs} outside expected window`);
   assert.ok(Math.abs(metrics.meanAmplitudeGain - 1) < 0.05);
@@ -91,6 +93,9 @@ test('validateSaccadeDetector reports zero detection when gaze never responds', 
   assert.equal(metrics.matchedJumps, 0);
   assert.equal(metrics.detectionRate, 0);
   assert.equal(metrics.falsePositives, 0);
+  assert.equal(metrics.medianLatencyMs, null);
+  assert.equal(metrics.latencyIqrMs, null);
+  assert.equal(metrics.meanAmplitudeGain, null);
 });
 
 test('validateSaccadeDetector counts spurious gaze movement as false positives', () => {
@@ -118,8 +123,16 @@ test('validateSaccadeDetector reports unavailable on insufficient data', () => {
   const metrics = validateSaccadeDetector(noJumps, WIDTH, HEIGHT);
   assert.equal(metrics.trackingAvailable, false);
   assert.equal(metrics.targetJumps, 0);
+  assert.equal(metrics.detectionRate, 0);
+  assert.equal(metrics.medianLatencyMs, null);
+  assert.equal(metrics.latencyIqrMs, null);
+  assert.equal(metrics.meanAmplitudeGain, null);
 
   const empty = validateSaccadeDetector([], WIDTH, HEIGHT);
   assert.equal(empty.trackingAvailable, false);
   assert.equal(empty.samplesValid, 0);
+  assert.equal(empty.detectionRate, 0);
+  assert.equal(empty.medianLatencyMs, null);
+  assert.equal(empty.latencyIqrMs, null);
+  assert.equal(empty.meanAmplitudeGain, null);
 });

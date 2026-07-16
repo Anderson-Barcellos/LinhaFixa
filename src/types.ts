@@ -97,8 +97,8 @@ export interface SaccadeMetrics {
   saccadeCount: number;           // reading saccades (progressive + regressions), excludes line returns
   regressionCount: number;        // saccades against the reading direction (re-reading), excludes line returns
   lineReturnCount?: number;       // large leftward sweeps back to the next line start (absent on legacy captures)
-  meanSaccadeAmplitude: number;   // mean |Δh| of detected reading saccades (gaze-ratio units, approx.)
-  meanFixationMs: number;         // mean duration between saccades
+  meanSaccadeAmplitude: number | null; // mean |Δh| of detected reading saccades; null when no event is estimable
+  meanFixationMs: number | null;       // mean duration between saccades; null when no fixation is estimable
   // Individual detected events, present only when analyzeSaccades ran with
   // collectEvents: true (ground-truth validation); not persisted by default.
   events?: SaccadeEvent[];

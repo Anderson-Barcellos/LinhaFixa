@@ -29,9 +29,9 @@ export interface DetectorValidationMetrics {
   detectionRate: number;        // matchedJumps / targetJumps, 0..1
   falsePositives: number;       // detector events left unmatched by any jump
   falsePositivesPerMin: number;
-  medianLatencyMs: number;      // event tStart - jump time, over matched pairs
-  latencyIqrMs: number;         // p75 - p25 of the same latencies
-  meanAmplitudeGain: number;    // mean |detected Δh| / |expected Δh|, over matched pairs
+  medianLatencyMs: number | null;   // event tStart - jump time, or null without a matched pair
+  latencyIqrMs: number | null;      // p75 - p25, or null without a matched pair
+  meanAmplitudeGain: number | null; // mean |detected Δh| / |expected Δh|, or null without a matched pair
   durationMs: number;           // span of the analyzed gaze signal
   samplesValid: number;         // gaze samples available to the detector
 }
@@ -73,8 +73,8 @@ export function extractTargetJumps(samples: OcSample[], canvasWidth: number): Ta
   return jumps;
 }
 
-function percentile(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0;
+function percentileOrNull(sorted: number[], p: number): number | null {
+  if (sorted.length === 0) return null;
   const idx = (sorted.length - 1) * p;
   const lo = Math.floor(idx);
   const hi = Math.ceil(idx);
@@ -94,9 +94,9 @@ const emptyMetrics = (
   detectionRate: 0,
   falsePositives: 0,
   falsePositivesPerMin: 0,
-  medianLatencyMs: 0,
-  latencyIqrMs: 0,
-  meanAmplitudeGain: 0,
+  medianLatencyMs: null,
+  latencyIqrMs: null,
+  meanAmplitudeGain: null,
   durationMs,
   samplesValid,
 });
@@ -146,7 +146,11 @@ export function validateSaccadeDetector(
 
   const falsePositives = used.filter(u => !u).length;
   const sortedLatencies = latencies.slice().sort((a, b) => a - b);
-  const mean = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+  const medianLatencyMs = percentileOrNull(sortedLatencies, 0.5);
+  const latencyP25Ms = percentileOrNull(sortedLatencies, 0.25);
+  const latencyP75Ms = percentileOrNull(sortedLatencies, 0.75);
+  const meanOrNull = (values: number[]): number | null =>
+    values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 
   return {
     trackingAvailable: true,
@@ -156,9 +160,11 @@ export function validateSaccadeDetector(
     detectionRate: jumps.length ? matchedJumps / jumps.length : 0,
     falsePositives,
     falsePositivesPerMin: durationMs > 0 ? (falsePositives / durationMs) * 60000 : 0,
-    medianLatencyMs: percentile(sortedLatencies, 0.5),
-    latencyIqrMs: percentile(sortedLatencies, 0.75) - percentile(sortedLatencies, 0.25),
-    meanAmplitudeGain: mean(gains),
+    medianLatencyMs,
+    latencyIqrMs: latencyP25Ms !== null && latencyP75Ms !== null
+      ? latencyP75Ms - latencyP25Ms
+      : null,
+    meanAmplitudeGain: meanOrNull(gains),
     durationMs,
     samplesValid: gazeSamples.length,
   };

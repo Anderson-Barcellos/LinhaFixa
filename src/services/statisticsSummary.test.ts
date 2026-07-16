@@ -257,3 +257,54 @@ test('buildOcularReadingSeries extracts eye-derived saccades and fixations in ch
   assert.equal(series[1].lineReturns, null);
   assert.equal(series[1].meanFixationMs, 420);
 });
+
+test('nullable fixation estimates stay null in the series and are ignored by summary averages', () => {
+  const capture = {
+    id: 'nullable-capture',
+    timestamp: 1700000500000,
+    conditions: { lighting: 'normal' as const, distanceCm: 40, posture: 'upright' as const },
+    coverage: 95,
+    calibrated: true,
+    metrics: {
+      trackingAvailable: true,
+      samplesValid: 300,
+      signalSource: 'calibrated-mediapipe' as const,
+      sampleRateHz: 60,
+      saccadeCount: 0,
+      regressionCount: 0,
+      lineReturnCount: 0,
+      meanSaccadeAmplitude: null,
+      meanFixationMs: null,
+    },
+    postural: {
+      status: 'stable' as const,
+      samples: 180,
+      cervicalStability: 90,
+      sustainedTiltDeg: 1,
+      rotationRange: 2,
+      highMovement: false,
+      confidence: 'high' as const,
+      label: 'Postura estável',
+      insight: 'Postura estável.',
+    },
+    axis: { hStd: 0, hRange: 0, vStd: 0, vRange: 0 },
+    sampleCount: 300,
+    samples: [],
+  } satisfies ValidationCapture;
+
+  const series = buildOcularReadingSeries([], [capture]);
+  const summary = buildStatisticsSummary([], [capture]);
+  const captureWithFixation = {
+    ...capture,
+    id: 'estimated-capture',
+    timestamp: capture.timestamp + 1,
+    metrics: { ...capture.metrics, meanFixationMs: 420 },
+  } satisfies ValidationCapture;
+  const mixedSummary = buildStatisticsSummary([], [capture, captureWithFixation]);
+
+  assert.equal(series[0].meanFixationMs, null);
+  assert.match(summary.sections.reading.insight, /fixação média não estimável/);
+  assert.doesNotMatch(summary.sections.reading.insight, /fixação média de 0 ms/);
+  assert.match(mixedSummary.sections.reading.insight, /fixacao media de 420 ms/);
+  assert.doesNotMatch(mixedSummary.sections.reading.insight, /fixacao media de 210 ms/);
+});

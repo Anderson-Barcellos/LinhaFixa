@@ -34,3 +34,10 @@ test('summarizeReadingDynamics reports limited signal when tracking is unavailab
   assert.equal(summary.signalQuality.grade, 'baixo-sinal');
   assert.match(summary.primaryInsight, /Não houve amostras suficientes/);
 });
+
+test('summarizeReadingDynamics labels an unavailable fixation estimate without fabricating zero', () => {
+  const summary = summarizeReadingDynamics({ ...baseMetrics, meanFixationMs: null }, 94);
+
+  assert.match(summary.primaryInsight, /fixação média não estimável/);
+  assert.doesNotMatch(summary.primaryInsight, /fixação média de 0 ms/);
+});

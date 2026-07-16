@@ -1325,8 +1325,8 @@ export function EyeTrackingTestScreen() {
                   <Metric label="Sacadas" value={String(captureResult.metrics.saccadeCount)} big />
                   <Metric label="Regressões" value={String(captureResult.metrics.regressionCount)} big />
                   <Metric label="Retornos de linha" value={captureResult.metrics.lineReturnCount != null ? String(captureResult.metrics.lineReturnCount) : 'N/D'} big />
-                  <Metric label="Amplitude média" value={captureResult.metrics.meanSaccadeAmplitude.toFixed(3)} big />
-                  <Metric label="Fixação média" value={`${captureResult.metrics.meanFixationMs.toFixed(0)} ms`} big />
+                  <Metric label="Amplitude média" value={captureResult.metrics.meanSaccadeAmplitude != null ? captureResult.metrics.meanSaccadeAmplitude.toFixed(3) : 'não estimável'} big />
+                  <Metric label="Fixação média" value={captureResult.metrics.meanFixationMs != null ? `${captureResult.metrics.meanFixationMs.toFixed(0)} ms` : 'não estimável'} big />
                 </div>
                 {captureResult.environment && (
                   <div className="rounded-2xl bg-slate-900/70 border border-white/10 p-4 mt-4">

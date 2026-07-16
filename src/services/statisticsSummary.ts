@@ -14,7 +14,7 @@ export interface OcularReadingPoint {
   saccades: number;
   regressions: number;
   lineReturns: number | null; // null on legacy captures without the metric
-  meanFixationMs: number;
+  meanFixationMs: number | null;
   samplesValid: number;
   coverage: number | null;
 }
@@ -118,7 +118,7 @@ export function buildOcularReadingSeries(
           saccades: metrics.saccadeCount,
           regressions: metrics.regressionCount,
           lineReturns: metrics.lineReturnCount ?? null,
-          meanFixationMs: Math.round(metrics.meanFixationMs),
+          meanFixationMs: metrics.meanFixationMs !== null ? Math.round(metrics.meanFixationMs) : null,
           samplesValid: metrics.samplesValid,
           coverage: null,
         };
@@ -143,7 +143,9 @@ export function buildOcularReadingSeries(
       saccades: capture.metrics.saccadeCount,
       regressions: capture.metrics.regressionCount,
       lineReturns: capture.metrics.lineReturnCount ?? null,
-      meanFixationMs: Math.round(capture.metrics.meanFixationMs),
+      meanFixationMs: capture.metrics.meanFixationMs !== null
+        ? Math.round(capture.metrics.meanFixationMs)
+        : null,
       samplesValid: capture.metrics.samplesValid,
       coverage: Math.round(capture.coverage),
     };
@@ -252,11 +254,16 @@ function readingSummary(
     .map(m => m.lineReturnCount)
     .filter((v): v is number => typeof v === 'number');
   const totalLineReturns = lineReturnValues.length ? sum(lineReturnValues) : null;
-  const avgFixation = average(readingMetrics.map(m => m.meanFixationMs));
+  const fixationValues = readingMetrics
+    .map(m => m.meanFixationMs)
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  const avgFixation = average(fixationValues);
   const ocularPieces = [
     `${totalSaccades} sacadas e ${totalRegressions} regressoes pelo olhar`,
     totalLineReturns !== null ? `${totalLineReturns} ${plural(totalLineReturns, 'retorno de linha', 'retornos de linha')}` : null,
-    avgFixation !== null ? `fixacao media de ${formatInteger(avgFixation)} ms` : null,
+    avgFixation !== null
+      ? `fixacao media de ${formatInteger(avgFixation)} ms`
+      : 'fixação média não estimável',
   ].filter(Boolean);
 
   if (readingMetrics.length) {

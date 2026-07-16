@@ -382,11 +382,19 @@ export function ExercisePlayerScreen() {
                        <div className="text-slate-500 text-sm font-medium mt-1">Regressões</div>
                     </div>
                     <div>
-                       <div className="text-xl font-bold text-slate-800">{Math.round(readingExtraData.saccadeMetrics.meanFixationMs)} ms</div>
+                       <div className="text-xl font-bold text-slate-800">
+                         {readingExtraData.saccadeMetrics.meanFixationMs != null
+                           ? `${Math.round(readingExtraData.saccadeMetrics.meanFixationMs)} ms`
+                           : 'não estimável'}
+                       </div>
                        <div className="text-slate-500 text-sm font-medium mt-1">Fixação média</div>
                     </div>
                     <div>
-                       <div className="text-xl font-bold text-slate-800">{readingExtraData.saccadeMetrics.meanSaccadeAmplitude.toFixed(2)}</div>
+                       <div className="text-xl font-bold text-slate-800">
+                         {readingExtraData.saccadeMetrics.meanSaccadeAmplitude != null
+                           ? readingExtraData.saccadeMetrics.meanSaccadeAmplitude.toFixed(2)
+                           : 'não estimável'}
+                       </div>
                        <div className="text-slate-500 text-sm font-medium mt-1">Amplitude (aprox.)</div>
                     </div>
                  </div>
@@ -501,8 +509,8 @@ export function ExercisePlayerScreen() {
                                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                         {stat('Detecção dos saltos', `${dv.matchedJumps}/${dv.targetJumps} (${Math.round(dv.detectionRate * 100)}%)`)}
                                         {stat('Falsos positivos/min', dv.falsePositivesPerMin.toFixed(1))}
-                                        {stat('Latência mediana', `${Math.round(dv.medianLatencyMs)} ms`)}
-                                        {stat('Ganho de amplitude', dv.meanAmplitudeGain.toFixed(2))}
+                                        {stat('Latência mediana', dv.medianLatencyMs != null ? `${Math.round(dv.medianLatencyMs)} ms` : 'não estimável')}
+                                        {stat('Ganho de amplitude', dv.meanAmplitudeGain != null ? dv.meanAmplitudeGain.toFixed(2) : 'não estimável')}
                                      </div>
                                   </div>
                                )}

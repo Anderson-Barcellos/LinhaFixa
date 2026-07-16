@@ -71,8 +71,8 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
       saccadeCount: 0,
       regressionCount: 0,
       lineReturnCount: 0,
-      meanSaccadeAmplitude: 0,
-      meanFixationMs: 0,
+      meanSaccadeAmplitude: null,
+      meanFixationMs: null,
       ...(options.collectEvents ? { events: [] } : {}),
     };
   }
@@ -154,7 +154,8 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
     events?.push({ tStart, tEnd, amplitude, kind: amplitude < 0 ? 'regression' : 'saccade' });
   }
 
-  const mean = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+  const meanOrNull = (values: number[]): number | null =>
+    values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 
   return {
     trackingAvailable: true,
@@ -164,8 +165,8 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
     saccadeCount: amplitudes.length,
     regressionCount,
     lineReturnCount,
-    meanSaccadeAmplitude: mean(amplitudes),
-    meanFixationMs: mean(fixationDurations),
+    meanSaccadeAmplitude: meanOrNull(amplitudes),
+    meanFixationMs: meanOrNull(fixationDurations),
     ...(events ? { events } : {}),
   };
 }

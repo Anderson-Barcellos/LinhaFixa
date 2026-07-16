@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analyzeSaccades } from './saccadeAnalysis';
 import { GazeSample } from '@/types';
+import { classifyTemporalTier } from '@/services/captureValidity';
 
 test('analyzeSaccades counts rightward sacades and leftward regressions from gaze samples', () => {
   const samples: GazeSample[] = [
@@ -22,6 +23,7 @@ test('analyzeSaccades counts rightward sacades and leftward regressions from gaz
   assert.equal(metrics.lineReturnCount, 0);
   assert.equal(metrics.samplesValid, 6);
   assert.equal(metrics.sampleRateHz, 36);
+  assert.ok(metrics.meanFixationMs !== null);
   assert.equal(Math.round(metrics.meanFixationMs), 40);
 });
 
@@ -32,6 +34,51 @@ test('analyzeSaccades marks unavailable signal when there are too few calibrated
   assert.equal(metrics.signalSource, 'unavailable');
   assert.equal(metrics.lineReturnCount, 0);
   assert.equal(metrics.sampleRateHz, 0);
+  assert.equal(metrics.saccadeCount, 0);
+  assert.equal(metrics.regressionCount, 0);
+  assert.equal(metrics.meanSaccadeAmplitude, null);
+  assert.equal(metrics.meanFixationMs, null);
+});
+
+test('analyzeSaccades keeps real zero counts but nulls estimates when no event is detected', () => {
+  const samples: GazeSample[] = Array.from({ length: 8 }, (_, index) => ({
+    t: index * 20,
+    h: 0.4,
+    v: 0.5,
+  }));
+
+  const metrics = analyzeSaccades(samples);
+
+  assert.equal(metrics.trackingAvailable, true);
+  assert.equal(metrics.saccadeCount, 0);
+  assert.equal(metrics.regressionCount, 0);
+  assert.equal(metrics.lineReturnCount, 0);
+  assert.equal(metrics.meanSaccadeAmplitude, null);
+  assert.equal(metrics.meanFixationMs, null);
+});
+
+test('golden plateau trace pins event detection to the measured temporal tier', () => {
+  const cases = [
+    { rateHz: 60, expectedEvents: 1, expectedTier: 'high-temporal' },
+    { rateHz: 50, expectedEvents: 1, expectedTier: 'high-temporal' },
+    { rateHz: 30, expectedEvents: 0, expectedTier: 'coarse-temporal' },
+    { rateHz: 24, expectedEvents: 0, expectedTier: 'coarse-temporal' },
+  ] as const;
+
+  for (const { rateHz, expectedEvents, expectedTier } of cases) {
+    const dt = 1000 / rateHz;
+    const samples: GazeSample[] = Array.from({ length: 6 }, (_, index) => ({
+      t: index * dt,
+      h: index < 3 ? 0.4 : 0.46,
+      v: 0.5,
+    }));
+
+    const metrics = analyzeSaccades(samples, { collectEvents: true });
+
+    assert.equal(metrics.events?.length, expectedEvents, `${rateHz} Hz event count`);
+    assert.equal(metrics.saccadeCount, expectedEvents, `${rateHz} Hz aggregate count`);
+    assert.equal(classifyTemporalTier(metrics.sampleRateHz), expectedTier, `${rateHz} Hz tier`);
+  }
 });
 
 test('analyzeSaccades separates large leftward line-return sweeps from regressions', () => {
@@ -51,6 +98,7 @@ test('analyzeSaccades separates large leftward line-return sweeps from regressio
   assert.equal(metrics.saccadeCount, 1);
   assert.equal(metrics.regressionCount, 0);
   assert.equal(metrics.lineReturnCount, 1);
+  assert.ok(metrics.meanSaccadeAmplitude !== null);
   assert.equal(Math.round(metrics.meanSaccadeAmplitude * 100) / 100, 0.4);
 });
 
@@ -129,6 +177,7 @@ test('analyzeSaccades discards fixation intervals that contain a tracking gap', 
 
   const metrics = analyzeSaccades(samples);
 
+  assert.ok(metrics.meanFixationMs !== null);
   assert.equal(Math.round(metrics.meanFixationMs), 20);
   assert.equal(metrics.saccadeCount, 1);
   assert.equal(metrics.lineReturnCount, 1);

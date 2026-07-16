@@ -25,7 +25,9 @@ export function summarizeReadingDynamics(metrics: SaccadeMetrics, coverage: numb
     };
   }
 
-  const fixation = Math.round(metrics.meanFixationMs);
+  const fixationLabel = metrics.meanFixationMs !== null
+    ? `fixação média de ${Math.round(metrics.meanFixationMs)} ms`
+    : 'fixação média não estimável';
   const regressionRatio = metrics.saccadeCount > 0
     ? metrics.regressionCount / metrics.saccadeCount
     : 0;
@@ -47,7 +49,7 @@ export function summarizeReadingDynamics(metrics: SaccadeMetrics, coverage: numb
   return {
     signalLabel,
     positionLabel: 'Posição textual aproximada',
-    primaryInsight: `${metrics.saccadeCount} sacadas, ${metrics.regressionCount} regressões e fixação média de ${fixation} ms, ${regressionTone}${lineReturnNote}.`,
+    primaryInsight: `${metrics.saccadeCount} sacadas, ${metrics.regressionCount} regressões e ${fixationLabel}, ${regressionTone}${lineReturnNote}.`,
     confidenceNote: `${signalQuality.label}: ${signalQuality.detail} A leitura prioriza movimento relativo e ritmo temporal, não palavra exata.`,
     signalQuality,
   };
