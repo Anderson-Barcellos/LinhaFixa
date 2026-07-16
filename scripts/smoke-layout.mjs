@@ -24,11 +24,11 @@ const CHROME = process.env.CHROME_PATH ?? '/usr/bin/google-chrome';
 
 const VIEWPORTS = [
   { name: 'iphone-portrait', width: 390, height: 844, touch: true, expectDesktopPanel: false, drawer: 'sheet', checkCalibration: true },
-  { name: 'iphone-landscape', width: 844, height: 390, touch: true, expectDesktopPanel: false, drawer: 'side', checkCalibration: false },
-  { name: 'desktop', width: 1440, height: 860, touch: false, expectDesktopPanel: true, checkCalibration: true },
+  { name: 'iphone-landscape', width: 844, height: 390, touch: true, expectDesktopPanel: false, drawer: 'side', checkCalibration: true },
+  { name: 'desktop', width: 1440, height: 860, touch: false, expectDesktopPanel: true, checkCalibration: true, checkLifecycle: true },
   // Vertical monitor (Anders' desktop): the reading surface must fill the column
   // instead of collapsing into the landscape 16:9 strip.
-  { name: 'desktop-portrait', width: 1077, height: 1436, touch: false, expectDesktopPanel: true, checkCalibration: false, expectPortraitSurface: true },
+  { name: 'desktop-portrait', width: 1077, height: 1436, touch: false, expectDesktopPanel: true, checkCalibration: true, expectPortraitSurface: true },
 ];
 
 const failures = [];
@@ -78,6 +78,12 @@ async function runViewport(browser, profile) {
     deviceScaleFactor: profile.touch ? 3 : 1,
     permissions: ['camera'],
   });
+  await context.route('**/api/generateReadingContent', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ text: 'Texto determinístico para validar a captura ocular sem depender de serviços externos.' }),
+  }));
+  await context.tracing.start({ screenshots: true, snapshots: true });
   // Deterministic fake camera: a continuously repainted canvas stream.
   await context.addInitScript(() => {
     let stream = null;
@@ -104,7 +110,11 @@ async function runViewport(browser, profile) {
   const consoleErrors = [];
   page.on('console', msg => {
     // MediaPipe routes INFO/WARNING glog lines through console.error.
-    if (msg.type() === 'error' && !/^(INFO|WARNING|I\d{4}|W\d{4}):?\s/.test(msg.text())) consoleErrors.push(msg.text());
+    if (
+      (msg.type() === 'error' || msg.type() === 'warning')
+      && !/^(INFO|WARNING|I\d{4}|W\d{4}):?\s/.test(msg.text())
+      && !/GL Driver Message .*GPU stall due to ReadPixels/.test(msg.text())
+    ) consoleErrors.push(`${msg.type()}: ${msg.text()}`);
   });
   page.on('pageerror', err => consoleErrors.push(String(err)));
   // Inter via Google Fonts is a known, accepted external; the invariant exists
@@ -238,7 +248,9 @@ async function runViewport(browser, profile) {
     // --- Camera + calibration overlay (fake device) ---
     if (profile.checkCalibration) {
       await page.getByRole('button', { name: 'Iniciar câmera + sensores' }).click();
-      const cameraChip = page.getByText('Câmera', { exact: true });
+      const cameraChip = profile.drawer === 'side'
+        ? page.getByLabel('Câmera', { exact: true })
+        : page.getByText('Câmera', { exact: true });
       await cameraChip.waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {});
       check(profile.name, 'câmera fake ativa (chip "Câmera")', await cameraChip.isVisible().catch(() => false));
 
@@ -273,7 +285,47 @@ async function runViewport(browser, profile) {
         check(profile.name, profile.expectDesktopPanel ? 'guia compacto ausente (desktop)' : 'guia de uma linha presente (compacto)',
           compactGuide !== profile.expectDesktopPanel);
       }
-      await page.getByText('Pular calibração').click().catch(() => {});
+      const rejected = page.getByRole('heading', { name: 'Calibração não aceita' });
+      await rejected.waitFor({ state: 'visible', timeout: 8_000 }).catch(() => {});
+      check(profile.name, 'amostras insuficientes terminam em rejeição finita', await rejected.isVisible().catch(() => false));
+      check(profile.name, 'rejeição oferece nova tentativa sem reiniciar em loop',
+        await page.getByRole('button', { name: 'Tentar novamente' }).isVisible().catch(() => false));
+      await page.getByRole('button', { name: 'Continuar sem calibração' }).click().catch(() => {});
+      await page.getByText('Área fixa de leitura e calibração').waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {});
+    }
+
+    if (profile.checkLifecycle) {
+      const startCapture = page.getByRole('button', { name: 'Iniciar captura de leitura' });
+      await startCapture.click();
+      const register = page.getByRole('button', { name: 'Registrar e iniciar captura' });
+      if (await register.isVisible().catch(() => false)) await register.click();
+      await page.getByRole('button', { name: 'Terminei de ler' }).waitFor({ state: 'visible', timeout: 5_000 });
+
+      const secondTab = await context.newPage();
+      await secondTab.goto(`${BASE_URL}/`, { waitUntil: 'domcontentloaded' });
+      await secondTab.bringToFront();
+      await secondTab.waitForTimeout(300);
+      const hiddenState = await page.evaluate(() => document.visibilityState);
+      if (hiddenState === 'hidden') {
+        check(profile.name, 'segunda aba oculta a captura com visibilityState real', true, hiddenState);
+        await page.bringToFront();
+        await page.getByText('Captura não utilizável — a página perdeu visibilidade').waitFor({ state: 'visible', timeout: 5_000 });
+        check(profile.name, 'ocultação interrompe captura automaticamente', true);
+        await page.getByRole('button', { name: 'Fechar' }).click();
+        await startCapture.click();
+      } else {
+        console.warn(`  ⚠ SKIP/BLOCKED real-tab-hidden unavailable — capture=${hiddenState}, second=${await secondTab.evaluate(() => document.visibilityState)}`);
+        await page.bringToFront();
+      }
+      await secondTab.close();
+
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+      await page.getByText('Captura não utilizável — a página perdeu visibilidade').waitFor({ state: 'visible', timeout: 5_000 });
+      check(profile.name, 'pagehide separado interrompe e invalida a captura',
+        await page.getByText('Inválida', { exact: true }).isVisible());
+      await page.getByRole('button', { name: 'Fechar' }).click();
+      check(profile.name, 'retorno não retoma nem concatena a captura interrompida',
+        !(await page.getByRole('button', { name: 'Terminei de ler' }).isVisible().catch(() => false)));
     }
 
     // --- Hygiene ---
@@ -282,6 +334,8 @@ async function runViewport(browser, profile) {
     check(profile.name, 'sem erros de console', consoleErrors.length === 0,
       consoleErrors.slice(0, 3).join(' | '));
   } finally {
+    await page.screenshot({ path: `/tmp/gaze-smoke-layout-${profile.name}.png`, fullPage: false }).catch(() => {});
+    await context.tracing.stop({ path: `/tmp/gaze-smoke-layout-${profile.name}.zip` }).catch(() => {});
     await context.close();
   }
 }

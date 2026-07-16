@@ -13,7 +13,7 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test src/services/*.test.ts src/exercises/*.test.ts",
-    "smoke": "node scripts/smoke-layout.mjs"
+    "smoke": "node scripts/smoke-built.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "0.10.35",
