@@ -77,3 +77,59 @@ test('frozen distance never changes after freezing (stimulus constancy contract)
   assert.equal(tracker.snapshot().frozenDistanceCm, frozen);
   assert.equal(tracker.snapshot().distanceCm, frozen);
 });
+
+test('does not converge-freeze from null updates repeating a single sample', () => {
+  const tracker = createStimulusDistanceTracker({ profileDistanceCm: 40 });
+  // One real sample, then nothing but nulls (face lost). A null update must not
+  // re-push the same EMA into the convergence window — that would fake a flat,
+  // "converged" span from a single stale/noisy reading.
+  let snap = tracker.update(55, 0);
+  for (let t = 100; t <= 2900; t += 100) snap = tracker.update(null, t);
+  assert.equal(snap.phase, 'stabilizing');
+
+  // The 3s timeout is untouched: with an EMA on record it still freezes 'measured'.
+  snap = tracker.update(null, 3000);
+  assert.equal(snap.phase, 'frozen');
+  assert.equal(snap.distanceSource, 'measured');
+});
+
+test('rejects non-finite and non-positive samples', () => {
+  const tracker = createStimulusDistanceTracker({ profileDistanceCm: 40 });
+  let snap = tracker.update(NaN, 0);
+  snap = tracker.update(-5, 100);
+  snap = tracker.update(0, 200);
+  assert.equal(snap.phase, 'stabilizing');
+  assert.equal(snap.distanceSource, null);
+
+  // Now feed genuinely valid samples: convergence proceeds as if the invalid
+  // ones never happened (they never touched the EMA).
+  for (let t = 300; t <= 1500; t += 100) snap = tracker.update(50, t);
+  assert.equal(snap.phase, 'frozen');
+  assert.ok(Math.abs(snap.frozenDistanceCm! - 50) < 1, `frozen ${snap.frozenDistanceCm}`);
+});
+
+test('hysteresis boundaries are strict: exactly 15% does not enter, exactly 12% does not exit', () => {
+  // Enter boundary: feeding exactly 57.5 (15% above the 50cm freeze) makes the EMA
+  // approach 57.5 asymptotically FROM BELOW, so dev stays < 15% forever — the
+  // strict `>` on enter must never fire.
+  const enterTracker = createStimulusDistanceTracker({ profileDistanceCm: 40 });
+  let t = 0;
+  for (; t <= 1200; t += 100) enterTracker.update(50, t);
+  assert.equal(enterTracker.snapshot().frozenDistanceCm, 50);
+  let snap = enterTracker.snapshot();
+  for (let i = 0; i < 100; i++) { t += 100; snap = enterTracker.update(57.5, t); }
+  assert.equal(snap.inDrift, false);
+
+  // Exit boundary: enter drift at 60, then switch to exactly 56 (12% above 50).
+  // The EMA decays toward 56 asymptotically FROM ABOVE, so dev stays > 12% forever —
+  // the strict `<` on exit must never fire.
+  const exitTracker = createStimulusDistanceTracker({ profileDistanceCm: 40 });
+  t = 0;
+  for (; t <= 1200; t += 100) exitTracker.update(50, t);
+  assert.equal(exitTracker.snapshot().frozenDistanceCm, 50);
+  snap = exitTracker.snapshot();
+  for (let i = 0; i < 30; i++) { t += 100; snap = exitTracker.update(60, t); }
+  assert.equal(snap.inDrift, true);
+  for (let i = 0; i < 100; i++) { t += 100; snap = exitTracker.update(56, t); }
+  assert.equal(snap.inDrift, true);
+});

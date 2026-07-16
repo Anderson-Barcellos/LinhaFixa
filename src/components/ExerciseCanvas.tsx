@@ -89,6 +89,11 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
         }
       }
 
+      // Bail out if cleanup already ran while we were awaiting camera/face-tracking
+      // setup above — otherwise this stale continuation would still create and
+      // observe a ResizeObserver whose cleanup already fired, leaking it.
+      if (!isRunning) return;
+
       // 2. Engine setup
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -275,6 +280,9 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
              exContext.latestGazePoint = null;
            }
         } else {
+           // A null update can only shrink/hold the EMA's neighborhood, never flip
+           // inDrift (EMA is unchanged) — that's why the drift ref/setState sync
+           // below lives only in the processed-frame branch above.
            stimulusSnap = stimulusTracker.update(null, exContext.timeMs);
            exContext.latestGaze = null;
            exContext.latestGazePoint = null;

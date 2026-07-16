@@ -72,16 +72,19 @@ export function createStimulusDistanceTracker(opts: StimulusDistanceOptions) {
     if (validSample) ema = ema == null ? sampleCm! : ema * (1 - alpha) + sampleCm! * alpha;
 
     if (frozen == null) {
-      if (ema != null) {
-        emaWindow.push({ t: tMs, v: ema });
-        while (emaWindow.length && tMs - emaWindow[0].t > windowMs) emaWindow.shift();
-        const covered = emaWindow.length > 1 && tMs - emaWindow[0].t >= windowMs * 0.999;
-        if (covered) {
-          const vs = emaWindow.map(w => w.v);
-          const min = Math.min(...vs);
-          const max = Math.max(...vs);
-          if (min > 0 && (max - min) / min <= spanPct) freeze(ema, 'measured', tMs);
-        }
+      // Only a genuinely measured sample may add to the convergence window — a
+      // null update must not re-push the same EMA value (that would fake a flat,
+      // "converged" span from a single stale reading).
+      if (validSample && ema != null) emaWindow.push({ t: tMs, v: ema });
+      while (emaWindow.length && tMs - emaWindow[0].t > windowMs) emaWindow.shift();
+      // Epsilon for discrete-time sampling: at typical frame steps (~100ms) the
+      // window may cover 999.x ms instead of exactly windowMs; treat that as full coverage.
+      const covered = emaWindow.length > 1 && tMs - emaWindow[0].t >= windowMs * 0.999;
+      if (covered) {
+        const vs = emaWindow.map(w => w.v);
+        const min = Math.min(...vs);
+        const max = Math.max(...vs);
+        if (min > 0 && (max - min) / min <= spanPct) freeze(ema!, 'measured', tMs);
       }
       if (frozen == null && tMs - startT >= timeoutMs) {
         if (ema != null) freeze(ema, 'measured', tMs);
