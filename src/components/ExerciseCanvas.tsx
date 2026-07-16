@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { registry } from '@/exercises/implementations';
+import { measuredSurfaceFromEntry, measuredSurfaceEquals, type MeasuredSurface } from '@/services/measuredSurface';
 import { ExerciseParameters } from '@/types';
 import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive, getBlinkScore, shouldDropGazeForBlink, getLastLandmarks } from '@/services/faceTracking';
 import { getCalibrationSignature, isCalibrated, predictNorm } from '@/services/gazeCalibration';
@@ -26,8 +27,9 @@ interface ExerciseCanvasProps {
 }
 
 // Standard CSS reference is 96px/inch => ~37.8px/cm.
-// NOTE: this canvas currently uses CSS pixel dimensions (no DPR upscaling), so
-// conversions are in CSS px unless resize() is updated to apply devicePixelRatio.
+// NOTE: the canvas backing store IS DPR-scaled (see applySurface below), but
+// exercises still draw in CSS px — the ctx.setTransform(dpr, ...) call absorbs
+// the DPR, so PX_PER_CM correctly stays a CSS-px constant here.
 const PX_PER_CM = 37.8;
 
 export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled, viewingDistanceCm = 40, fontSizePreference = 'normal' }: ExerciseCanvasProps) {
@@ -39,6 +41,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
   useEffect(() => {
     let animationFrameId: number;
     let videoFrameLoop: VideoFrameLoopHandle | null = null;
+    let resizeObserver: ResizeObserver | null = null;
     let startTime = performance.now();
     let isRunning = true;
     let latestVideoFrameTs = 0;
@@ -91,18 +94,45 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
         return;
       }
 
-      const resize = () => {
-        canvas.width = canvas.parentElement?.clientWidth || window.innerWidth;
-        canvas.height = canvas.parentElement?.clientHeight || window.innerHeight;
+      // Real-space sizing: the backing store follows the parent's measured box at
+      // device-pixel resolution (crisp text at any DPR), while exercises keep
+      // drawing in CSS px via the ctx transform below. Replaces the old CSS-px
+      // resize listener (which also leaked: it was never removed on cleanup).
+      const parent = canvas.parentElement!;
+      const initialDpr = window.devicePixelRatio || 1;
+      let surface: MeasuredSurface = {
+        cssWidth: parent.clientWidth || window.innerWidth,
+        cssHeight: parent.clientHeight || window.innerHeight,
+        dpr: initialDpr,
+        devicePxWidth: Math.round((parent.clientWidth || window.innerWidth) * initialDpr),
+        devicePxHeight: Math.round((parent.clientHeight || window.innerHeight) * initialDpr),
       };
-      window.addEventListener('resize', resize);
-      resize();
+      const applySurface = (m: MeasuredSurface) => {
+        surface = m;
+        canvas.width = m.devicePxWidth;
+        canvas.height = m.devicePxHeight;
+        canvas.style.width = `${m.cssWidth}px`;
+        canvas.style.height = `${m.cssHeight}px`;
+      };
+      applySurface(surface);
+      if (typeof ResizeObserver !== 'undefined') {
+        resizeObserver = new ResizeObserver(entries => {
+          const next = measuredSurfaceFromEntry(entries[entries.length - 1], window.devicePixelRatio || 1);
+          if (next && !measuredSurfaceEquals(next, surface)) applySurface(next);
+        });
+        try {
+          resizeObserver.observe(parent, { box: 'device-pixel-content-box' } as ResizeObserverOptions);
+        } catch {
+          resizeObserver.observe(parent);
+        }
+      }
 
       const contextState = {};
       const ctx = canvas.getContext('2d')!;
 
-      // NOTE: the canvas is currently sized in CSS pixels (see resize()), so do NOT
-      // scale px/cm by devicePixelRatio here.
+      // NOTE: the canvas backing store is DPR-scaled (device px), but exercises
+      // draw in CSS px — the loop's ctx.setTransform(surface.dpr, ...) absorbs the
+      // DPR, so pxPerCm stays a CSS-px constant and must NOT be multiplied by DPR.
       const pxPerCm = PX_PER_CM;
       // Visual angle -> physical size on screen: size_cm = 2 * dist * tan(deg/2).
       const degToPx = (deg: number) => {
@@ -112,8 +142,8 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
 
       const exContext = {
         ctx,
-        width: canvas.width,
-        height: canvas.height,
+        width: surface.cssWidth,
+        height: surface.cssHeight,
         timeMs: 0,
         dt: 0,
         state: contextState,
@@ -161,8 +191,9 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
         exContext.dt = time - lastTime;
         exContext.timeMs = time - startTime;
         lastTime = time;
-        exContext.width = canvas.width;
-        exContext.height = canvas.height;
+        exContext.width = surface.cssWidth;
+        exContext.height = surface.cssHeight;
+        ctx.setTransform(surface.dpr, 0, 0, surface.dpr, 0, 0); // exercises draw in CSS px
 
         // Face tracking logic. Only count frames where a real face was detected,
         // so the stillness score is not inflated by missing measurements.
@@ -260,6 +291,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
       isRunning = false;
       cancelAnimationFrame(animationFrameId);
       videoFrameLoop?.stop();
+      resizeObserver?.disconnect();
     };
   }, [exerciseId, parameters, cameraEnabled, onFinish, viewingDistanceCm, fontSizePreference]);
 
