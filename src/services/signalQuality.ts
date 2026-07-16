@@ -4,6 +4,7 @@ import {
   describeCaptureValidity,
   type CaptureValiditySnapshot,
 } from './captureValidity';
+import { formatSampleRateHz } from './sampleRatePresentation';
 
 export type SignalQualityGrade = 'comparavel' | 'exploratorio' | 'baixo-sinal';
 
@@ -76,9 +77,7 @@ export function summarizeSaccadeSignalQuality(
     : source === 'raw-mediapipe'
       ? 'Bruto'
       : 'Indisponível';
-  const sampleRateLabel = metrics.sampleRateHz && metrics.sampleRateHz > 0
-    ? `${Math.round(metrics.sampleRateHz)} Hz`
-    : 'taxa não medida';
+  const sampleRateLabel = formatSampleRateHz(metrics.sampleRateHz, 'taxa não medida');
   const coverageLabel = typeof options.coverage === 'number'
     ? `${Math.round(options.coverage)}% cobertura`
     : 'cobertura não medida';

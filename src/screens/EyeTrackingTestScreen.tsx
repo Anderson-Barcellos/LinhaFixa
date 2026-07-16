@@ -59,6 +59,7 @@ import { computeDiagnosticsSurface } from '@/services/captureGeometry';
 import { useMeasuredSurface } from '@/hooks/useMeasuredSurface';
 import { useModalDialog } from '@/hooks/useModalDialog';
 import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
+import { formatSampleRateHz } from '@/services/sampleRatePresentation';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import {
   calibrationSignatureMatches,
@@ -1077,7 +1078,7 @@ export function EyeTrackingTestScreen() {
         <Metric label="H range" value={liveSignal.horizontalRange.toFixed(2)} />
         <Metric label="Fixação" value={`${liveSignal.fixationShare}%`} />
         <Metric label="Continuidade" value={`${liveSignal.continuityPct}%`} />
-        <Metric label="Taxa janela" value={liveSignal.sampleRateHz ? `${liveSignal.sampleRateHz} Hz` : '—'} />
+        <Metric label="Taxa janela" value={formatSampleRateHz(liveSignal.sampleRateHz, '—')} />
       </div>
       <p className="text-xs text-slate-400 mt-3">{liveSignal.detail}</p>
     </div>
@@ -1506,7 +1507,7 @@ export function EyeTrackingTestScreen() {
                 <div className="grid grid-cols-2 gap-3">
                   <Metric label="Cobertura (rosto)" value={`${reportedCapture.coverage.toFixed(0)}%`} big />
                   <Metric label="Amostras válidas" value={String(reportedCapture.metrics.samplesValid)} big />
-                  <Metric label="Taxa efetiva" value={reportedCapture.metrics.sampleRateHz ? `${reportedCapture.metrics.sampleRateHz} Hz` : 'N/D'} big />
+                  <Metric label="Taxa efetiva" value={formatSampleRateHz(reportedCapture.metrics.sampleRateHz)} big />
                   <Metric label="Fonte" value={sourceConsistencyLabel(reportedCapture.metrics.signalSource, reportedCapture.calibratedSampleCount, reportedCapture.rawSampleCount)} big />
                   {(reportedCapture.extrapolatedSampleCount ?? 0) > 0 && (
                     <Metric label="Extrapolação rejeitada" value={`${reportedCapture.extrapolatedSampleCount} frames`} big />
@@ -1564,7 +1565,7 @@ export function EyeTrackingTestScreen() {
                 </div>
                 <div className="grid grid-cols-2 gap-2 mb-3">
                   <Metric label="Delta aparelho" value={reportedCapture.postural.motionDeltaDeg != null ? `${reportedCapture.postural.motionDeltaDeg.toFixed(1)}°` : 'N/D'} />
-                  <Metric label="Taxa postura" value={reportedCapture.postural.sampleRateHz ? `${reportedCapture.postural.sampleRateHz} Hz` : 'N/D'} />
+                  <Metric label="Taxa postura" value={formatSampleRateHz(reportedCapture.postural.sampleRateHz)} />
                   <Metric label="Yaw Δ" value={reportedCapture.postural.baselineApplied ? reportedCapture.postural.yawOffset.toFixed(1) : 'N/D'} />
                   <Metric label="Pitch Δ" value={reportedCapture.postural.baselineApplied ? reportedCapture.postural.pitchOffset.toFixed(1) : 'N/D'} />
                 </div>
@@ -1649,7 +1650,7 @@ export function EyeTrackingTestScreen() {
                     </div>
                     <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 text-center">
                       <CapStat label="Cobertura" value={`${c.coverage.toFixed(0)}%`} />
-                      <CapStat label="Taxa" value={c.metrics.sampleRateHz ? `${c.metrics.sampleRateHz} Hz` : 'N/D'} />
+                      <CapStat label="Taxa" value={formatSampleRateHz(c.metrics.sampleRateHz)} />
                       <CapStat label="Sacadas" value={String(c.metrics.saccadeCount)} />
                       <CapStat label="Retornos" value={c.metrics.lineReturnCount != null ? String(c.metrics.lineReturnCount) : 'N/D'} />
                       <CapStat label="Cervical" value={`${c.postural.cervicalStability}%`} />
@@ -1684,7 +1685,7 @@ function fmt(v: number | null): string {
 }
 
 function rateLabel(value: number | undefined): string {
-  return typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value)} Hz` : 'N/D';
+  return formatSampleRateHz(value);
 }
 
 // "Calibrada (92%)": which single-source series fed the analysis and how consistently

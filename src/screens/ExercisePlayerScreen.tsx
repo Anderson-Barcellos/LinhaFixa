@@ -19,6 +19,7 @@ import { requestMotionPermissionFromGesture, startMotionSensor, stopMotionSensor
 import { resetPosturalBaseline } from '@/exercises/posturalStability';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
 import { PreTestContext, PostTestContext, TreatmentPlanResponse, SessionResult, ExerciseResult } from '@/types';
+import { formatSampleRateHz } from '@/services/sampleRatePresentation';
 
 type PlayerStage = 'PRE_CONTEXT' | 'LOADING_PLAN' | 'BLOCKED' | 'PRE_EXERCISE_INFO' | 'CALIBRATION' | 'RECALIBRATION_PROMPT' | 'EXERCISE' | 'POST_READING_RATING' | 'POST_CONTEXT' | 'SUMMARY';
 
@@ -388,7 +389,7 @@ export function ExercisePlayerScreen() {
                  })()}
                  <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
                     <div>
-                       <div className="text-xl font-bold text-slate-800">{readingExtraData.saccadeMetrics.sampleRateHz ? `${readingExtraData.saccadeMetrics.sampleRateHz} Hz` : 'N/D'}</div>
+                       <div className="text-xl font-bold text-slate-800">{formatSampleRateHz(readingExtraData.saccadeMetrics.sampleRateHz)}</div>
                        <div className="text-slate-500 text-sm font-medium mt-1">Taxa efetiva</div>
                     </div>
                     <div>

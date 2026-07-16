@@ -13,6 +13,7 @@ import {
 } from '@/services/statisticsSummary';
 import { summarizeSaccadeSignalQuality } from '@/services/signalQuality';
 import { describeCaptureValidity } from '@/services/captureValidity';
+import { formatSampleRateHz } from '@/services/sampleRatePresentation';
 import { SessionResult, ValidationCapture } from '@/types';
 import { Activity, ArrowLeft, Clock, Eye, AlertTriangle, Smile, Sparkles, Download, BookOpen, ClipboardCheck, TrendingDown, BarChart3 } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ZAxis } from 'recharts';
@@ -323,7 +324,7 @@ export function DashboardScreen() {
                               </span>
                             </div>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                              <AuditFact label="Taxa" value={point.validity.sampleRateHz != null ? `${Math.round(point.validity.sampleRateHz)} Hz` : 'não medida'} />
+                              <AuditFact label="Taxa" value={formatSampleRateHz(point.validity.sampleRateHz, 'não medida')} />
                               <AuditFact label="Fonte" value={point.signalSourceLabel} />
                               <AuditFact label="Orientação" value={orientationLabel(point.orientation)} />
                               <AuditFact label="Persistência" value={point.saveProvenance === 'saved-capture' ? 'Captura salva' : 'Sessão salva'} />
@@ -404,7 +405,7 @@ export function DashboardScreen() {
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                           <CapStat label="Cobertura rosto" value={`${Math.round(c.coverage)}%`} />
-                          <CapStat label="Taxa" value={c.metrics.sampleRateHz ? `${c.metrics.sampleRateHz} Hz` : 'N/D'} />
+                          <CapStat label="Taxa" value={formatSampleRateHz(c.metrics.sampleRateHz)} />
                           <CapStat label="Sacadas" value={String(c.metrics.saccadeCount)} />
                           <CapStat label="Regressões" value={String(c.metrics.regressionCount)} />
                           <CapStat label="Retornos linha" value={c.metrics.lineReturnCount != null ? String(c.metrics.lineReturnCount) : 'N/D'} />
@@ -522,7 +523,7 @@ function OcularTooltip({ active, payload }: { active?: boolean; payload?: any[] 
     <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm text-sm">
       <div className="font-bold text-slate-800 mb-1">{point.sourceLabel}</div>
       <div className="text-xs text-slate-500 font-medium mb-2">
-        {point.signalQuality?.label ?? 'Exploratório'} · {point.signalSourceLabel ?? 'Fonte não marcada'} · {point.sampleRateHz ? `${point.sampleRateHz} Hz` : 'taxa não medida'}
+        {point.signalQuality?.label ?? 'Exploratório'} · {point.signalSourceLabel ?? 'Fonte não marcada'} · {formatSampleRateHz(point.sampleRateHz, 'taxa não medida')}
       </div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">
         <span>Sacadas</span><strong className="text-right text-slate-800">{point.saccades}</strong>
