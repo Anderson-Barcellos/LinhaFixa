@@ -320,7 +320,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
   };
 
   return (
-    <div className="relative w-full h-full bg-slate-900 overflow-hidden flex items-center justify-center">
+    <div className={`relative w-full h-full bg-slate-900 overflow-hidden flex items-center justify-center transition-shadow duration-500 ${stimulusDrift ? 'ring-4 ring-inset ring-amber-400/70' : ''}`}>
       {!headStable && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 px-6 py-2 bg-red-500/90 text-white rounded-full font-medium text-lg tracking-wide shadow-xl flex items-center gap-2">
           {/* Subtle warning */}
