@@ -31,6 +31,9 @@ test('selectCaptureSeries returns unavailable when both buffers are empty', () =
   assert.deepEqual(sel.samples, []);
   assert.equal(sel.calibratedSampleCount, 0);
   assert.equal(sel.rawSampleCount, 0);
+  assert.equal(sel.selectedSampleCount, 0);
+  assert.equal(sel.totalSourceSampleCount, 0);
+  assert.equal(sel.selectedSourceRatio, null);
 });
 
 test('selectCaptureSeries uses the calibrated buffer when it is the only source', () => {
@@ -71,6 +74,29 @@ test('selectCaptureSeries breaks a tie in favor of the calibrated buffer', () =>
   const raw = [sample(16)];
   const sel = selectCaptureSeries(cal, raw);
   assert.equal(sel.signalSource, 'calibrated-mediapipe');
+  assert.equal(sel.selectedSampleCount, 1);
+  assert.equal(sel.totalSourceSampleCount, 2);
+  assert.equal(sel.selectedSourceRatio, 0.5);
+});
+
+test('selectCaptureSeries reports the exact 90 percent selected-source ratio', () => {
+  const cal = Array.from({ length: 9 }, (_, i) => sample(i));
+  const raw = [sample(9)];
+  const sel = selectCaptureSeries(cal, raw);
+
+  assert.equal(sel.selectedSampleCount, 9);
+  assert.equal(sel.totalSourceSampleCount, 10);
+  assert.equal(sel.selectedSourceRatio, 0.9);
+});
+
+test('selectCaptureSeries reports a selected-source ratio just below 90 percent', () => {
+  const cal = Array.from({ length: 899 }, (_, i) => sample(i));
+  const raw = Array.from({ length: 101 }, (_, i) => sample(899 + i));
+  const sel = selectCaptureSeries(cal, raw);
+
+  assert.equal(sel.selectedSampleCount, 899);
+  assert.equal(sel.totalSourceSampleCount, 1_000);
+  assert.equal(sel.selectedSourceRatio, 0.899);
 });
 
 test('serializeValidationExport produces a self-describing, parseable payload', () => {

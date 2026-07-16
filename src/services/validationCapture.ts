@@ -5,6 +5,9 @@ export interface CaptureSeriesSelection {
   signalSource: NonNullable<SaccadeMetrics['signalSource']>;
   calibratedSampleCount: number;
   rawSampleCount: number;
+  selectedSampleCount: number;
+  totalSourceSampleCount: number;
+  selectedSourceRatio: number | null;
 }
 
 // Calibrated predictions (canvas-projected positions) and raw iris ratios live in
@@ -18,13 +21,35 @@ export function selectCaptureSeries(
   raw: GazeSample[],
 ): CaptureSeriesSelection {
   const counts = { calibratedSampleCount: calibrated.length, rawSampleCount: raw.length };
+  const totalSourceSampleCount = calibrated.length + raw.length;
   if (calibrated.length === 0 && raw.length === 0) {
-    return { samples: [], signalSource: 'unavailable', ...counts };
+    return {
+      samples: [],
+      signalSource: 'unavailable',
+      selectedSampleCount: 0,
+      totalSourceSampleCount,
+      selectedSourceRatio: null,
+      ...counts,
+    };
   }
   if (calibrated.length >= raw.length) {
-    return { samples: calibrated, signalSource: 'calibrated-mediapipe', ...counts };
+    return {
+      samples: calibrated,
+      signalSource: 'calibrated-mediapipe',
+      selectedSampleCount: calibrated.length,
+      totalSourceSampleCount,
+      selectedSourceRatio: calibrated.length / totalSourceSampleCount,
+      ...counts,
+    };
   }
-  return { samples: raw, signalSource: 'raw-mediapipe', ...counts };
+  return {
+    samples: raw,
+    signalSource: 'raw-mediapipe',
+    selectedSampleCount: raw.length,
+    totalSourceSampleCount,
+    selectedSourceRatio: raw.length / totalSourceSampleCount,
+    ...counts,
+  };
 }
 
 // Per-axis dispersion of a captured gaze signal. Horizontal is the reading axis;
