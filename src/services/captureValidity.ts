@@ -5,7 +5,8 @@ export type TemporalTier = 'high-temporal' | 'coarse-temporal' | 'insufficient-t
 export type CaptureInterruptionReason =
   | 'page-hidden-during-capture'
   | 'pagehide-during-capture'
-  | 'navigation-during-capture';
+  | 'navigation-during-capture'
+  | 'camera-stopped-during-capture';
 export type CaptureValidityReasonCode =
   | 'capture-duration-too-short'
   | 'capture-coverage-below-threshold'
@@ -202,6 +203,7 @@ const REASON_TEXT: Record<CaptureValidityReasonCode, string> = {
   'page-hidden-during-capture': 'A página perdeu visibilidade durante a captura',
   'pagehide-during-capture': 'A página foi descarregada durante a captura',
   'navigation-during-capture': 'A tela de captura foi encerrada durante a medição',
+  'camera-stopped-during-capture': 'A câmera foi parada durante a captura',
   'legacy-unassessed': 'Captura legada sem avaliação de validade',
 };
 

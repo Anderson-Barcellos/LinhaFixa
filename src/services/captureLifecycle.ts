@@ -1,4 +1,5 @@
 export type CaptureCalibrationCameraState = 'idle' | 'starting' | 'running' | 'unavailable';
+import type { CaptureInterruptionReason } from './captureValidity';
 
 export function canBeginCaptureCalibration(input: {
   capturing: boolean;
@@ -33,4 +34,8 @@ export function createCaptureLifecycleLock(): CaptureLifecycleLock {
       return owner;
     },
   };
+}
+
+export function cameraStopInterruptionReason(capturing: boolean): CaptureInterruptionReason | null {
+  return capturing ? 'camera-stopped-during-capture' : null;
 }

@@ -184,6 +184,14 @@ test('assessCaptureValidity records route teardown without mislabelling it as pa
   assert.doesNotMatch(presentation.reasons.join(' '), /descarregada|visibilidade/i);
 });
 
+test('explicit camera stop during capture is canonical, invalid and described centrally', () => {
+  const snapshot = assessCaptureValidity(validInput({ interruption: 'camera-stopped-during-capture' }));
+  assert.equal(snapshot.grade, 'invalid');
+  assert.deepEqual(snapshot.reasonCodes, ['camera-stopped-during-capture']);
+  assert.equal(snapshot.interruption, 'camera-stopped-during-capture');
+  assert.deepEqual(describeCaptureValidity(snapshot).reasons, ['A câmera foi parada durante a captura']);
+});
+
 test('pageInterruptionReason only interrupts visibility changes away from visible and always interrupts pagehide', () => {
   assert.equal(pageInterruptionReason('visibilitychange', 'visible'), null);
   assert.equal(pageInterruptionReason('visibilitychange', 'hidden'), 'page-hidden-during-capture');
@@ -310,6 +318,7 @@ test('describeCaptureValidity owns the canonical text for every reason code', ()
     ['page-hidden-during-capture', 'A página perdeu visibilidade durante a captura'],
     ['pagehide-during-capture', 'A página foi descarregada durante a captura'],
     ['navigation-during-capture', 'A tela de captura foi encerrada durante a medição'],
+    ['camera-stopped-during-capture', 'A câmera foi parada durante a captura'],
     ['legacy-unassessed', 'Captura legada sem avaliação de validade'],
   ]);
 

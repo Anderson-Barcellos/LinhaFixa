@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { canBeginCaptureCalibration, createCaptureLifecycleLock } from './captureLifecycle';
+import { cameraStopInterruptionReason, canBeginCaptureCalibration, createCaptureLifecycleLock } from './captureLifecycle';
 
 test('canBeginCaptureCalibration blocks every recalibration path during an active capture', () => {
   assert.equal(canBeginCaptureCalibration({ capturing: true, cameraState: 'running' }), false);
@@ -41,4 +41,15 @@ test('navigation teardown owns the active capture exactly once', () => {
   const owner = lifecycle.begin()!;
   assert.equal(lifecycle.finish(owner), true);
   assert.equal(lifecycle.finish(owner), false);
+});
+
+test('camera stop action labels only an active capture and the owner persists once', () => {
+  const lifecycle = createCaptureLifecycleLock();
+  assert.equal(cameraStopInterruptionReason(false), null);
+  assert.equal(cameraStopInterruptionReason(true), 'camera-stopped-during-capture');
+  const owner = lifecycle.begin()!;
+  let persisted = 0;
+  if (lifecycle.finish(owner)) persisted += 1;
+  if (lifecycle.finish(owner)) persisted += 1;
+  assert.equal(persisted, 1);
 });

@@ -47,7 +47,7 @@ import {
   type CaptureInterruptionReason,
 } from '@/services/captureValidity';
 import { persistValidationCapture, type CapturePersistenceStatus } from '@/services/capturePersistence';
-import { canBeginCaptureCalibration, createCaptureLifecycleLock } from '@/services/captureLifecycle';
+import { cameraStopInterruptionReason, canBeginCaptureCalibration, createCaptureLifecycleLock } from '@/services/captureLifecycle';
 import {
   summarizeFunctionalVisualSignal,
   type FunctionalVisualSignalSummary,
@@ -1193,7 +1193,7 @@ export function EyeTrackingTestScreen() {
   );
 
   const stopCameraButton = cameraState === 'running' ? (
-    <button onClick={() => stopCamera()} className="flex items-center justify-center gap-2 px-4 py-2 text-slate-400 hover:text-slate-200 text-sm">
+    <button onClick={() => stopCamera(cameraStopInterruptionReason(capturingRef.current))} className="flex items-center justify-center gap-2 px-4 py-2 text-slate-400 hover:text-slate-200 text-sm">
       <RotateCcw className="w-4 h-4" /> Parar câmera
     </button>
   ) : null;
