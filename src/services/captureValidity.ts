@@ -2,7 +2,10 @@ import type { GazeSample, SaccadeMetrics } from '@/types';
 
 export type CaptureValidityGrade = 'comparable' | 'exploratory' | 'invalid';
 export type TemporalTier = 'high-temporal' | 'coarse-temporal' | 'insufficient-temporal';
-export type CaptureInterruptionReason = 'page-hidden-during-capture' | 'pagehide-during-capture';
+export type CaptureInterruptionReason =
+  | 'page-hidden-during-capture'
+  | 'pagehide-during-capture'
+  | 'navigation-during-capture';
 export type CaptureValidityReasonCode =
   | 'capture-duration-too-short'
   | 'capture-coverage-below-threshold'
@@ -198,6 +201,7 @@ const REASON_TEXT: Record<CaptureValidityReasonCode, string> = {
   'capture-tracking-gap': 'Intervalo de rastreamento acima de 200 ms',
   'page-hidden-during-capture': 'A página perdeu visibilidade durante a captura',
   'pagehide-during-capture': 'A página foi descarregada durante a captura',
+  'navigation-during-capture': 'A tela de captura foi encerrada durante a medição',
   'legacy-unassessed': 'Captura legada sem avaliação de validade',
 };
 
@@ -215,15 +219,18 @@ export function describeCaptureValidity(snapshot: CaptureValiditySnapshot): {
 } {
   const presentation = GRADE_PRESENTATION[snapshot.grade];
   const reasons = snapshot.reasonCodes.map(reason => REASON_TEXT[reason]);
-  const interrupted = snapshot.reasonCodes.some(reason => (
+  const pageInterrupted = snapshot.reasonCodes.some(reason => (
     reason === 'page-hidden-during-capture' || reason === 'pagehide-during-capture'
   ));
+  const navigated = snapshot.reasonCodes.includes('navigation-during-capture');
   return {
     label: presentation.label,
     tone: presentation.tone,
-    primary: interrupted
+    primary: pageInterrupted
       ? 'Captura não utilizável — a página perdeu visibilidade'
-      : reasons[0] ?? presentation.fallback,
+      : navigated
+        ? 'Captura não utilizável — a tela de captura foi encerrada'
+        : reasons[0] ?? presentation.fallback,
     reasons,
   };
 }

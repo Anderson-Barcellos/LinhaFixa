@@ -121,7 +121,7 @@ export function DashboardScreen() {
               regressions: c.metrics.regressionCount,
               lineReturns: c.metrics.lineReturnCount ?? null,
               meanFixationMs: c.metrics.meanFixationMs,
-              signalQuality: summarizeSaccadeSignalQuality(c.metrics, { coverage: c.coverage, calibrated: c.calibrated }).label,
+              signalQuality: summarizeSaccadeSignalQuality(c.metrics, { coverage: c.coverage, calibrated: c.calibrated, validity: c.validity }).label,
               signalSource: c.metrics.signalSource,
               sampleRateHz: c.metrics.sampleRateHz,
               posturalLabel: c.postural.label,
@@ -300,6 +300,7 @@ export function DashboardScreen() {
                     const quality = summarizeSaccadeSignalQuality(c.metrics, {
                       coverage: c.coverage,
                       calibrated: c.calibrated,
+                      validity: c.validity,
                     });
                     return (
                       <div key={c.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-5">

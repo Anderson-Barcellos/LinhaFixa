@@ -86,6 +86,29 @@ test('summarizeSaccadeSignalQuality treats an explicitly legacy capture as explo
   assert.match(quality.detail, /legada sem avaliação de validade/i);
 });
 
+test('summarizeSaccadeSignalQuality defaults missing validity to legacy exploratory evidence', () => {
+  const quality = summarizeSaccadeSignalQuality(baseMetrics, { coverage: 100, calibrated: true });
+
+  assert.equal(quality.grade, 'exploratorio');
+  assert.equal(quality.label, 'Exploratória');
+  assert.match(quality.detail, /legada sem avaliação de validade/i);
+});
+
+test('summarizeSaccadeSignalQuality permits heuristic promotion only in explicit live-preview mode', () => {
+  const highRate = summarizeSaccadeSignalQuality(baseMetrics, {
+    coverage: 100,
+    calibrated: true,
+    mode: 'live-preview',
+  });
+  const coarseRate = summarizeSaccadeSignalQuality(
+    { ...baseMetrics, sampleRateHz: 30, samplesValid: 900 },
+    { coverage: 100, calibrated: true, mode: 'live-preview' },
+  );
+
+  assert.equal(highRate.grade, 'comparavel');
+  assert.equal(coarseRate.grade, 'exploratorio');
+});
+
 test('summarizeSaccadeSignalQuality keeps raw signal exploratory even with many samples', () => {
   const quality = summarizeSaccadeSignalQuality(
     { ...baseMetrics, signalSource: 'raw-mediapipe' },
@@ -108,7 +131,7 @@ test('summarizeSaccadeSignalQuality keeps raw signal exploratory even with many 
 test('summarizeSaccadeSignalQuality requires measured coverage and rate for comparable signal', () => {
   const quality = summarizeSaccadeSignalQuality(
     { ...baseMetrics, sampleRateHz: undefined },
-    { calibrated: true }
+    { calibrated: true, mode: 'live-preview' }
   );
 
   assert.equal(quality.grade, 'exploratorio');

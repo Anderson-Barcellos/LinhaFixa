@@ -47,6 +47,7 @@ import {
   type CaptureInterruptionReason,
 } from '@/services/captureValidity';
 import { persistValidationCapture, type CapturePersistenceStatus } from '@/services/capturePersistence';
+import { canBeginCaptureCalibration } from '@/services/captureLifecycle';
 import {
   summarizeFunctionalVisualSignal,
   type FunctionalVisualSignalSummary,
@@ -135,6 +136,7 @@ export function EyeTrackingTestScreen() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mountedRef = useRef(true);
   const { ref: surfaceHostRef, surface: measuredHost } = useMeasuredSurface<HTMLDivElement>();
 
   const [cameraState, setCameraState] = useState<CameraState>('idle');
@@ -326,7 +328,9 @@ export function EyeTrackingTestScreen() {
 
   // Load saved validation captures once.
   useEffect(() => {
-    getValidationCaptures().then(setCaptures).catch(() => {/* empty list */});
+    getValidationCaptures()
+      .then(saved => { if (mountedRef.current) setCaptures(saved); })
+      .catch(() => {/* empty list */});
   }, []);
 
   // Keep the capture distance in sync with the profile once it hydrates.
@@ -361,13 +365,11 @@ export function EyeTrackingTestScreen() {
     return lines;
   };
 
-  const stopCamera = (finishActiveCapture = true) => {
-    if (finishActiveCapture && capturingRef.current) finishCaptureRef.current(null);
+  const teardownCameraResources = () => {
     runningRef.current = false;
     capturingRef.current = false;
     captureStartSnapshotRef.current = null;
     frozenFontPxRef.current = null;
-    setCapturing(false);
     frameLoopRef.current?.stop();
     frameLoopRef.current = null;
     stopCameraStream();
@@ -377,14 +379,30 @@ export function EyeTrackingTestScreen() {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-    setCameraState('idle');
-    setLive(EMPTY_LIVE);
-    setLiveSignal(EMPTY_VISUAL_SIGNAL);
     liveRef.current = EMPTY_LIVE;
     visualSignalSamplesRef.current = [];
   };
 
-  useEffect(() => () => stopCamera(false), []); // cleanup on unmount
+  const stopCamera = (interruption: CaptureInterruptionReason | null = null) => {
+    if (capturingRef.current) finishCaptureRef.current(interruption);
+    teardownCameraResources();
+    if (!mountedRef.current) return;
+    setCapturing(false);
+    setCameraState('idle');
+    setLive(EMPTY_LIVE);
+    setLiveSignal(EMPTY_VISUAL_SIGNAL);
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (capturingRef.current) {
+        finishCaptureRef.current('navigation-during-capture');
+      }
+      teardownCameraResources();
+    };
+  }, []);
 
   useEffect(() => {
     const id = window.setInterval(() => setMotionQuality(getMotionQuality()), 250);
@@ -674,7 +692,7 @@ export function EyeTrackingTestScreen() {
     // arrive back-to-back, and only the first event may own this immutable record.
     capturingRef.current = false;
     frozenFontPxRef.current = null;
-    setCapturing(false);
+    if (mountedRef.current) setCapturing(false);
     const startSnapshot = captureStartSnapshotRef.current;
     captureStartSnapshotRef.current = null;
     if (!startSnapshot) return;
@@ -762,7 +780,7 @@ export function EyeTrackingTestScreen() {
       extrapolatedSampleCount,
     } satisfies AssessedValidationCapture;
     // Report first, persist second. A slow/failing IndexedDB can never hide evidence.
-    setCaptureResult({ capture, persistence: 'saving' });
+    if (mountedRef.current) setCaptureResult({ capture, persistence: 'saving' });
     void persistCaptureAndPublish(capture);
 
     // Recall mode: the reading just ended, generate the quiz over the text that was
@@ -782,13 +800,15 @@ export function EyeTrackingTestScreen() {
     persistenceInFlightRef.current.add(capture.id);
     try {
       const result = await persistValidationCapture(capture, saveValidationCapture);
-      setCaptureResult(previous => (
-        previous?.capture === capture ? result : previous
-      ));
-      if (result.persistence === 'saved') {
-        setCaptures(previous => (
-          previous.some(item => item.id === capture.id) ? previous : [capture, ...previous]
+      if (mountedRef.current) {
+        setCaptureResult(previous => (
+          previous?.capture === capture ? result : previous
         ));
+        if (result.persistence === 'saved') {
+          setCaptures(previous => (
+            previous.some(item => item.id === capture.id) ? previous : [capture, ...previous]
+          ));
+        }
       }
     } finally {
       persistenceInFlightRef.current.delete(capture.id);
@@ -821,7 +841,9 @@ export function EyeTrackingTestScreen() {
 
   const removeCapture = (id: string) => {
     deleteValidationCapture(id)
-      .then(() => setCaptures(prev => prev.filter(c => c.id !== id)))
+      .then(() => {
+        if (mountedRef.current) setCaptures(prev => prev.filter(c => c.id !== id));
+      })
       .catch(() => {/* ignore */});
   };
 
@@ -872,6 +894,7 @@ export function EyeTrackingTestScreen() {
       : undefined;
 
   const beginCalibration = () => {
+    if (!canBeginCaptureCalibration({ capturing: capturingRef.current, cameraState })) return;
     // Cinto de segurança: o painel expandido é overlay (rect estável), mas calibrar
     // ou capturar com a gaveta aberta esconderia parte do estímulo.
     setDrawerExpanded(false);
@@ -1157,7 +1180,7 @@ export function EyeTrackingTestScreen() {
     <div className={`flex items-center gap-1.5 shrink-0 ${drawerVariant === 'side' ? 'flex-col' : ''}`}>
       <button
         onClick={beginCalibration}
-        disabled={cameraState !== 'running' && cameraState !== 'idle'}
+        disabled={!canBeginCaptureCalibration({ capturing, cameraState })}
         aria-label={calibrated ? 'Recalibrar' : 'Calibrar'}
         className="p-2.5 bg-white/10 hover:bg-white/20 disabled:opacity-40 rounded-xl"
       >
@@ -1200,7 +1223,7 @@ export function EyeTrackingTestScreen() {
 
       {/* Top bar */}
       <header className="flex items-center gap-3 px-4 py-2 shrink-0">
-        <button onClick={() => { stopCamera(); navigate('/'); }} className="p-2 bg-white/10 rounded-full hover:bg-white/20">
+        <button onClick={() => { stopCamera('navigation-during-capture'); navigate('/'); }} className="p-2 bg-white/10 rounded-full hover:bg-white/20">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h1 className="text-lg font-bold">Dinâmica ocular de leitura</h1>
@@ -1301,8 +1324,8 @@ export function EyeTrackingTestScreen() {
 
             <button
               onClick={beginCalibration}
-              disabled={cameraState !== 'running' && cameraState !== 'idle'}
-              className="flex items-center justify-center gap-2 px-4 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold"
+              disabled={!canBeginCaptureCalibration({ capturing, cameraState })}
+              className="flex items-center justify-center gap-2 px-4 py-3 bg-white/10 hover:bg-white/20 disabled:opacity-40 rounded-xl font-bold"
             >
               <Crosshair className="w-4 h-4" /> {calibrated ? 'Recalibrar' : 'Calibrar'}
             </button>

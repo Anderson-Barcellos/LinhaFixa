@@ -130,6 +130,7 @@ export function buildOcularReadingSeries(
     const signalQuality = summarizeSaccadeSignalQuality(capture.metrics, {
       coverage: capture.coverage,
       calibrated: capture.calibrated,
+      validity: capture.validity,
     });
     return {
       id: capture.id,
@@ -240,6 +241,7 @@ function readingSummary(
     ...captures.map(c => summarizeSaccadeSignalQuality(c.metrics, {
       coverage: c.coverage,
       calibrated: c.calibrated,
+      validity: c.validity,
     }).grade),
   ].filter(Boolean);
 

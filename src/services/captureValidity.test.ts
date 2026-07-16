@@ -156,6 +156,16 @@ test('assessCaptureValidity records both page interruption reasons as invalid', 
   }
 });
 
+test('assessCaptureValidity records route teardown without mislabelling it as pagehide', () => {
+  const snapshot = assessCaptureValidity(validInput({ interruption: 'navigation-during-capture' }));
+  const presentation = describeCaptureValidity(snapshot);
+
+  assert.equal(snapshot.grade, 'invalid');
+  assert.deepEqual(snapshot.reasonCodes, ['navigation-during-capture']);
+  assert.equal(presentation.primary, 'Captura não utilizável — a tela de captura foi encerrada');
+  assert.doesNotMatch(presentation.reasons.join(' '), /descarregada|visibilidade/i);
+});
+
 test('pageInterruptionReason only interrupts visibility changes away from visible and always interrupts pagehide', () => {
   assert.equal(pageInterruptionReason('visibilitychange', 'visible'), null);
   assert.equal(pageInterruptionReason('visibilitychange', 'hidden'), 'page-hidden-during-capture');
@@ -281,6 +291,7 @@ test('describeCaptureValidity owns the canonical text for every reason code', ()
     ['capture-tracking-gap', 'Intervalo de rastreamento acima de 200 ms'],
     ['page-hidden-during-capture', 'A página perdeu visibilidade durante a captura'],
     ['pagehide-during-capture', 'A página foi descarregada durante a captura'],
+    ['navigation-during-capture', 'A tela de captura foi encerrada durante a medição'],
     ['legacy-unassessed', 'Captura legada sem avaliação de validade'],
   ]);
 

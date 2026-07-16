@@ -17,12 +17,12 @@ const baseMetrics: SaccadeMetrics = {
 test('summarizeReadingDynamics frames valid webcam data as ocular dynamics, not exact word position', () => {
   const summary = summarizeReadingDynamics(baseMetrics, 94);
 
-  assert.equal(summary.signalLabel, 'Sinal temporal consistente');
+  assert.equal(summary.signalLabel, 'Sinal temporal parcial');
   assert.equal(summary.positionLabel, 'Posição textual aproximada');
   assert.match(summary.primaryInsight, /24 sacadas/);
   assert.match(summary.primaryInsight, /6 regressões/);
   assert.match(summary.primaryInsight, /420 ms/);
-  assert.equal(summary.signalQuality.grade, 'comparavel');
+  assert.equal(summary.signalQuality.grade, 'exploratorio');
   assert.match(summary.confidenceNote, /movimento relativo/);
 });
 
@@ -31,7 +31,7 @@ test('summarizeReadingDynamics reports limited signal when tracking is unavailab
 
   assert.equal(summary.signalLabel, 'Sinal insuficiente');
   assert.equal(summary.positionLabel, 'Sem leitura confiável');
-  assert.equal(summary.signalQuality.grade, 'baixo-sinal');
+  assert.equal(summary.signalQuality.grade, 'exploratorio');
   assert.match(summary.primaryInsight, /Não houve amostras suficientes/);
 });
 

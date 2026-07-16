@@ -235,6 +235,21 @@ test('buildOcularReadingSeries extracts eye-derived saccades and fixations in ch
       axis: { hStd: 0.11, hRange: 0.4, vStd: 0.04, vRange: 0.1 },
       sampleCount: 370,
       samples: [],
+      durationMs: 20_000,
+      validity: {
+        contractVersion: 1,
+        assessedAt: 1700000120000,
+        grade: 'comparable',
+        reasonCodes: [],
+        durationMs: 20_000,
+        coverage: 91,
+        signalSource: 'calibrated-mediapipe',
+        selectedSourceRatio: 0.95,
+        sampleRateHz: 58,
+        temporalTier: 'high-temporal',
+        gapCount: 0,
+        interruption: null,
+      },
     },
   ];
 

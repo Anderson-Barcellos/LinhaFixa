@@ -20,22 +20,23 @@ export interface SaccadeSignalQuality {
 export interface SaccadeSignalQualityOptions {
   coverage?: number | null;
   calibrated?: boolean | null;
-  // Persisted captures must pass this key even when its legacy value is undefined;
-  // that distinguishes unassessed history from non-capture live summaries.
   validity?: CaptureValiditySnapshot;
+  mode?: 'persisted' | 'live-preview';
 }
 
 const MIN_VALID_SAMPLES = 5;
 const COMPARABLE_SAMPLES = 300;
 const COMPARABLE_COVERAGE = 80;
 const LOW_COVERAGE = 50;
-const COMPARABLE_SAMPLE_RATE_HZ = 24;
+const COMPARABLE_SAMPLE_RATE_HZ = 45;
 
 export function summarizeSaccadeSignalQuality(
   metrics: SaccadeMetrics,
   options: SaccadeSignalQualityOptions = {}
 ): SaccadeSignalQuality {
-  if ('validity' in options) {
+  // Persisted/unqualified evidence fails closed. The old sample heuristic survives
+  // only behind an explicit live-only mode and still cannot promote coarse 24–44 Hz.
+  if (options.mode !== 'live-preview') {
     const validity = captureValidityOrLegacy(options.validity);
     const presentation = describeCaptureValidity(validity);
     const source = options.validity
