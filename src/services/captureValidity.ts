@@ -235,6 +235,14 @@ export function describeCaptureValidity(snapshot: CaptureValiditySnapshot): {
   };
 }
 
+export function describeCaptureValidityContract(): {
+  trackingGapLabel: string;
+} {
+  return {
+    trackingGapLabel: `Gaps > ${CAPTURE_VALIDITY_THRESHOLDS.trackingGapMs} ms`,
+  };
+}
+
 export function pageInterruptionReason(
   event: 'visibilitychange' | 'pagehide',
   visibilityState?: DocumentVisibilityState,

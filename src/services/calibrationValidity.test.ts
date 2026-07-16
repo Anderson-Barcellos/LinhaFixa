@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  CALIBRATION_VALIDITY_CONTRACT,
   CALIBRATION_VALIDITY_CONTRACT_VERSION,
   assessCalibration,
+  describeCalibrationAssessment,
   type CalibrationValidationPointEvidence,
 } from './calibrationValidity';
 import type { CalibrationSignature } from './ocularSignalContract';
@@ -60,6 +62,24 @@ test('accepts the exact v1 boundaries with complete evidence', () => {
   assert.deepEqual(assessment.reasonCodes, []);
   assert.equal(assessment.completeFitPoints, 9);
   assert.equal(assessment.completeValidationPoints, 5);
+});
+
+test('exports the versioned thresholds and canonical rejection copy', () => {
+  assert.deepEqual(CALIBRATION_VALIDITY_CONTRACT, {
+    version: 1,
+    minimumSamplesPerPoint: 12,
+    requiredFitPoints: 9,
+    requiredValidationPoints: 5,
+    maximumMeanErrorDeg: 5,
+    maximumP95ErrorDeg: 8,
+  });
+  const input = validInput();
+  input.fitSampleCounts[0] = 11;
+  const assessment = assessCalibration(input);
+  assert.deepEqual(describeCalibrationAssessment(assessment).reasons, [
+    'Não houve amostras suficientes em todos os pontos.',
+    'A grade principal de calibração não foi concluída.',
+  ]);
 });
 
 test('applies v1 acceptance boundaries and exact reason codes', () => {

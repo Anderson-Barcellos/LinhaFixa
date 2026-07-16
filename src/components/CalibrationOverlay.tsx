@@ -10,8 +10,9 @@ import {
 } from '@/services/gazeCalibration';
 import {
   assessCalibration,
+  CALIBRATION_VALIDITY_CONTRACT,
+  describeCalibrationAssessment,
   type CalibrationAssessment,
-  type CalibrationReasonCode,
   type CalibrationValidationPointEvidence,
 } from '@/services/calibrationValidity';
 import { interpupillaryPx, setDistanceAnchor, resetDistanceAnchor } from '@/services/viewingGeometry';
@@ -56,17 +57,8 @@ const VALID_POINTS = [
 const SETTLE_MS = 450;          // let the eyes land on a new dot before collecting
 const MIN_POINT_MS = 550;       // avoid advancing from a burst of adjacent frames
 const MAX_POINT_MS = 2200;      // avoid hanging forever on dropped video frames
-const MIN_SAMPLES_PER_POINT = 12;
+const MIN_SAMPLES_PER_POINT = CALIBRATION_VALIDITY_CONTRACT.minimumSamplesPerPoint;
 const PX_PER_CM = 37.8;         // CSS reference (~96 dpi); used only for the deg readout
-
-const CALIBRATION_REASON_TEXT: Record<CalibrationReasonCode, string> = {
-  'calibration-insufficient-target-samples': 'Não houve amostras suficientes em todos os pontos.',
-  'calibration-missing-fit-points': 'A grade de calibração não foi concluída.',
-  'calibration-missing-validation-points': 'A verificação independente não foi concluída.',
-  'calibration-high-mean-error': 'O erro médio ficou acima do limite de 5°.',
-  'calibration-high-p95-error': 'A variação do erro ficou acima do limite de 8°.',
-  'calibration-extrapolated-validation': 'O modelo extrapolou fora da região calibrada.',
-};
 
 type Phase = 'warmup' | 'calibrating' | 'validating' | 'done' | 'rejected' | 'unavailable';
 
@@ -485,7 +477,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           <p className="text-slate-300 max-w-md mb-8">
             {rejection.failedPointHadNoSamples
               ? 'Rosto/olhos não foram detectados neste ponto.'
-              : CALIBRATION_REASON_TEXT[rejection.assessment.reasonCodes[0]]}
+              : describeCalibrationAssessment(rejection.assessment).reasons[0]}
           </p>
           <div className="flex flex-col sm:flex-row gap-4">
             <button onClick={restart} className="px-10 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-lg font-bold">

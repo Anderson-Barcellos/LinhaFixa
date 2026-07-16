@@ -1,6 +1,6 @@
 import React from 'react';
 import type { AssessedValidationCapture } from '@/types';
-import { describeCaptureValidity } from '@/services/captureValidity';
+import { describeCaptureValidity, describeCaptureValidityContract } from '@/services/captureValidity';
 
 export interface CaptureValiditySummaryProps {
   capture: AssessedValidationCapture;
@@ -9,6 +9,7 @@ export interface CaptureValiditySummaryProps {
 export function CaptureValiditySummary({ capture }: CaptureValiditySummaryProps) {
   const validity = capture.validity;
   const presentation = describeCaptureValidity(validity);
+  const contract = describeCaptureValidityContract();
   const toneClass = presentation.tone === 'emerald'
     ? 'bg-emerald-500/15 text-emerald-300'
     : presentation.tone === 'rose'
@@ -35,7 +36,7 @@ export function CaptureValiditySummary({ capture }: CaptureValiditySummaryProps)
         <Fact label="Tier" value={temporalTierLabel(validity.temporalTier)} />
         <Fact label="Fonte selecionada" value={sourceLabel(validity.signalSource)} />
         <Fact label="Consistência da fonte" value={validity.selectedSourceRatio != null ? `${(validity.selectedSourceRatio * 100).toFixed(0)}%` : 'não medida'} />
-        <Fact label="Gaps > 200 ms" value={String(validity.gapCount)} />
+        <Fact label={contract.trackingGapLabel} value={String(validity.gapCount)} />
         <Fact label="Amplitude média" value={capture.metrics.meanSaccadeAmplitude != null ? capture.metrics.meanSaccadeAmplitude.toFixed(3) : 'não estimável'} />
         <Fact label="Fixação média" value={capture.metrics.meanFixationMs != null ? `${capture.metrics.meanFixationMs.toFixed(0)} ms` : 'não estimável'} />
       </dl>

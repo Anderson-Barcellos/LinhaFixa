@@ -22,7 +22,7 @@ test('analyzeSaccades counts rightward sacades and leftward regressions from gaz
   assert.equal(metrics.regressionCount, 1);
   assert.equal(metrics.lineReturnCount, 0);
   assert.equal(metrics.samplesValid, 6);
-  assert.equal(metrics.sampleRateHz, 36);
+  assert.ok(Math.abs((metrics.sampleRateHz ?? 0) - (5 / 140) * 1000) < 1e-9);
   assert.ok(metrics.meanFixationMs !== null);
   assert.equal(Math.round(metrics.meanFixationMs), 40);
 });
@@ -78,6 +78,23 @@ test('golden plateau trace pins event detection to the measured temporal tier', 
     assert.equal(metrics.events?.length, expectedEvents, `${rateHz} Hz event count`);
     assert.equal(metrics.saccadeCount, expectedEvents, `${rateHz} Hz aggregate count`);
     assert.equal(classifyTemporalTier(metrics.sampleRateHz), expectedTier, `${rateHz} Hz tier`);
+  }
+});
+
+test('analyzeSaccades preserves fractional rates across validity boundaries', () => {
+  for (const rateHz of [23.5, 23.99, 44.5, 44.99, 24, 45]) {
+    const dt = 1000 / rateHz;
+    const samples: GazeSample[] = Array.from({ length: 13 }, (_, index) => ({
+      t: index * dt,
+      h: index < 6 ? 0.4 : 0.46,
+      v: 0.5,
+    }));
+    const metrics = analyzeSaccades(samples);
+    assert.ok(Math.abs((metrics.sampleRateHz ?? 0) - rateHz) < 1e-9, `${rateHz} Hz`);
+    assert.equal(
+      classifyTemporalTier(metrics.sampleRateHz),
+      rateHz < 24 ? 'insufficient-temporal' : rateHz < 45 ? 'coarse-temporal' : 'high-temporal',
+    );
   }
 });
 

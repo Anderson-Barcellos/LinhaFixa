@@ -7,6 +7,7 @@ import {
   classifyTemporalTier,
   countTrackingGaps,
   describeCaptureValidity,
+  describeCaptureValidityContract,
   pageInterruptionReason,
   type CaptureValidityInput,
   type CaptureValidityReasonCode,
@@ -43,6 +44,23 @@ test('classifyTemporalTier applies the exact 24 Hz and 45 Hz boundaries', () => 
   for (const [rate, expected] of cases) {
     assert.equal(classifyTemporalTier(rate), expected, `rate ${String(rate)}`);
   }
+});
+
+test('fractional rates immediately below a boundary cannot be promoted by presentation rounding', () => {
+  for (const rate of [23.5, 23.99]) {
+    const snapshot = assessCaptureValidity(validInput({ sampleRateHz: rate }));
+    assert.equal(snapshot.sampleRateHz, rate);
+    assert.equal(snapshot.temporalTier, 'insufficient-temporal');
+    assert.equal(snapshot.grade, 'invalid');
+  }
+  for (const rate of [44.5, 44.99]) {
+    const snapshot = assessCaptureValidity(validInput({ sampleRateHz: rate }));
+    assert.equal(snapshot.sampleRateHz, rate);
+    assert.equal(snapshot.temporalTier, 'coarse-temporal');
+    assert.equal(snapshot.grade, 'exploratory');
+  }
+  assert.equal(assessCaptureValidity(validInput({ sampleRateHz: 24 })).temporalTier, 'coarse-temporal');
+  assert.equal(assessCaptureValidity(validInput({ sampleRateHz: 45 })).temporalTier, 'high-temporal');
 });
 
 test('assessCaptureValidity applies the inclusive duration boundary', () => {
@@ -299,6 +317,10 @@ test('describeCaptureValidity owns the canonical text for every reason code', ()
     const snapshot = { ...captureValidityOrLegacy(undefined), reasonCodes: [reason] };
     assert.deepEqual(describeCaptureValidity(snapshot).reasons, [text], reason);
   }
+});
+
+test('capture validity UI copy derives the tracking-gap threshold from the contract', () => {
+  assert.deepEqual(describeCaptureValidityContract(), { trackingGapLabel: 'Gaps > 200 ms' });
 });
 
 test('describeCaptureValidity derives grade presentation and primary-message priority centrally', () => {

@@ -64,7 +64,9 @@ export function summarizeFunctionalVisualSignal(
 
   const continuityPct = round0((intervals.filter(i => i.dt <= CONTINUITY_GAP_MS).length / intervals.length) * 100);
   const fixationShare = round0((intervals.filter(i => Math.abs(i.dh) / i.dt <= FIXATION_VELOCITY).length / intervals.length) * 100);
-  const sampleRateHz = Math.round(((valid.length - 1) / durationMs) * 1000);
+  // Keep measurement precision in the evidence path. Consumers round only when
+  // formatting; rounding here could promote 23.5 Hz to the 24 Hz validity tier.
+  const sampleRateHz = ((valid.length - 1) / durationMs) * 1000;
   const lineReturnCandidate = intervals.some(i => i.dh <= LINE_RETURN_DH && Math.abs(i.dv) >= LINE_RETURN_DV);
   const directionChangeRate = directionChanges(intervals.map(i => i.dh)) / Math.max(1, intervals.length - 1);
   const sourceLabel = valid.some(s => s.calibrated) ? 'Calibrado' : 'Bruto';

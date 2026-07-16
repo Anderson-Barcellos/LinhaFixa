@@ -157,3 +157,34 @@ test('calibrationReuseDecision reuses an accepted calibration only for matching 
     assert.equal(decision.reasons.includes(scenario.expectedReason), true, scenario.name);
   }
 });
+
+test('video geometry is mandatory when the accepted signature contains it', () => {
+  const expected = reusableSignature();
+  for (const geometry of [
+    {},
+    { videoWidth: Number.NaN, videoHeight: 720 },
+    { videoWidth: 1280, videoHeight: Number.POSITIVE_INFINITY },
+    { videoWidth: 0, videoHeight: 720 },
+    { videoWidth: 1280, videoHeight: -1 },
+  ]) {
+    const actual = { ...expected, ...geometry } as CalibrationSignature;
+    if (Object.keys(geometry).length === 0) {
+      delete actual.videoWidth;
+      delete actual.videoHeight;
+    }
+    const result = calibrationSignatureMatches(expected, actual);
+    assert.equal(result.matches, false, JSON.stringify(geometry));
+    assert.deepEqual(result.reasons, ['geometria do video indisponivel']);
+  }
+});
+
+test('legacy signatures without video geometry remain compatible on that dimension', () => {
+  const expected = reusableSignature();
+  delete expected.videoWidth;
+  delete expected.videoHeight;
+  const actual = reusableSignature();
+  delete actual.videoWidth;
+  delete actual.videoHeight;
+
+  assert.deepEqual(calibrationSignatureMatches(expected, actual), { matches: true, reasons: [] });
+});

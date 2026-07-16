@@ -92,8 +92,14 @@ export function calibrationSignatureMatches(
     reasons.push('superficie de leitura mudou');
   }
   if (
-    expected.videoWidth && expected.videoHeight
-    && actual.videoWidth && actual.videoHeight
+    hasPositiveVideoGeometry(expected)
+    && !hasPositiveVideoGeometry(actual)
+  ) {
+    reasons.push('geometria do video indisponivel');
+  }
+  if (
+    hasPositiveVideoGeometry(expected)
+    && hasPositiveVideoGeometry(actual)
     && Math.abs(aspect(expected.videoWidth, expected.videoHeight) - aspect(actual.videoWidth, actual.videoHeight)) > VIDEO_ASPECT_TOLERANCE
   ) {
     reasons.push('aspecto do video mudou');
@@ -144,4 +150,15 @@ function rectDiffers(a: SurfaceRect, b: SurfaceRect): boolean {
 
 function aspect(width: number, height: number): number {
   return height > 0 ? width / height : 0;
+}
+
+function hasPositiveVideoGeometry(
+  signature: CalibrationSignature,
+): signature is CalibrationSignature & { videoWidth: number; videoHeight: number } {
+  return typeof signature.videoWidth === 'number'
+    && Number.isFinite(signature.videoWidth)
+    && signature.videoWidth > 0
+    && typeof signature.videoHeight === 'number'
+    && Number.isFinite(signature.videoHeight)
+    && signature.videoHeight > 0;
 }

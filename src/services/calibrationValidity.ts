@@ -2,6 +2,15 @@ import type { CalibrationSignature } from './ocularSignalContract';
 
 export const CALIBRATION_VALIDITY_CONTRACT_VERSION = 1;
 
+export const CALIBRATION_VALIDITY_CONTRACT = Object.freeze({
+  version: CALIBRATION_VALIDITY_CONTRACT_VERSION,
+  minimumSamplesPerPoint: 12,
+  requiredFitPoints: 9,
+  requiredValidationPoints: 5,
+  maximumMeanErrorDeg: 5,
+  maximumP95ErrorDeg: 8,
+});
+
 export type CalibrationReasonCode =
   | 'calibration-insufficient-target-samples'
   | 'calibration-missing-fit-points'
@@ -32,11 +41,14 @@ export interface CalibrationAssessment {
   signature: CalibrationSignature;
 }
 
-const MIN_SAMPLES = 12;
-const FIT_POINTS = 9;
-const VALIDATION_POINTS = 5;
-const MAX_MEAN_ERROR_DEG = 5;
-const MAX_P95_ERROR_DEG = 8;
+const CALIBRATION_REASON_TEXT: Record<CalibrationReasonCode, string> = {
+  'calibration-insufficient-target-samples': 'Não houve amostras suficientes em todos os pontos.',
+  'calibration-missing-fit-points': 'A grade principal de calibração não foi concluída.',
+  'calibration-missing-validation-points': 'A verificação independente não foi concluída.',
+  'calibration-high-mean-error': `O erro médio ficou acima do limite de ${CALIBRATION_VALIDITY_CONTRACT.maximumMeanErrorDeg}°.`,
+  'calibration-high-p95-error': `A variação do erro ficou acima do limite de ${CALIBRATION_VALIDITY_CONTRACT.maximumP95ErrorDeg}°.`,
+  'calibration-extrapolated-validation': 'O modelo extrapolou fora da região calibrada.',
+};
 
 export function assessCalibration(input: {
   id: string;
@@ -53,7 +65,8 @@ export function assessCalibration(input: {
   }));
   const validationSampleCounts = validationPoints.map(point => finiteOrZero(point.sampleCount));
 
-  const validFitCount = (count: number) => Number.isInteger(count) && count >= MIN_SAMPLES;
+  const validFitCount = (count: number) => Number.isInteger(count)
+    && count >= CALIBRATION_VALIDITY_CONTRACT.minimumSamplesPerPoint;
   const completeFitPoints = input.fitSampleCounts.filter(validFitCount).length;
   let insufficientEvidence = !Number.isFinite(input.createdAt)
     || !signatureNumbersAreFinite(input.signature)
@@ -64,11 +77,12 @@ export function assessCalibration(input: {
   const validationErrors: number[] = [];
 
   for (const point of validationPoints) {
-    const sampleCountValid = Number.isInteger(point.sampleCount) && point.sampleCount >= MIN_SAMPLES;
+    const sampleCountValid = Number.isInteger(point.sampleCount)
+      && point.sampleCount >= CALIBRATION_VALIDITY_CONTRACT.minimumSamplesPerPoint;
     const extrapolatedCountValid = Number.isInteger(point.extrapolatedCount) && point.extrapolatedCount >= 0;
     const validErrors = point.errorsDeg.filter(error => Number.isFinite(error) && error >= 0);
     const errorsValid = validErrors.length === point.errorsDeg.length;
-    const enoughErrors = validErrors.length >= MIN_SAMPLES;
+    const enoughErrors = validErrors.length >= CALIBRATION_VALIDITY_CONTRACT.minimumSamplesPerPoint;
 
     if (sampleCountValid && errorsValid && enoughErrors) {
       completeValidationPoints += 1;
@@ -92,16 +106,16 @@ export function assessCalibration(input: {
   if (insufficientEvidence) {
     reasonCodes.push('calibration-insufficient-target-samples');
   }
-  if (completeFitPoints < FIT_POINTS) {
+  if (completeFitPoints < CALIBRATION_VALIDITY_CONTRACT.requiredFitPoints) {
     reasonCodes.push('calibration-missing-fit-points');
   }
-  if (completeValidationPoints < VALIDATION_POINTS) {
+  if (completeValidationPoints < CALIBRATION_VALIDITY_CONTRACT.requiredValidationPoints) {
     reasonCodes.push('calibration-missing-validation-points');
   }
-  if (meanErrorDeg !== null && meanErrorDeg > MAX_MEAN_ERROR_DEG) {
+  if (meanErrorDeg !== null && meanErrorDeg > CALIBRATION_VALIDITY_CONTRACT.maximumMeanErrorDeg) {
     reasonCodes.push('calibration-high-mean-error');
   }
-  if (p95ErrorDeg !== null && p95ErrorDeg > MAX_P95_ERROR_DEG) {
+  if (p95ErrorDeg !== null && p95ErrorDeg > CALIBRATION_VALIDITY_CONTRACT.maximumP95ErrorDeg) {
     reasonCodes.push('calibration-high-p95-error');
   }
   if (extrapolatedValidationSamples > 0) {
@@ -122,6 +136,16 @@ export function assessCalibration(input: {
     p95ErrorDeg,
     extrapolatedValidationSamples,
     signature: cloneSignature(input.signature),
+  };
+}
+
+export function describeCalibrationAssessment(assessment: CalibrationAssessment): {
+  accepted: boolean;
+  reasons: string[];
+} {
+  return {
+    accepted: assessment.accepted,
+    reasons: assessment.reasonCodes.map(reason => CALIBRATION_REASON_TEXT[reason]),
   };
 }
 

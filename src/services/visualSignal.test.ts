@@ -46,3 +46,18 @@ test('summarizeFunctionalVisualSignal separates broad line return from short reg
   assert.equal(summary.lineReturnCandidate, true);
   assert.match(summary.eventLabel, /retorno de linha/i);
 });
+
+test('summarizeFunctionalVisualSignal preserves fractional sample rate evidence', () => {
+  for (const rate of [23.5, 23.99, 44.5, 44.99, 24, 45]) {
+    const durationMs = (12 / rate) * 1000;
+    const samples = Array.from({ length: 13 }, (_, index) => ({
+      t: (durationMs / 12) * index,
+      h: 0.2 + index * 0.02,
+      v: 0.5,
+      calibrated: true,
+    }));
+
+    const summary = summarizeFunctionalVisualSignal(samples);
+    assert.ok(Math.abs(summary.sampleRateHz - rate) < 1e-9, `rate ${rate}`);
+  }
+});

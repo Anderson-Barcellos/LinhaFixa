@@ -181,5 +181,5 @@ function sampleRateHz(samples: GazeSample[]): number {
   if (samples.length < 2) return 0;
   const durationMs = samples[samples.length - 1].t - samples[0].t;
   if (durationMs <= 0) return 0;
-  return Math.round(((samples.length - 1) / durationMs) * 1000);
+  return ((samples.length - 1) / durationMs) * 1000;
 }
