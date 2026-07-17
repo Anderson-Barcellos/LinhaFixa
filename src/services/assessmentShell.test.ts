@@ -9,3 +9,14 @@ test('APP_SECTIONS exposes Avaliacao as a first-class shell section', () => {
     true,
   );
 });
+
+test('APP_SECTIONS keeps Historico in the IA while marking it unavailable in the shell', () => {
+  const historySection = APP_SECTIONS.find(section => section.id === 'history');
+
+  assert.deepEqual(historySection, {
+    id: 'history',
+    label: 'Historico',
+    href: '/dashboard?tab=history',
+    available: false,
+  });
+});

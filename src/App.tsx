@@ -15,7 +15,8 @@ import { DashboardScreen } from '@/screens/DashboardScreen';
 import { ExerciseLibraryScreen } from '@/screens/ExerciseLibraryScreen';
 import { SettingsScreen } from '@/screens/SettingsScreen';
 import { AssessmentWorkspaceScreen } from '@/screens/AssessmentWorkspaceScreen';
-import { mapLegacyRoute } from '@/services/assessmentAdapter';
+import { EyeTrackingTestScreen } from '@/screens/EyeTrackingTestScreen';
+import { LEGACY_ASSESSMENT_WORKSPACE_ROUTE } from '@/services/assessmentAdapter';
 
 export default function App() {
   const { profile, setProfile, consentAccepted, setConsentAccepted } = useAppStore();
@@ -41,7 +42,6 @@ export default function App() {
   // Router basename derived from the Vite `base` (APP_BASE_PATH). '/' at the root,
   // '/gaze' when mounted under a sub-path. Keeps client-side routes correct in both.
   const basename = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') || '/';
-  const legacyAssessmentRoute = mapLegacyRoute('/eye-tracking-test') ?? '/assessment';
 
   return (
     <BrowserRouter basename={basename}>
@@ -54,7 +54,7 @@ export default function App() {
           <Route path="/statistics" element={<Navigate to="/dashboard" replace />} />
           <Route path="/library" element={!hydrated ? <BootScreen /> : consentAccepted ? <ExerciseLibraryScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/settings" element={!hydrated ? <BootScreen /> : consentAccepted ? <SettingsScreen /> : <Navigate to="/consent" replace />} />
-          <Route path="/eye-tracking-test" element={<Navigate to={legacyAssessmentRoute} replace />} />
+          <Route path={LEGACY_ASSESSMENT_WORKSPACE_ROUTE} element={!hydrated ? <BootScreen /> : consentAccepted ? <EyeTrackingTestScreen /> : <Navigate to="/consent" replace />} />
        </Routes>
     </BrowserRouter>
   );

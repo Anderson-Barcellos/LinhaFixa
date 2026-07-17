@@ -4,7 +4,7 @@ import test from 'node:test';
 import type { RecallTestResult } from '@/types';
 import {
   buildAssessmentWorkspaceSnapshot,
-  mapLegacyRoute,
+  LEGACY_ASSESSMENT_WORKSPACE_ROUTE,
 } from './assessmentAdapter';
 
 const baseRecallResult = {
@@ -55,9 +55,8 @@ const baseRecallResult = {
   readingDurationMs: 18000,
 } satisfies RecallTestResult;
 
-test('mapLegacyRoute keeps the old diagnostics entrypoint compatible', () => {
-  assert.equal(mapLegacyRoute('/eye-tracking-test'), '/assessment');
-  assert.equal(mapLegacyRoute('/dashboard'), null);
+test('legacy assessment workspace route stays available while the shell is the new entrypoint', () => {
+  assert.equal(LEGACY_ASSESSMENT_WORKSPACE_ROUTE, '/eye-tracking-test');
 });
 
 test('buildAssessmentWorkspaceSnapshot derives the shell state from primitive readiness inputs', () => {

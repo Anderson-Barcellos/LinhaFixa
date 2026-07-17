@@ -55,16 +55,33 @@ export function AppSidebar({ currentPath }: { currentPath: string }) {
         {APP_SECTIONS.map((section) => {
           const Icon = SECTION_ICONS[section.id];
           const active = isSectionActive(currentPath, section.href);
+          const sharedClassName = `flex min-w-fit items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
+            active
+              ? 'bg-slate-900 text-white shadow-sm'
+              : 'bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`;
+
+          if (!section.available) {
+            return (
+              <div
+                key={section.id}
+                aria-disabled="true"
+                className="flex min-w-fit items-center gap-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-400"
+              >
+                <Icon className="h-4 w-4" />
+                <span>{section.label}</span>
+                <span className="ml-auto rounded-full bg-white px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  Em breve
+                </span>
+              </div>
+            );
+          }
 
           return (
             <Link
               key={section.id}
               to={section.href}
-              className={`flex min-w-fit items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-colors ${
-                active
-                  ? 'bg-slate-900 text-white shadow-sm'
-                  : 'bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              }`}
+              className={sharedClassName}
             >
               <Icon className="h-4 w-4" />
               <span>{section.label}</span>
@@ -76,8 +93,8 @@ export function AppSidebar({ currentPath }: { currentPath: string }) {
       <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 md:mt-10">
         <p className="font-semibold text-slate-900">Avaliacao primeiro</p>
         <p className="mt-2 leading-6">
-          A shell nova organiza captura, leitura e recall no mesmo espaco, com o
-          atalho legado apontando para esta rota.
+          A shell nova organiza a entrada da avaliacao e encaminha para o
+          workspace validado atual enquanto a integracao nativa ainda entra.
         </p>
       </div>
     </aside>

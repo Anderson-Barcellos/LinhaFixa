@@ -33,9 +33,7 @@ export interface BuildAssessmentWorkspaceSnapshotInput extends AssessmentStageIn
   recallResult: RecallTestResult | null;
 }
 
-export function mapLegacyRoute(pathname: string): '/assessment' | null {
-  return pathname === '/eye-tracking-test' ? '/assessment' : null;
-}
+export const LEGACY_ASSESSMENT_WORKSPACE_ROUTE = '/eye-tracking-test' as const;
 
 export function buildAssessmentWorkspaceSnapshot(
   input: BuildAssessmentWorkspaceSnapshotInput,

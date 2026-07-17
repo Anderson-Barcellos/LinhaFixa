@@ -109,7 +109,7 @@ export function HomeScreen() {
            </div>
            <div className="flex-1">
               <h4 className="font-bold text-slate-800 text-lg">Avaliacao de leitura</h4>
-              <p className="text-slate-500 text-sm font-medium">Fluxo guiado para captura ocular e recall durante a leitura.</p>
+              <p className="text-slate-500 text-sm font-medium">Shell nova com acesso ao workspace validado atual de captura ocular e recall.</p>
            </div>
            <ArrowRight className="w-5 h-5 text-slate-400" />
         </button>

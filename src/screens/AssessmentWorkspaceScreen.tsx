@@ -12,7 +12,10 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 import { AppShell } from '@/components/app/AppShell';
 import { getRecallTests, getValidationCaptures } from '@/services/storage';
-import { buildAssessmentWorkspaceSnapshot } from '@/services/assessmentAdapter';
+import {
+  buildAssessmentWorkspaceSnapshot,
+  LEGACY_ASSESSMENT_WORKSPACE_ROUTE,
+} from '@/services/assessmentAdapter';
 import { useAppStore } from '@/store/useAppStore';
 import type { RecallTestResult, ValidationCapture } from '@/types';
 
@@ -50,7 +53,6 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
   const [loading, setLoading] = useState(true);
   const [captures, setCaptures] = useState<ValidationCapture[]>([]);
   const [recalls, setRecalls] = useState<RecallTestResult[]>([]);
-  const [workspaceReady, setWorkspaceReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,12 +128,14 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
                   Workspace de avaliacao
                 </div>
                 <h2 className="mt-4 text-3xl font-bold tracking-tight">
-                  Shell pronta para leitura, captura ocular e recall.
+                  Shell pronta para abrir o workspace validado de leitura e recall.
                 </h2>
                 <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-slate-300">
                   Esta etapa consolida a navegacao assessment-first e usa o
                   snapshot da Task 2 para refletir readiness, ultimos registros e
-                  resultado resumido sem reativar o fluxo imersivo legado inteiro.
+                  resultado resumido. Enquanto a integracao imersiva nativa da
+                  shell nao pousa aqui, a CTA principal abre o fluxo validado
+                  atual em <code>{LEGACY_ASSESSMENT_WORKSPACE_ROUTE}</code>.
                 </p>
               </div>
 
@@ -150,7 +154,7 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
               <button
                 type="button"
                 disabled={loading || snapshot.primaryAction.disabled}
-                onClick={() => setWorkspaceReady(true)}
+                onClick={() => navigate(LEGACY_ASSESSMENT_WORKSPACE_ROUTE)}
                 className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-slate-300"
               >
                 {snapshot.primaryAction.label}
@@ -232,16 +236,15 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
                 </h3>
                 <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-slate-500">
                   A estrutura ja separa hero, status, superficie principal e
-                  trilha lateral. No proximo bundle, esta area recebe a
-                  experiencia imersiva de camera, texto e quiz.
+                  trilha lateral. Hoje a shell usa essa area para enquadrar o
+                  fluxo validado atual; no proximo bundle, esta mesma superficie
+                  recebe a experiencia imersiva nativa de camera, texto e quiz.
                 </p>
               </div>
-              {workspaceReady && (
-                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Workspace armada
-                </span>
-              )}
+              <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">
+                <CheckCircle2 className="h-4 w-4" />
+                Fluxo validado ativo
+              </span>
             </div>
 
             <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)]">
@@ -252,14 +255,13 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
                 </div>
                 <div className="mt-4 rounded-[1.5rem] bg-white p-6 shadow-sm ring-1 ring-slate-200">
                   <p className="text-lg font-semibold text-slate-900">
-                    {workspaceReady
-                      ? 'Espaco reservado para o leitor, overlay ocular e quiz.'
-                      : 'Acione a CTA principal para validar a shell antes da integracao do fluxo imersivo.'}
+                    O leitor, a captura ocular e o recall continuam vivos no
+                    workspace legado validado.
                   </p>
                   <p className="mt-3 text-sm leading-6 text-slate-500">
-                    O layout ja suporta a troca de estados do snapshot e a
-                    compatibilidade de rota, sem manter duas experiencias de
-                    avaliacao divergentes em paralelo.
+                    A CTA principal ja leva direto para <code>{LEGACY_ASSESSMENT_WORKSPACE_ROUTE}</code>.
+                    Esta superficie existe para manter a IA da nova shell clara
+                    sem fingir que a integracao imersiva ja foi portada.
                   </p>
                 </div>
               </div>
@@ -282,9 +284,11 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
                     Compatibilidade
                   </h4>
                   <p className="mt-3 text-sm leading-6 text-slate-600">
-                    O atalho legado <code>/eye-tracking-test</code> agora cai em{' '}
-                    <code>/assessment</code>, mantendo a entrada antiga viva sem
-                    duplicar a interface.
+                    <code>/assessment</code> e{' '}
+                    <code>{LEGACY_ASSESSMENT_WORKSPACE_ROUTE}</code> convivem por
+                    enquanto: a shell virou a nova entrada, e o atalho legado
+                    segue abrindo o fluxo validado atual sem duplicar a logica
+                    de captura.
                   </p>
                 </article>
               </div>
@@ -320,8 +324,9 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
               </h3>
               <p className="mt-4 text-sm leading-6 text-slate-500">
                 Sem registros anteriores por aqui. A nova rota ja organiza a
-                estrutura, o sidebar e o ponto de entrada unico para quando a
-                captura guiada for religada.
+                estrutura e o ponto de entrada unico, mas ainda abre o
+                workspace validado atual ate a captura guiada pousar nativamente
+                nesta shell.
               </p>
             </article>
           )}
@@ -333,7 +338,7 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
             <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
               <li>Texto de leitura e canvas ocular dentro da superficie principal.</li>
               <li>Estados de captura, recall e resultado conectados ao snapshot.</li>
-              <li>Transicao do fluxo legado para esta shell sem rotas paralelas.</li>
+              <li>Migracao do fluxo validado para dentro da shell quando a integracao imersiva estiver pronta.</li>
             </ul>
           </article>
         </aside>

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/useAppStore';
 import { saveProfile } from '@/services/storage';
+import { LEGACY_ASSESSMENT_WORKSPACE_ROUTE } from '@/services/assessmentAdapter';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { isCalibrated, getAccuracyDeg } from '@/services/gazeCalibration';
 import { clampViewingDistanceCm, normalizeViewingDistanceInput, viewingDistanceInputValue } from '@/services/viewingDistance';
@@ -163,7 +164,7 @@ export function SettingsScreen() {
                  continuam sendo estimativas experimentais por webcam.
                </p>
                <button
-                  onClick={() => navigate('/eye-tracking-test')}
+                  onClick={() => navigate(LEGACY_ASSESSMENT_WORKSPACE_ROUTE)}
                   className="mt-4 flex items-center gap-2 px-5 py-3 bg-white border border-indigo-200 text-indigo-700 rounded-xl font-bold hover:bg-indigo-50"
                >
                   <ScanEye className="w-5 h-5" /> Dinâmica ocular de leitura

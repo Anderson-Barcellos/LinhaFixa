@@ -1,10 +1,10 @@
 export const APP_SECTIONS = [
-  { id: 'home', label: 'Hoje', href: '/' },
-  { id: 'training', label: 'Treino', href: '/player' },
-  { id: 'assessment', label: 'Avaliacao', href: '/assessment' },
-  { id: 'progress', label: 'Progresso', href: '/dashboard' },
-  { id: 'history', label: 'Historico', href: '/dashboard?tab=history' },
-  { id: 'settings', label: 'Configuracoes', href: '/settings' },
+  { id: 'home', label: 'Hoje', href: '/', available: true },
+  { id: 'training', label: 'Treino', href: '/player', available: true },
+  { id: 'assessment', label: 'Avaliacao', href: '/assessment', available: true },
+  { id: 'progress', label: 'Progresso', href: '/dashboard', available: true },
+  { id: 'history', label: 'Historico', href: '/dashboard?tab=history', available: false },
+  { id: 'settings', label: 'Configuracoes', href: '/settings', available: true },
 ] as const;
 
 export type AppSection = (typeof APP_SECTIONS)[number];
