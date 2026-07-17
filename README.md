@@ -1,81 +1,76 @@
 # Linha Fixa
 
-Aplicativo web para treino oculomotor, leitura assistida e análise experimental
-de dinâmica ocular por webcam. Em produção, roda em:
+Aplicativo web para avaliacao oculomotora, leitura assistida, recall e treino
+visual por webcam. A aplicacao e experimental, nao realiza diagnostico medico e
+nao substitui eye tracker dedicado ou avaliacao profissional.
 
-- `https://ultrassom.ai/gaze/`
-- serviço systemd `linhafixa.service`
-- porta local `3060`
-- diretório `/root/Gaze`
+## Estado atual
 
-## Foco atual
+A entrada autenticada do produto e a nova fachada de Avaliacao. O aceite do
+consentimento e a raiz `/` encaminham para `/assessment`; a home visual anterior
+esta desligada do roteamento.
 
-O app deixou de tratar a webcam como promessa de "palavra exata olhada" e passou
-a priorizar o que o hardware entrega melhor: dinâmica temporal de leitura.
+| Rota | Papel atual |
+| --- | --- |
+| `/assessment` | Shell clara, preparo, resumo local e entrada da avaliacao |
+| `/assessment?workspace=live` | Superficie imersiva de calibracao, captura e recall |
+| `/history` | Linha do tempo local de capturas e recalls |
+| `/player` | Treino guiado existente |
+| `/dashboard` | Progresso e qualidade da medicao existentes |
+| `/settings` | Perfil, preferencias e calibracao |
+| `/eye-tracking-test` | Alias legado; redireciona para a avaliacao ativa |
 
-Métricas principais:
+A shell nova usa uma camada fina de adaptacao sobre os servicos atuais. Captura,
+calibracao, validade, recall e persistencia nao foram reimplementados dentro dos
+componentes visuais.
 
-- sacadas progressivas;
-- regressões;
-- duração média de fixação;
-- amplitude horizontal relativa;
-- cobertura facial e amostras válidas;
-- estabilidade postural via Motion Assist no iPhone/Safari.
+## Dados e limites
 
-A calibração espacial continua disponível para posicionar o ponto na tela, mas é
-camada de apoio. A leitura principal vem do movimento relativo, especialmente no
-eixo horizontal.
+Os dados continuam `local-first` no IndexedDB `linhafixa_db` v3, com stores para
+perfil, consentimento, sessoes, capturas de validacao e testes de recall. Nao ha
+SQLite, sincronizacao com servidor, contas ou backup automatico implementados.
 
-## Limites honestos
+As metricas priorizam dinamica temporal horizontal, cobertura, taxa medida,
+consistencia de fonte, validade da calibracao e estabilidade postural. Webcam
+comum nao mede microssacadas nem garante posicao exata de palavra.
 
-Webcam comum não substitui equipamento clínico ou eye tracker dedicado. A análise
-é experimental, depende de iluminação, distância, enquadramento, postura e FPS da
-câmera. O sistema não detecta microssacadas e não faz diagnóstico médico.
+## Desenvolvimento
 
-## Rodar localmente
-
-Pré-requisitos:
-
-- Node.js 20+
-- `npm ci`
-
-Comandos:
+Requisitos: Node.js 20+ e dependencias instaladas com `npm ci`.
 
 ```bash
-npm ci
 npm run dev
-```
-
-Variáveis opcionais:
-
-- `OPENAI_API_KEY`: habilita geração de textos/planos via OpenAI.
-- `OPENAI_MODEL`: padrão `gpt-4o-mini`.
-- `APP_BASE_PATH`: use `/gaze` para build/runtime sob `ultrassom.ai/gaze`.
-- `PORT`: padrão `3000`; em produção nesta máquina é `3060`.
-
-Sem `OPENAI_API_KEY`, o app segue funcionando com conteúdo/plano fallback.
-
-## Validação
-
-```bash
-node --import tsx --test $(rg --files -g '*.test.ts' src)
 npm run lint
+npm test
 APP_BASE_PATH=/gaze npm run build
+npm run smoke
 ```
 
-## Deploy nesta máquina
+Variaveis:
 
-O deploy real usa Apache como proxy HTTPS e Node como servidor do SPA/API.
-O mapa autoritativo de rotas da máquina fica em `/etc/apache2/APACHE.md`.
+- `APP_BASE_PATH`: `/gaze` no build e runtime de producao.
+- `PORT`: `3060` no servico desta maquina.
+- `OPENAI_API_KEY`: necessaria para geracao de textos, recall, plano e insight.
+- `OPENAI_MODEL`: modelo usado pelos endpoints do servidor.
 
-Fluxo de atualização:
+Sem chave OpenAI, os recursos locais e dados salvos continuam acessiveis, mas os
+endpoints de geracao respondem `503 OPENAI_API_KEY_MISSING`.
 
-```bash
-APP_BASE_PATH=/gaze npm run build
-systemctl restart linhafixa.service
-curl -s -o /dev/null -w "%{http_code} %{content_type}\n" http://127.0.0.1:3060/gaze/
-curl -s -o /dev/null -w "%{http_code} %{content_type}\n" https://ultrassom.ai/gaze/
-```
+## Producao
 
-Consulte [deploy/apache/README.md](deploy/apache/README.md) para detalhes de
-systemd, Apache, permissões de câmera/sensores e checagens de produção.
+- URL: `https://ultrassom.ai/gaze/`
+- Servico: `linhafixa.service`
+- Porta local: `3060`
+- Diretorio: `/root/Gaze`
+- Mapa autoritativo do host: `/etc/apache2/APACHE.md`
+
+O build e o runtime devem receber o mesmo `APP_BASE_PATH=/gaze`. Consulte
+[deploy/apache/README.md](deploy/apache/README.md) para o procedimento operacional.
+
+## Documentacao
+
+O estado e a continuidade ficam em [BACKLOG.md](BACKLOG.md). A direcao da fachada
+esta em
+[docs/superpowers/specs/2026-07-17-app-reconstruction-design.md](docs/superpowers/specs/2026-07-17-app-reconstruction-design.md);
+o contrato de validade permanece em
+[docs/superpowers/specs/2026-07-16-instrument-validity-design.md](docs/superpowers/specs/2026-07-16-instrument-validity-design.md).

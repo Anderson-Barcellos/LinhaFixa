@@ -2,9 +2,14 @@
 
 **Data:** 2026-07-16
 
-**Status:** aprovado por Anders no brainstorming
+**Status:** implementado, publicado e aprovado por Anders em 2026-07-16
 
-**Escopo:** primeiro PACK derivado da auditoria read-only de 2026-07-16
+**Escopo:** contrato cientifico preservado como referencia; acompanhamento atual em
+`BACKLOG.md`
+
+> Este documento registra as decisoes do contrato de validade. Os planos de
+> execucao foram removidos depois da entrega; qualquer texto prospectivo abaixo e
+> contexto de design, nao uma tarefa ativa.
 
 ## Objetivo
 

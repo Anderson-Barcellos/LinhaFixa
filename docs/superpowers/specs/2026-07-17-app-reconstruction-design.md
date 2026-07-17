@@ -1,291 +1,127 @@
-# Design — Reconstrucao do App Linha Fixa
+# Reconstrucao do App Linha Fixa
 
 **Data:** 2026-07-17
 
-**Status:** Direcao aprovada por Anders; especificacao refinada com a estrategia de reconstrucao da fatia 1
-
-**Escopo:** Reconstrucao estrutural do app publicado em `/gaze`, cobrindo layout, organizacao das secoes, fluxo de avaliacao/recall, persistencia duravel e reorganizacao da area de estatisticas.
+**Status:** fatia 1 implementada no working tree e aguardando revisao de Anders
 
-## Contexto e motivacao
+**Fonte operacional:** `BACKLOG.md`
 
-O estado atual do produto mistura tres preocupacoes num mesmo conjunto de telas:
-medicao ocular, dashboard longitudinal e armazenamento local. O resultado funciona,
-mas a arquitetura visual e tecnica ainda esta muito concentrada em poucos pontos,
-principalmente `EyeTrackingTestScreen.tsx`, `DashboardScreen.tsx` e `storage.ts`.
+## Decisao
 
-O mockup aprovado de `Progresso` definiu a direcao desejada para o shell do app:
-barra lateral clara, filtros no topo, metricas-resumo, aba `Meu progresso`,
-aba `Qualidade da medicao`, bloco principal de leitura/recall e painel lateral de
-contexto. A partir dele, a reconstrucao precisa deixar de ser um ajuste de tela e
-passar a ser uma reorganizacao do produto inteiro.
+A reconstrucao e incremental: fachada nova e camada fina de adaptacao sobre os
+servicos atuais. Nao e um reskin da home antiga nem um rewrite simultaneo do
+frontend e backend.
 
-## Objetivos
+O produto separa:
 
-- Separar o produto em duas camadas claras:
-  - shell claro para navegacao, historico, configuracoes e progresso;
-  - superficie escura imersiva para calibracao, leitura, captura ocular e recall.
-- Reorganizar as secoes principais em `Hoje`, `Treino`, `Avaliacao`, `Progresso`,
-  `Historico` e `Configuracoes`.
-- Transformar `Leitura + Recall` num fluxo dedicado, com estados explicitos e sem
-  depender de modal improvisado dentro do diagnostico.
-- Evoluir a persistencia de `IndexedDB` puro para `local-first + sync com SQLite`.
-- Preservar a logica ocular-first de comparabilidade ja existente nas estatisticas.
+- shell clara para navegacao, preparo, historico e leitura de resultados;
+- superficie escura imersiva para calibracao, leitura, captura ocular e recall.
 
-## Nao objetivos
+As regras de captura, calibracao, validade, recall e persistencia permanecem nos
+servicos existentes. Componentes visuais consomem contratos derivados, sem
+duplicar regra de negocio.
 
-- Nao fazer hotfix isolado do widget antigo de Recall antes da reconstrucao.
-- Nao substituir as rotas atuais de IA; elas permanecem separadas da persistencia.
-- Nao criar sistema completo de contas/autenticacao nesta primeira fase.
-- Nao alterar a semantica clinica das metricas oculares ja aprovadas sem nova frente
-  especifica de validacao cientifica.
+## Corte implementado
 
-## Estrategia de reconstrucao
+### Entrada e rotas
 
-A reconstrucao desta frente nao sera um reskin das telas atuais nem um rewrite
-integral do app e do backend ao mesmo tempo. A estrategia aprovada e um
-`shell novo + camada de adaptacao`, em que a fachada do produto muda de forma
-agressiva, mas os servicos centrais continuam como fonte de verdade.
+| Rota | Contrato |
+| --- | --- |
+| `/` | Redireciona usuarios consentidos para `/assessment` |
+| `/consent` | Salva o aceite local e abre `/assessment` |
+| `/assessment` | Shell clara e preparo da avaliacao |
+| `/assessment?workspace=live` | Superficie ocular imersiva |
+| `/assessment?workspace=live&mode=recall` | Leitura + Recall |
+| `/history` | Timeline local de capturas e recalls |
+| `/eye-tracking-test` | Alias legado para a workspace ativa |
 
-### Abordagem aprovada
+`HomeScreen` nao e importado por `App.tsx` e nao participa do roteamento.
 
-- o frontend novo nasce com shell, navegacao, hierarquia e estados novos;
-- o backend e os servicos atuais continuam livres para evoluir, sem o frontend
-  novo depender da costura visual antiga;
-- a integracao entre os dois lados passa por uma camada fina de adaptacao,
-  evitando que a UI nova converse diretamente com a complexidade atual de
-  `EyeTrackingTestScreen.tsx`;
-- a migracao acontece por fatias, e nao por troca completa de todo o app.
+### Shell
 
-### Fatia 1 aprovada
+`AppShell` e `AppSidebar` estabelecem a navegacao responsiva compartilhada. As
+secoes expostas sao Hoje, Treino, Avaliacao, Progresso, Historico e
+Configuracoes. Nesta fatia, Avaliacao e Historico receberam telas novas; Treino,
+Progresso e Configuracoes continuam usando as telas funcionais anteriores.
 
-A primeira fatia funcional da reconstrucao sera `Avaliacao/Leitura+Recall`.
-`Progresso` continua sendo a referencia visual principal do shell e do design
-system, mas nao e a primeira entrega navegavel. A intencao e atacar primeiro o
-centro do uso clinico e deixar o dashboard como segunda camada da reconstrucao.
+### Avaliacao
 
-## Arquitetura de produto
+`AssessmentWorkspaceScreen` possui dois estados de composicao:
 
-### Shell do app
+- launcher claro com `AssessmentSetupPanel`, resumo do ultimo registro e escolha
+  entre Captura simples e Leitura + Recall;
+- workspace live que incorpora `EyeTrackingTestScreen` em modo `embedded`, com
+  altura restrita e saida de volta para o launcher.
 
-O app passa a ter uma espinha dorsal unica, clara e consistente, com sidebar fixa em
-desktop e navegacao compacta em mobile. As secoes terao os seguintes papeis:
+`AssessmentSessionSurface` fornece a moldura da sessao e
+`AssessmentResultPanel` apresenta o desfecho sem alterar o contrato salvo.
 
-- `Hoje`: ponto de entrada operacional com status rapido, ultimo sync, proxima acao
-  sugerida e atividade recente.
-- `Treino`: sessao guiada e biblioteca de exercicios.
-- `Avaliacao`: diagnostico, calibracao, captura ocular e fluxo de recall.
-- `Progresso`: dashboard longitudinal.
-- `Historico`: timeline de sessoes, capturas e testes de recall com drill-down.
-- `Configuracoes`: perfil, distancia, preferencias de leitura, dados e backup.
+### Camada de adaptacao
 
-### Superficie de avaliacao
+`assessmentFlow.ts` define estados e acoes derivados.
+`assessmentAdapter.ts` converte capturas e recalls existentes em snapshot da
+workspace e centraliza as rotas live/legada. Essa camada nao grava dados e nao
+controla camera.
 
-O fluxo de avaliacao deixa de ser um conjunto de overlays dispersos e passa a seguir
-uma maquina de estados visivel:
+### Historico
 
-- preparo
-- carregando texto
-- texto pronto
-- capturando
-- gerando questoes
-- questionario
-- resultado
+`HistoryScreen` le `validationCaptures` e `recallTests`, combina os registros
+por timestamp e os apresenta em timeline. Historico e Progresso permanecem
+conceitos distintos: um mostra eventos; o outro agrega tendencias e auditoria.
 
-`Leitura + Recall` deixa de ser um modo encaixado dentro do diagnostico antigo e
-passa a ser um fluxo nativo da experiencia. `Captura simples` continua existindo,
-mas como variante do mesmo percurso, e nao como uma tela paralela com logica
-propria.
+## Responsividade
 
-Em desktop largo, a superficie principal ocupa a maior area util e o chrome lateral
-fica subordinado a ela. Em mobile portrait, o fluxo empilha blocos. Em mobile
-landscape curto, o espaco e priorizado para leitura e captura, com chrome minimo.
+- desktop: sidebar fixa e conteudo em colunas;
+- mobile portrait: navegacao horizontal e fluxo empilhado;
+- mobile landscape curto: workspace live prioriza o canvas e usa gaveta lateral
+  de diagnostico sem reflow;
+- expandir a gaveta nao pode alterar a geometria da superficie calibrada.
 
-## Sistema de layout
+## Dados e backend reais
 
-O design system base sera extraido do mockup aprovado de `Progresso`.
+A fonte local continua sendo IndexedDB v3:
 
-### Principios
+- `profile`;
+- `consent`;
+- `sessions`;
+- `validationCaptures`;
+- `recallTests`.
 
-- shell claro para uso administrativo e leitura de historico;
-- superficie escura para medicao;
-- filtros e metricas no topo de `Progresso`;
-- tipografia de interface separada da tipografia do estimulo visual;
-- comparabilidade e auditoria tratadas como elementos de primeira classe.
+Os endpoints Express geram texto, questoes, plano e insight via OpenAI. A fachada
+nova nao altera esses contratos.
 
-### Modos responsivos obrigatorios
+Nao implementado:
 
-- desktop largo com sidebar fixa;
-- mobile portrait com fluxo empilhado;
-- mobile landscape curto com prioridade total para a area de medicao.
+- SQLite;
+- outbox ou sincronizacao;
+- envelopes de revisao/tombstone;
+- Basic Auth;
+- backup diario;
+- sistema de contas.
 
-## Persistencia e backend
+Esses itens sao direcao futura, nao estado atual.
 
-### Estrategia geral
+## Gates da fatia
 
-- `IndexedDB` continua sendo a fonte imediata e offline.
-- `SQLite` entra como espelho duravel no servidor.
-- O contrato e `local-first`, com outbox local e sincronizacao assincrona.
-- a reconstrucao do frontend nao deve impor restricoes artificiais ao backend;
-  quanto mais liberdade os contratos reais preservarem, melhor.
-
-### Camada de adaptacao do frontend
-
-O shell novo nao deve importar comportamento diretamente da tela antiga.
-Aprovamos uma camada pequena de `view-models` e `actions` para expor ao frontend
-novo somente os estados que ele precisa enxergar, como:
-
-- sessao pronta
-- captura ativa
-- quiz disponivel
-- resultado salvo
-- erro recuperavel
-
-Essa camada faz a ponte entre a UI nova e os servicos reais de armazenamento,
-captura, calibracao e recall, sem duplicar regra de negocio.
-
-### Modelagem
-
-Todo registro novo persistido para sync deve carregar envelope versionado:
-
-- `id` (UUID)
-- `schemaVersion`
-- `createdAt`
-- `updatedAt`
-- `deviceId`
-- `revision`
-- `syncStatus`
-
-Regras de dominio:
-
-- `ValidationCapture` e `RecallTestResult` sao imutaveis.
-- perfil, preferencias e consentimento sao mutaveis/versionados.
-- sync falho nao pode esconder dado local nem invalidar evidencia de captura.
-
-### Contratos de sync
-
-Primeira fase com:
-
-- endpoint de `push` idempotente;
-- endpoint de `pull` incremental por cursor/revisao;
-- outbox local;
-- metadados de reconciliacao e tombstone quando necessario.
-
-### Seguranca e recuperacao
-
-- rota publicada protegida por `Apache Basic Auth` na primeira fase duravel;
-- backup diario do SQLite;
-- export manual JSON/CSV continua disponivel como caminho adicional de recuperacao.
-
-## Estatisticas
-
-`Progresso` passa a ter duas abas principais:
-
-### Meu progresso
-
-- sessoes concluidas
-- sessoes comparaveis
-- recall medio
-- tempo de leitura
-- tendencias de leitura + recall
-- dinamica ocular resumida
-- contexto recente como dado descritivo
-
-### Qualidade da medicao
-
-- validade de captura
-- cobertura e perda de sinal
-- extrapolacao
-- consistencia de fonte
-- comparabilidade por dispositivo, orientacao e fonte
-
-### Regras de implementacao
-
-- manter a logica atual de comparabilidade e resumos puros em
-  `statisticsSummary.ts`;
-- incluir `recallTests` na montagem do dashboard e nos filtros;
-- registros nao comparaveis continuam visiveis em auditoria, mas nao contaminam
-  tendencias.
-
-## Fases de implementacao aprovadas
-
-### Fase A — Fundacao de dados e sync
-
-- envelopes versionados
-- outbox local
-- sync com SQLite
-- endpoints de push/pull
-- backup diario
-
-### Fase B — Shell do app
-
-- navegacao
-- hierarquia das secoes
-- design system base
-- responsividade estrutural
-
-### Fase C — Avaliacao e Recall
-
-- superficie dedicada
-- estados explicitos
-- leitura, captura, geracao de questoes e resultado
-- shell claro fora da sessao e superficie escura imersiva durante a sessao
-- fluxo unico para `Captura simples` e `Leitura + Recall`
-
-## Ordem de implementacao da fatia 1
-
-### Bloco 1 — Shell novo + rota de Avaliacao
-
-- criar a nova fachada base;
-- introduzir a rota nova de `Avaliacao`;
-- estabelecer a composicao shell claro + superficie escura.
-
-### Bloco 2 — Fluxo visual de preparo, texto e captura
-
-- transformar a entrada da sessao em percurso guiado;
-- separar claramente `preparo`, `texto pronto` e `captura em andamento`;
-- reduzir o chrome durante a medicao.
-
-### Bloco 3 — Quiz e resultado
-
-- integrar `gerando questoes`, `questionario` e `resultado` como sequencia unica;
-- absorver o recall no fluxo principal, sem modal improvisado;
-- consolidar leitura, qualidade da captura e desfecho do recall na mesma narrativa.
-
-### Bloco 4 — Adaptacao real ao legado tecnico
-
-- substituir os pontos mais criticos hoje concentrados em `EyeTrackingTestScreen.tsx`;
-- usar a camada de adaptacao como contrato entre UI nova e servicos atuais;
-- manter persistencia local e comportamento central intactos.
-
-### Fase D — Progresso
-
-- aba `Meu progresso`
-- aba `Qualidade da medicao`
-- filtros comparaveis
-- integracao de recall
-
-### Fase E — Historico e Configuracoes
-
-- timeline consolidada
-- drill-down por evento
-- export e recuperacao
-
-## Gates da reconstrucao
-
-- o frontend novo so avanca quando conseguir usar os servicos atuais sem duplicar
-  regra de negocio;
-- a persistencia local nao pode quebrar nem perder evidencias de captura;
-- a reconstrucao nao pode reespalhar estado visual na tela antiga;
-- a fachada nova precisa parecer produto novo, mas continuar apoiada no backend e
-  nos servicos reais que ja funcionam.
-
-## Assumptions travadas
-
-- o mockup aprovado de `Progresso` e a referencia visual principal do shell e do dashboard;
-- `Progresso` orienta o design system, mas a primeira entrega funcional sera
-  `Avaliacao/Leitura+Recall`;
-- a primeira fase duravel usa `Basic Auth`, nao contas;
-- a primeira fase duravel usa `sync + backup diario`;
-- o bug atual do Recall sera absorvido pela reconstrucao do fluxo, nao por hotfix isolado;
-- a reconstrucao do frontend segue por `shell novo + camada de adaptacao`, e nao
-  por rewrite completo nem por reskin incremental das telas atuais.
+- raiz e consentimento devem terminar na nova Avaliacao;
+- o layout antigo nao pode aparecer no fluxo principal;
+- `/eye-tracking-test` deve apenas redirecionar;
+- captura e recall devem continuar persistindo no IndexedDB existente;
+- mobile portrait, mobile landscape e desktops devem manter geometria valida;
+- nenhum componente novo pode duplicar regra clinica ou de persistencia.
+
+Evidencia fresca de 2026-07-17:
+
+- TypeScript limpo;
+- 249/249 testes;
+- build com `APP_BASE_PATH=/gaze`;
+- smoke layout 95/95;
+- smoke de validade 72/72;
+- smoke de avaliacao 7/7.
+
+## Fora desta fatia
+
+A reconstrucao das telas Hoje, Treino, Progresso e Configuracoes e a persistencia
+duravel permanecem abertas. Elas so recebem plano detalhado quando Anders escolher
+a proxima frente, evitando que documentos futuros sejam confundidos com codigo
+implementado.

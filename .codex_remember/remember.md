@@ -1,13 +1,13 @@
 Arquivo de continuidade do Codex neste repositorio. Nao confundir com notas do Claude nem com documentacao funcional do produto.
 
 State:
-Bundle "Geometria e consistencia desktop" publicado e refinado. Desktop agora usa superficie de diagnostico limitada/estavel; calibracao mira o retangulo real da superficie; diagnostico e calibracao mostram moldura rigida nomeada para deixar claro onde o teste acontece. Capturas salvam `environment` com layout, viewport, superficie, video, camera negociada e taxas medidas. 30 Hz calibrado e consistente nao e mais rebaixado automaticamente.
+PACK Reconstrucao do App ativo. Fatia 1 implementada e aguardando revisao de Anders: raiz/consentimento -> /assessment; shell clara de preparo; workspace ocular escura em ?workspace=live; /history na shell; alias /eye-tracking-test apenas para compatibilidade. HomeScreen antigo esta desligado do roteamento.
 
 Next:
-Teste manual recomendado no desktop real: Diagnostico -> iniciar camera -> calibrar -> captura. Conferir se a moldura "Area fixa de leitura e calibracao" coincide visualmente com "Area calibrada do teste" e se o relatorio mostra "Ambiente e camera" com camera negociada, FPS deteccao e taxa ocular separados.
+Revisar a fatia atual antes de abrir outra frente. Depois, Anders escolhe entre reconstruir outra secao da shell ou ativar persistencia duravel. Nao existe plano futuro ativo.
 
 Context:
-Arquivos ativos: `src/screens/EyeTrackingTestScreen.tsx`, `src/components/CalibrationOverlay.tsx`, `src/types.ts`, `src/services/cameraTelemetry.ts`, `src/services/captureGeometry.ts`, `src/services/signalQuality.ts`, alem dos ajustes anteriores em `faceTracking`, `ExerciseCanvas` e `deviceProfile`. Plano do bundle em `docs/codex/plans/2026-07-01-geometria-consistencia-desktop.md`.
+Fonte operacional: BACKLOG.md. Spec as-built: docs/superpowers/specs/2026-07-17-app-reconstruction-design.md. Persistencia real continua IndexedDB v3; SQLite/sync/Basic Auth/backup nao existem.
 
 Validation:
-Publicado em 2026-07-02: `linhafixa.service` ativo, bundle publico `/gaze/assets/index-Ct7H63IR.js`. Passaram `npx tsc --noEmit`, `node --import tsx --test $(rg --files -g '*.test.ts' src)` (71/71), `APP_BASE_PATH=/gaze npm run build`, `git diff --check`, curl publico `/gaze/` 200 com assets JS/CSS corretos e smoke Playwright/Chrome desktop com screenshots em `/tmp/gaze-diagnostic-frame.png` e `/tmp/gaze-calibration-frame.png`.
+2026-07-17: lint passou; testes 249/249; build APP_BASE_PATH=/gaze passou; smoke layout 95/95, validade 72/72 e assessment 7/7. real-tab-hidden ficou bloqueado pelo ambiente.
