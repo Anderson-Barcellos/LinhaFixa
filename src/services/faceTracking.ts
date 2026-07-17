@@ -1,5 +1,6 @@
-import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
+import type { FaceLandmarker as FaceLandmarkerInstance } from '@mediapipe/tasks-vision';
 import { GazeSample } from '@/types';
+import { createRetryableSingleFlight, loadMediaPipeRuntime } from './mediaPipeRuntime';
 
 export interface HeadPose {
   pitch: number;
@@ -10,30 +11,17 @@ export interface HeadPose {
   scale: number;
 }
 
-let faceLandmarker: FaceLandmarker | null = null;
+let faceLandmarker: FaceLandmarkerInstance | null = null;
 
-export async function initFaceTracking() {
-  if (faceLandmarker) return;
-  try {
-    const vision = await FilesetResolver.forVisionTasks(
-      // Self-hosted wasm (copied from the pinned @mediapipe/tasks-vision at build time),
-      // served under the app base path so it works at '/' or '/gaze/'. Avoids the runtime
-      // CDN dependency for offline/privacy/PWA.
-      `${import.meta.env.BASE_URL}vendor/mediapipe/wasm`
-    );
-    try {
-      faceLandmarker = await createFaceLandmarker(vision, "GPU");
-    } catch (gpuErr) {
-      console.warn("GPU face tracking unavailable; falling back to CPU.", gpuErr);
-      faceLandmarker = await createFaceLandmarker(vision, "CPU");
-    }
-  } catch (err) {
-    console.warn("Não foi possível inicializar o rastreamento facial real. O monitoramento de cabeça/olhar ficará indisponível.", err);
-  }
-}
-
-function createFaceLandmarker(vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>, delegate: "GPU" | "CPU") {
-  return FaceLandmarker.createFromOptions(vision, {
+const detectorInitialization = createRetryableSingleFlight(async () => {
+  const { FilesetResolver, FaceLandmarker } = await loadMediaPipeRuntime();
+  const vision = await FilesetResolver.forVisionTasks(
+    // Self-hosted wasm (copied from the pinned @mediapipe/tasks-vision at build time),
+    // served under the app base path so it works at '/' or '/gaze/'. Avoids the runtime
+    // CDN dependency for offline/privacy/PWA.
+    `${import.meta.env.BASE_URL}vendor/mediapipe/wasm`
+  );
+  const create = (delegate: 'GPU' | 'CPU') => FaceLandmarker.createFromOptions(vision, {
     baseOptions: {
       // Self-hosted .task bundle (vendored in public/vendor/mediapipe). Includes the
       // iris mesh (478 landmarks), needed for gaze. Served under the app base path.
@@ -42,9 +30,26 @@ function createFaceLandmarker(vision: Awaited<ReturnType<typeof FilesetResolver.
     },
     // Blendshapes give robust eyeLook* coefficients used as gaze-calibration features.
     outputFaceBlendshapes: true,
-    runningMode: "VIDEO",
-    numFaces: 1
+    runningMode: 'VIDEO',
+    numFaces: 1,
   });
+  try {
+    faceLandmarker = await create('GPU');
+  } catch (gpuErr) {
+    console.warn('GPU face tracking unavailable; falling back to CPU.', gpuErr);
+    faceLandmarker = await create('CPU');
+  }
+  return true;
+});
+
+export async function initFaceTracking(): Promise<boolean> {
+  if (faceLandmarker) return true;
+  try {
+    return await detectorInitialization.run();
+  } catch (err) {
+    console.warn('Não foi possível inicializar o rastreamento facial real. O monitoramento de cabeça/olhar ficará indisponível.', err);
+    return false;
+  }
 }
 
 // Whether a real (non-mock) face tracker is loaded. The UI uses this to avoid
