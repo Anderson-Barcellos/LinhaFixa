@@ -8,6 +8,8 @@ import { smokeResultMarker } from './smoke-runtime.mjs';
 
 const BASE_URL = (process.argv[2] ?? 'http://localhost:3060/gaze').replace(/\/$/, '');
 const CHROME = process.env.CHROME_PATH ?? '/usr/bin/google-chrome';
+const READING_CONTENT_URL = `${BASE_URL}/api/generateReadingContent`;
+const EXPECTED_READING_CONTENT_CALLS = 2;
 const manifest = JSON.parse(await readFile(resolve('dist/.vite/manifest.json'), 'utf8'));
 
 const chunkFile = source => {
@@ -40,6 +42,7 @@ const LAZY_ROUTE_CASES = [
 ];
 
 let checks = 0;
+let readingContentCalls = 0;
 const failures = [];
 
 function check(scope, label, ok, detail = '') {
@@ -107,6 +110,15 @@ async function assertLazyRouteMatrix(page, appOrigin, localPaths) {
     const url = new URL(request.url());
     if (url.origin === appOrigin) issues.push(`requestfailed: ${url.pathname} ${request.failure()?.errorText ?? ''}`);
   };
+  const onRequest = request => {
+    const url = new URL(request.url());
+    if (
+      url.pathname.endsWith('/api/generateReadingContent')
+      && (url.href !== READING_CONTENT_URL || request.method() !== 'POST')
+    ) {
+      issues.push(`unexpected reading-content request: ${request.method()} ${url.href}`);
+    }
+  };
   const onResponse = response => {
     const url = new URL(response.url());
     if (url.origin === appOrigin && response.status() >= 400) {
@@ -115,6 +127,7 @@ async function assertLazyRouteMatrix(page, appOrigin, localPaths) {
   };
   page.on('console', onConsole);
   page.on('pageerror', onPageError);
+  page.on('request', onRequest);
   page.on('requestfailed', onRequestFailed);
   page.on('response', onResponse);
 
@@ -145,6 +158,7 @@ async function assertLazyRouteMatrix(page, appOrigin, localPaths) {
   } finally {
     page.off('console', onConsole);
     page.off('pageerror', onPageError);
+    page.off('request', onRequest);
     page.off('requestfailed', onRequestFailed);
     page.off('response', onResponse);
   }
@@ -158,11 +172,18 @@ const browser = await chromium.launch({
 
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 860 } });
-  await context.route('**/api/generateReadingContent', route => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ text: 'Texto determinístico para o smoke de rotas lazy.' }),
-  }));
+  await context.route(READING_CONTENT_URL, route => {
+    const request = route.request();
+    if (request.url() !== READING_CONTENT_URL || request.method() !== 'POST') {
+      return route.continue();
+    }
+    readingContentCalls += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ text: 'Texto determinístico para o smoke de rotas lazy.' }),
+    });
+  });
   await context.addInitScript(() => {
     const idleCallbacks = new Map();
     let nextIdleId = 1;
@@ -237,6 +258,12 @@ try {
     check('dashboard', 'Dashboard/Recharts carrega apenas ao abrir a rota', hasPath(localPaths, dashboardChunk));
 
     await assertLazyRouteMatrix(page, appOrigin, localPaths);
+    check(
+      'lazy-routes',
+      'fixture de conteúdo intercepta exatamente as duas chamadas previstas',
+      readingContentCalls === EXPECTED_READING_CONTENT_CALLS,
+      `calls=${readingContentCalls}`,
+    );
 
     await assertCacheHeader(context.request, 'cache', 'HTML', '/', HTML_CACHE_CONTROL);
     await assertCacheHeader(context.request, 'cache', 'asset com hash', entryChunk, IMMUTABLE_CACHE_CONTROL);

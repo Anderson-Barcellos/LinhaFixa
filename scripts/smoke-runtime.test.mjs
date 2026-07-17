@@ -64,3 +64,12 @@ test('loading smoke directly opens and reloads all five lazy routes', async () =
   }
   assert.match(source, /page\.reload\(/);
 });
+
+test('loading smoke intercepts reading content only at the exact same-origin API URL', async () => {
+  const source = await readFile(new URL('./smoke-loading.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /context\.route\(['"]\*\*\/api\/generateReadingContent/);
+  assert.match(source, /const READING_CONTENT_URL = `\$\{BASE_URL\}\/api\/generateReadingContent`/);
+  assert.match(source, /context\.route\(READING_CONTENT_URL/);
+  assert.match(source, /request\.method\(\) !== 'POST'/);
+  assert.match(source, /readingContentCalls === EXPECTED_READING_CONTENT_CALLS/);
+});
