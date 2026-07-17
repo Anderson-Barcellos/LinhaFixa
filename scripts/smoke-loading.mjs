@@ -57,7 +57,7 @@ async function waitUntil(predicate, label, timeoutMs = 15_000) {
 }
 
 async function acceptConsent(page) {
-  await page.goto(`${BASE_URL}/consent`, { waitUntil: 'networkidle' });
+  await page.goto(`${BASE_URL}/consent`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('checkbox').click();
   await page.getByRole('button', { name: 'Começar' }).click();
   await page.waitForURL(url => url.pathname.replace(/\/$/, '').endsWith('/gaze'));
@@ -155,7 +155,9 @@ try {
     check('intent', 'pointerdown sem click não navega', new URL(page.url()).pathname.replace(/\/$/, '').endsWith('/gaze'));
     check('intent', 'intenção não pede permissão de câmera', await cameraRequests(page) === 0);
 
-    await page.goto(`${BASE_URL}/dashboard`, { waitUntil: 'networkidle' });
+    check('dashboard', 'Dashboard continua adiado imediatamente antes de abrir a rota', !hasPath(localPaths, dashboardChunk));
+    await page.goto(`${BASE_URL}/dashboard`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: 'Estatísticas' }).waitFor({ state: 'visible' });
     check('dashboard', 'Dashboard/Recharts carrega apenas ao abrir a rota', hasPath(localPaths, dashboardChunk));
 
     await assertCacheHeader(context.request, 'cache', 'HTML', '/', HTML_CACHE_CONTROL);
