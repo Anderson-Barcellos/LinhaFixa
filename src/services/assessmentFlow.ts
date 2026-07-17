@@ -1,7 +1,9 @@
 import type {
+  AssessedValidationCapture,
   AssessmentMode,
   AssessmentResultSummary,
   AssessmentStage,
+  RecallTestResult,
 } from '@/types';
 
 export interface AssessmentStageInput {
@@ -15,8 +17,8 @@ export interface AssessmentStageInput {
 
 export interface AssessmentResultInput {
   mode: AssessmentMode;
-  captureTitle: string;
-  recallOutcome: { score: number; total: number; topic: string } | null;
+  capture: AssessedValidationCapture;
+  recallOutcome: RecallTestResult | null;
 }
 
 export function deriveAssessmentStage(input: AssessmentStageInput): AssessmentStage {
@@ -30,6 +32,12 @@ export function deriveAssessmentStage(input: AssessmentStageInput): AssessmentSt
 }
 
 export function canStartAssessment(input: AssessmentStageInput): { ok: boolean; reason: string | null } {
+  if (input.readingTextState === 'idle') {
+    return {
+      ok: false,
+      reason: 'Prepare o texto de leitura antes de iniciar a captura.',
+    };
+  }
   if (input.readingTextState === 'error') {
     return {
       ok: false,
@@ -48,12 +56,12 @@ export function canStartAssessment(input: AssessmentStageInput): { ok: boolean; 
 export function buildAssessmentResultSummary(input: AssessmentResultInput): AssessmentResultSummary {
   if (input.mode === 'recall' && input.recallOutcome) {
     return {
-      title: input.captureTitle,
-      badge: `Recall ${input.recallOutcome.score}/${input.recallOutcome.total}`,
+      title: 'Dinamica ocular capturada',
+      badge: `Recall ${input.recallOutcome.score}/${input.recallOutcome.questions.length}`,
     };
   }
   return {
-    title: input.captureTitle,
+    title: 'Dinamica ocular capturada',
     badge: 'Captura simples',
   };
 }
