@@ -10,13 +10,15 @@ test('APP_SECTIONS exposes Avaliacao as a first-class shell section', () => {
   );
 });
 
-test('APP_SECTIONS keeps Historico in the IA while marking it unavailable in the shell', () => {
+test('APP_SECTIONS exposes Historico as a real shell route distinct from Progresso', () => {
   const historySection = APP_SECTIONS.find(section => section.id === 'history');
+  const progressSection = APP_SECTIONS.find(section => section.id === 'progress');
 
   assert.deepEqual(historySection, {
     id: 'history',
     label: 'Historico',
-    href: '/dashboard?tab=history',
-    available: false,
+    href: '/history',
+    available: true,
   });
+  assert.notEqual(historySection?.href, progressSection?.href);
 });

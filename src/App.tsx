@@ -15,6 +15,7 @@ import { DashboardScreen } from '@/screens/DashboardScreen';
 import { ExerciseLibraryScreen } from '@/screens/ExerciseLibraryScreen';
 import { SettingsScreen } from '@/screens/SettingsScreen';
 import { AssessmentWorkspaceScreen } from '@/screens/AssessmentWorkspaceScreen';
+import { HistoryScreen } from '@/screens/HistoryScreen';
 import {
   LEGACY_ASSESSMENT_WORKSPACE_ROUTE,
   LIVE_ASSESSMENT_WORKSPACE_ROUTE,
@@ -52,6 +53,7 @@ export default function App() {
           <Route path="/" element={!hydrated ? <BootScreen /> : consentAccepted ? <HomeScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/player" element={!hydrated ? <BootScreen /> : consentAccepted ? <ExercisePlayerScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/assessment" element={!hydrated ? <BootScreen /> : consentAccepted ? <AssessmentWorkspaceScreen /> : <Navigate to="/consent" replace />} />
+          <Route path="/history" element={!hydrated ? <BootScreen /> : consentAccepted ? <HistoryScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/dashboard" element={!hydrated ? <BootScreen /> : consentAccepted ? <DashboardScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/statistics" element={<Navigate to="/dashboard" replace />} />
           <Route path="/library" element={!hydrated ? <BootScreen /> : consentAccepted ? <ExerciseLibraryScreen /> : <Navigate to="/consent" replace />} />

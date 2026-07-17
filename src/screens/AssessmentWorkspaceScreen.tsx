@@ -85,11 +85,6 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
     () => deriveAssessmentWorkspaceLatestRecord(captures, recalls),
     [captures, recalls],
   );
-
-  if (liveWorkspace) {
-    return <EyeTrackingTestScreen />;
-  }
-
   const snapshot = useMemo(
     () =>
       buildAssessmentWorkspaceSnapshot({
@@ -109,6 +104,10 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
       }),
     [captures.length, latestRecord, loading],
   );
+
+  if (liveWorkspace) {
+    return <EyeTrackingTestScreen />;
+  }
 
   const currentPath = `${location.pathname}${location.search}`;
   const stageLabel = STAGE_LABELS[snapshot.stage];
