@@ -253,6 +253,22 @@ export type AssessedValidationCapture = ValidationCapture & {
   validity: CaptureValiditySnapshot;
 };
 
+export type AssessmentMode = 'capture' | 'recall';
+
+export type AssessmentStage =
+  | 'setup'
+  | 'loading-text'
+  | 'text-ready'
+  | 'capturing'
+  | 'generating-quiz'
+  | 'quiz'
+  | 'result';
+
+export interface AssessmentResultSummary {
+  title: string;
+  badge: string;
+}
+
 // --- Reading + Recall test ---
 // AI-generated intermediate text read inside the diagnostics capture window, followed
 // by 6 multiple-choice questions (5 options each) also generated from the text.
