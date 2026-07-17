@@ -15,8 +15,10 @@ import { DashboardScreen } from '@/screens/DashboardScreen';
 import { ExerciseLibraryScreen } from '@/screens/ExerciseLibraryScreen';
 import { SettingsScreen } from '@/screens/SettingsScreen';
 import { AssessmentWorkspaceScreen } from '@/screens/AssessmentWorkspaceScreen';
-import { EyeTrackingTestScreen } from '@/screens/EyeTrackingTestScreen';
-import { LEGACY_ASSESSMENT_WORKSPACE_ROUTE } from '@/services/assessmentAdapter';
+import {
+  LEGACY_ASSESSMENT_WORKSPACE_ROUTE,
+  LIVE_ASSESSMENT_WORKSPACE_ROUTE,
+} from '@/services/assessmentAdapter';
 
 export default function App() {
   const { profile, setProfile, consentAccepted, setConsentAccepted } = useAppStore();
@@ -54,7 +56,18 @@ export default function App() {
           <Route path="/statistics" element={<Navigate to="/dashboard" replace />} />
           <Route path="/library" element={!hydrated ? <BootScreen /> : consentAccepted ? <ExerciseLibraryScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/settings" element={!hydrated ? <BootScreen /> : consentAccepted ? <SettingsScreen /> : <Navigate to="/consent" replace />} />
-          <Route path={LEGACY_ASSESSMENT_WORKSPACE_ROUTE} element={!hydrated ? <BootScreen /> : consentAccepted ? <EyeTrackingTestScreen /> : <Navigate to="/consent" replace />} />
+          <Route
+            path={LEGACY_ASSESSMENT_WORKSPACE_ROUTE}
+            element={
+              !hydrated ? (
+                <BootScreen />
+              ) : consentAccepted ? (
+                <Navigate to={LIVE_ASSESSMENT_WORKSPACE_ROUTE} replace />
+              ) : (
+                <Navigate to="/consent" replace />
+              )
+            }
+          />
        </Routes>
     </BrowserRouter>
   );

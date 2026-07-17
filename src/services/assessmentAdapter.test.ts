@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { RecallTestResult } from '@/types';
+import type { RecallTestResult, ValidationCapture } from '@/types';
 import {
   buildAssessmentWorkspaceSnapshot,
+  deriveAssessmentWorkspaceLatestRecord,
   LEGACY_ASSESSMENT_WORKSPACE_ROUTE,
+  LIVE_ASSESSMENT_WORKSPACE_ROUTE,
+  isLiveAssessmentWorkspace,
 } from './assessmentAdapter';
 
 const baseRecallResult = {
@@ -55,8 +58,61 @@ const baseRecallResult = {
   readingDurationMs: 18000,
 } satisfies RecallTestResult;
 
+function capture(timestamp: number): ValidationCapture {
+  return {
+    id: `capture-${timestamp}`,
+    timestamp,
+    conditions: {
+      lighting: 'normal',
+      distanceCm: 40,
+      posture: 'upright',
+    },
+    coverage: 92,
+    calibrated: true,
+    metrics: {} as ValidationCapture['metrics'],
+    postural: {} as ValidationCapture['postural'],
+    axis: {} as ValidationCapture['axis'],
+    sampleCount: 0,
+    samples: [],
+  };
+}
+
 test('legacy assessment workspace route stays available while the shell is the new entrypoint', () => {
   assert.equal(LEGACY_ASSESSMENT_WORKSPACE_ROUTE, '/eye-tracking-test');
+});
+
+test('live assessment workspace route lives under /assessment and legacy route only redirects into it', () => {
+  assert.equal(LIVE_ASSESSMENT_WORKSPACE_ROUTE, '/assessment?workspace=live');
+  assert.equal(isLiveAssessmentWorkspace('?workspace=live'), true);
+  assert.equal(isLiveAssessmentWorkspace('?workspace=shell'), false);
+});
+
+test('deriveAssessmentWorkspaceLatestRecord uses the newest capture when it is newer than recall', () => {
+  const latest = deriveAssessmentWorkspaceLatestRecord(
+    [capture(20)],
+    [{ ...baseRecallResult, timestamp: 10 }],
+  );
+
+  assert.deepEqual(latest, {
+    mode: 'capture',
+    captureTitle: 'Captura ocular registrada',
+    recallResult: null,
+    timestamp: 20,
+    hasCaptureResult: true,
+  });
+});
+
+test('deriveAssessmentWorkspaceLatestRecord uses the newest recall when it is newer than capture', () => {
+  const recall = { ...baseRecallResult, timestamp: 30, topic: 'Memoria visual' };
+  const latest = deriveAssessmentWorkspaceLatestRecord([capture(20)], [recall]);
+
+  assert.deepEqual(latest, {
+    mode: 'recall',
+    captureTitle: 'Recall: Memoria visual',
+    recallResult: recall,
+    timestamp: 30,
+    hasCaptureResult: true,
+  });
 });
 
 test('buildAssessmentWorkspaceSnapshot derives the shell state from primitive readiness inputs', () => {

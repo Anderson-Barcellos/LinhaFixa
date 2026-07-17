@@ -3,6 +3,7 @@ import type {
   AssessmentResultSummary,
   AssessmentStage,
   RecallTestResult,
+  ValidationCapture,
 } from '@/types';
 import {
   buildAssessmentResultSummary,
@@ -34,6 +35,60 @@ export interface BuildAssessmentWorkspaceSnapshotInput extends AssessmentStageIn
 }
 
 export const LEGACY_ASSESSMENT_WORKSPACE_ROUTE = '/eye-tracking-test' as const;
+export const LIVE_ASSESSMENT_WORKSPACE_ROUTE = '/assessment?workspace=live' as const;
+export const ASSESSMENT_WORKSPACE_QUERY_KEY = 'workspace' as const;
+export const LIVE_ASSESSMENT_WORKSPACE_VALUE = 'live' as const;
+
+export interface AssessmentWorkspaceLatestRecord {
+  mode: AssessmentMode;
+  captureTitle: string | null;
+  recallResult: RecallTestResult | null;
+  timestamp: number | null;
+  hasCaptureResult: boolean;
+}
+
+export function isLiveAssessmentWorkspace(search: string): boolean {
+  return (
+    new URLSearchParams(search).get(ASSESSMENT_WORKSPACE_QUERY_KEY) ===
+    LIVE_ASSESSMENT_WORKSPACE_VALUE
+  );
+}
+
+export function deriveAssessmentWorkspaceLatestRecord(
+  captures: ValidationCapture[],
+  recalls: RecallTestResult[],
+): AssessmentWorkspaceLatestRecord {
+  const latestCapture = captures[0] ?? null;
+  const latestRecall = recalls[0] ?? null;
+
+  if (!latestCapture && !latestRecall) {
+    return {
+      mode: 'capture',
+      captureTitle: null,
+      recallResult: null,
+      timestamp: null,
+      hasCaptureResult: false,
+    };
+  }
+
+  if (!latestRecall || (latestCapture && latestCapture.timestamp >= latestRecall.timestamp)) {
+    return {
+      mode: 'capture',
+      captureTitle: latestCapture ? 'Captura ocular registrada' : null,
+      recallResult: null,
+      timestamp: latestCapture?.timestamp ?? null,
+      hasCaptureResult: latestCapture !== null,
+    };
+  }
+
+  return {
+    mode: 'recall',
+    captureTitle: `Recall: ${latestRecall.topic}`,
+    recallResult: latestRecall,
+    timestamp: latestRecall.timestamp,
+    hasCaptureResult: true,
+  };
+}
 
 export function buildAssessmentWorkspaceSnapshot(
   input: BuildAssessmentWorkspaceSnapshotInput,
