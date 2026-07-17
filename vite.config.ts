@@ -15,6 +15,7 @@ function normalizeBase(v?: string): string {
 export default defineConfig(() => {
   return {
     base: normalizeBase(process.env.APP_BASE_PATH),
+    build: { manifest: true },
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
