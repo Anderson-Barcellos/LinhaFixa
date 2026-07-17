@@ -13,7 +13,7 @@ export function ConsentScreen() {
     if (!checked) return;
     await saveConsent();
     setConsentAccepted(true);
-    navigate('/');
+    navigate('/assessment', { replace: true });
   };
 
   return (

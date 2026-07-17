@@ -1,6 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Camera, Check, Eye, Play, RotateCcw, Crosshair, Trash2, Database } from 'lucide-react';
+import { ArrowLeft, Camera, Check, Play, RotateCcw, Crosshair, Trash2, Database } from 'lucide-react';
+import { AssessmentResultPanel } from '@/components/assessment/AssessmentResultPanel';
+import { AssessmentSessionSurface } from '@/components/assessment/AssessmentSessionSurface';
 import { useAppStore } from '@/store/useAppStore';
 import {
   initFaceTracking, isFaceTrackingActive, estimateHeadPose, estimateGaze, extractGazeFeatures, getLastLandmarks,
@@ -80,6 +82,7 @@ import {
   type CalibrationReuseDecision,
 } from '@/services/ocularSignalContract';
 import type { CalibrationAssessment } from '@/services/calibrationValidity';
+import { buildAssessmentWorkspaceSnapshot } from '@/services/assessmentAdapter';
 
 // Standalone diagnostics screen: shows reading text, runs the front camera and
 // overlays a live gaze dot + detection status so we can validate that the eyes are
@@ -140,7 +143,17 @@ const EMPTY_LIVE: LiveSnapshot = {
 };
 const EMPTY_VISUAL_SIGNAL = summarizeFunctionalVisualSignal([]);
 
-export function EyeTrackingTestScreen() {
+interface EyeTrackingTestScreenProps {
+  embedded?: boolean;
+  initialMode?: 'capture' | 'recall';
+  onExit?: () => void;
+}
+
+export function EyeTrackingTestScreen({
+  embedded = false,
+  initialMode = 'capture',
+  onExit,
+}: EyeTrackingTestScreenProps) {
   const navigate = useNavigate();
   const { profile } = useAppStore();
   const isDark = profile?.contrastPreference === 'dark';
@@ -196,8 +209,8 @@ export function EyeTrackingTestScreen() {
   // --- Leitura + Recall mode ---
   // 'capture' shows the short AI text and just records gaze; 'recall' swaps in an
   // intermediate factual text and, after "Terminei de ler", runs a 6-question quiz.
-  const [testMode, setTestMode] = useState<'capture' | 'recall'>('capture');
-  const testModeRef = useRef<'capture' | 'recall'>('capture');
+  const [testMode, setTestMode] = useState<'capture' | 'recall'>(initialMode);
+  const testModeRef = useRef<'capture' | 'recall'>(initialMode);
   const [recallContent, setRecallContent] = useState<RecallContent | null>(null);
   const recallContentRef = useRef<RecallContent | null>(null);
   const shortTextRef = useRef<string | null>(null);
@@ -296,8 +309,10 @@ export function EyeTrackingTestScreen() {
         const cleanText = generatedText.trim();
         if (!cleanText) throw new Error('empty generated reading text');
         shortTextRef.current = cleanText;
-        setText(cleanText);
-        setReadingTextState('ready');
+        if (testModeRef.current === 'capture') {
+          setText(cleanText);
+          setReadingTextState('ready');
+        }
       })
       .catch(() => {
         setText('Não foi possível gerar o texto de leitura por IA.');
@@ -335,6 +350,14 @@ export function EyeTrackingTestScreen() {
       setReadingTextState('ready');
     }
   };
+
+  useEffect(() => {
+    if (initialMode === 'recall') {
+      switchMode('recall');
+    }
+  // switchMode is intentionally not a dependency; this sync is only for the initial mount mode.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMode]);
 
   const handleQuizDone = (answers: number[], score: number) => {
     const content = recallContentRef.current;
@@ -1061,6 +1084,30 @@ export function EyeTrackingTestScreen() {
   const captureSummary = reportedCapture
     ? summarizeReadingDynamics(reportedCapture.metrics, reportedCapture.coverage)
     : null;
+  const workspaceSnapshot = buildAssessmentWorkspaceSnapshot({
+    mode: testMode,
+    readingTextState,
+    capturing,
+    recallGenerating: recallGenState === 'generating',
+    recallQuizOpen: recallQuiz !== null,
+    hasCaptureResult: captureResult !== null,
+    captureCount: captures.length,
+    latestSessionLabel: null,
+    captureTitle: reportedCapture ? 'Dinamica ocular capturada' : null,
+    recallResult: null,
+  });
+  const sessionIntro =
+    testMode === 'recall'
+      ? 'Leia o texto, acompanhe a captura ocular e responda ao recall na mesma sessao.'
+      : 'Prepare a leitura guiada, valide o enquadramento e capture a dinamica ocular no mesmo fluxo.';
+  const leaveScreen = () => {
+    stopCamera('navigation-during-capture');
+    if (onExit) {
+      onExit();
+      return;
+    }
+    navigate('/');
+  };
 
   const Chip = ({ ok, label, neutral }: { key?: React.Key; ok: boolean; label: string; neutral?: boolean }) => (
     <span className={`px-3 py-1 rounded-full text-sm font-bold ${
@@ -1292,169 +1339,183 @@ export function EyeTrackingTestScreen() {
 
   return (
     <div
-      className="fixed inset-0 bg-slate-900 text-white overflow-hidden flex flex-col"
-      style={{
-        paddingTop: 'env(safe-area-inset-top)',
-        paddingRight: 'env(safe-area-inset-right)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
-        paddingLeft: 'env(safe-area-inset-left)',
-      }}
+      className={
+        embedded
+          ? 'relative h-full overflow-hidden text-white'
+          : 'fixed inset-0 bg-slate-900 text-white overflow-hidden'
+      }
+      style={
+        embedded
+          ? undefined
+          : {
+              paddingTop: 'env(safe-area-inset-top)',
+              paddingRight: 'env(safe-area-inset-right)',
+              paddingBottom: 'env(safe-area-inset-bottom)',
+              paddingLeft: 'env(safe-area-inset-left)',
+            }
+      }
     >
       {/* Hidden source video (mirrored preview is rendered in the panel). */}
       <video ref={videoRef} playsInline muted autoPlay className="hidden" />
-
-      {/* Top bar */}
-      <header className="flex items-center gap-3 px-4 py-2 shrink-0">
-        <button onClick={() => { stopCamera('navigation-during-capture'); navigate('/'); }} className="p-2 bg-white/10 rounded-full hover:bg-white/20">
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <h1 className="text-lg font-bold">Dinâmica ocular de leitura</h1>
-        <span className="ml-auto text-xs text-slate-400 hidden sm:block">taxa medida por dispositivo · foco em sacadas e regressões</span>
-      </header>
-
-      {/* Main area: iPhone/touch stays stacked; only wide non-touch desktop gets a side panel. */}
-      <div className={`flex-1 flex min-h-0 ${isDesktopDiagnosticsLayout ? 'flex-row justify-center gap-4 p-4' : isLandscape ? 'flex-row' : 'flex-col'}`}>
-        <div ref={surfaceHostRef} className="flex-1 min-w-0 min-h-0 flex items-center justify-center">
-          <div
-            className={`relative min-w-0 min-h-0 ${isDesktopDiagnosticsLayout ? 'shrink-0 overflow-hidden rounded-2xl border-2 border-indigo-300/70 bg-slate-900/30 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_24px_70px_rgba(15,23,42,0.45)]' : 'w-full h-full'}`}
-            style={readingSurfaceStyle}
-            aria-label="Área fixa de leitura, captura e calibração"
-          >
-            <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
-            <div className="pointer-events-none absolute inset-0 z-10 rounded-2xl ring-1 ring-indigo-400/40">
-              <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-slate-950/80 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-indigo-100 shadow-lg backdrop-blur">
-                <span className="h-2 w-2 rounded-full bg-indigo-300" />
-                Área fixa de leitura e calibração
-              </div>
-              {/* Desktop only: on the phone it collides with the left chip and the
-                  compact surface is the element itself, not the computed bounds. */}
-              {isDesktopDiagnosticsLayout && diagnosticsSurface && (
-                <div className="absolute right-4 top-4 rounded-full bg-slate-950/70 px-3 py-1.5 text-[11px] font-semibold text-slate-200 backdrop-blur">
-                  {Math.round(diagnosticsSurface.width)}×{Math.round(diagnosticsSurface.height)} px
-                </div>
-              )}
-              <div className="absolute left-3 top-3 h-10 w-10 rounded-tl-2xl border-l-2 border-t-2 border-indigo-300/90" />
-              <div className="absolute right-3 top-3 h-10 w-10 rounded-tr-2xl border-r-2 border-t-2 border-indigo-300/90" />
-              <div className="absolute bottom-3 left-3 h-10 w-10 rounded-bl-2xl border-b-2 border-l-2 border-indigo-300/90" />
-              <div className="absolute bottom-3 right-3 h-10 w-10 rounded-br-2xl border-b-2 border-r-2 border-indigo-300/90" />
+      <AssessmentSessionSurface
+        stage={workspaceSnapshot.stage}
+        text={sessionIntro}
+        blockReason={captureBlockReason}
+        constrainedHeight={embedded}
+      >
+        <div className="flex h-full min-h-0 flex-1 flex-col">
+          <div className={`flex items-center gap-3 ${embedded ? 'mb-2' : 'mb-4'}`}>
+            <button
+              onClick={leaveScreen}
+              className="p-2 bg-white/10 rounded-full hover:bg-white/20"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div className="min-w-0">
+              <h1 className={`${embedded ? 'text-base' : 'text-lg'} font-bold`}>
+                {embedded ? 'Sessao de avaliacao' : 'Dinâmica ocular de leitura'}
+              </h1>
+              {!embedded ? (
+                <p className="text-xs text-slate-400">
+                  taxa medida por dispositivo · foco em sacadas e regressões
+                </p>
+              ) : null}
             </div>
-            {cameraState !== 'running' && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-slate-900/80">
-                {cameraState === 'idle' && (
-                  <>
-                    <Camera className="w-12 h-12 text-indigo-400 mb-4" />
-                    <p className="text-slate-300 max-w-md mb-6">
-                      Toque para iniciar a câmera frontal e, se o Safari permitir, os sensores
-                      de movimento para medir a estabilidade da posição do iPhone.
-                    </p>
-                    <button onClick={startCamera} className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold text-lg">
-                      Iniciar câmera + sensores
-                    </button>
-                  </>
-                )}
-                {cameraState === 'starting' && (
-                  <>
-                    <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
-                    <p className="text-slate-300">Preparando a câmera…</p>
-                  </>
-                )}
-                {cameraState === 'unavailable' && (
-                  <>
-                    <h2 className="text-2xl font-bold mb-3">Câmera indisponível</h2>
-                    <p className="text-slate-300 max-w-md mb-6">
-                      Não foi possível acessar a câmera (permissão negada ou contexto não seguro).
-                      No iPhone, a câmera só funciona em <span className="font-bold">HTTPS</span>.
-                    </p>
-                    <button onClick={startCamera} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold">
-                      Tentar novamente
-                    </button>
-                  </>
+          </div>
+
+          <div className={`flex-1 flex min-h-0 ${isDesktopDiagnosticsLayout ? 'flex-row justify-center gap-4' : isLandscape ? 'flex-row' : 'flex-col'}`}>
+            <div ref={surfaceHostRef} className="flex-1 min-w-0 min-h-0 flex items-center justify-center">
+              <div
+                className={`relative min-w-0 min-h-0 ${isDesktopDiagnosticsLayout ? 'shrink-0 overflow-hidden rounded-2xl border-2 border-indigo-300/70 bg-slate-900/30 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_24px_70px_rgba(15,23,42,0.45)]' : 'w-full h-full'}`}
+                style={readingSurfaceStyle}
+                aria-label="Área fixa de leitura, captura e calibração"
+              >
+                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+                <div className="pointer-events-none absolute inset-0 z-10 rounded-2xl ring-1 ring-indigo-400/40">
+                  <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-slate-950/80 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-indigo-100 shadow-lg backdrop-blur">
+                    <span className="h-2 w-2 rounded-full bg-indigo-300" />
+                    Área fixa de leitura e calibração
+                  </div>
+                  {isDesktopDiagnosticsLayout && diagnosticsSurface && (
+                    <div className="absolute right-4 top-4 rounded-full bg-slate-950/70 px-3 py-1.5 text-[11px] font-semibold text-slate-200 backdrop-blur">
+                      {Math.round(diagnosticsSurface.width)}×{Math.round(diagnosticsSurface.height)} px
+                    </div>
+                  )}
+                  <div className="absolute left-3 top-3 h-10 w-10 rounded-tl-2xl border-l-2 border-t-2 border-indigo-300/90" />
+                  <div className="absolute right-3 top-3 h-10 w-10 rounded-tr-2xl border-r-2 border-t-2 border-indigo-300/90" />
+                  <div className="absolute bottom-3 left-3 h-10 w-10 rounded-bl-2xl border-b-2 border-l-2 border-indigo-300/90" />
+                  <div className="absolute bottom-3 right-3 h-10 w-10 rounded-br-2xl border-b-2 border-r-2 border-indigo-300/90" />
+                </div>
+                {cameraState !== 'running' && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-slate-900/80">
+                    {cameraState === 'idle' && (
+                      <>
+                        <Camera className="w-12 h-12 text-indigo-400 mb-4" />
+                        <p className="text-slate-300 max-w-md mb-6">
+                          Toque para iniciar a câmera frontal e, se o Safari permitir, os sensores
+                          de movimento para medir a estabilidade da posição do iPhone.
+                        </p>
+                        <button onClick={startCamera} className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold text-lg">
+                          Iniciar câmera + sensores
+                        </button>
+                      </>
+                    )}
+                    {cameraState === 'starting' && (
+                      <>
+                        <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
+                        <p className="text-slate-300">Preparando a câmera…</p>
+                      </>
+                    )}
+                    {cameraState === 'unavailable' && (
+                      <>
+                        <h2 className="text-2xl font-bold mb-3">Câmera indisponível</h2>
+                        <p className="text-slate-300 max-w-md mb-6">
+                          Não foi possível acessar a câmera (permissão negada ou contexto não seguro).
+                          No iPhone, a câmera só funciona em <span className="font-bold">HTTPS</span>.
+                        </p>
+                        <button onClick={startCamera} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold">
+                          Tentar novamente
+                        </button>
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
+            </div>
+
+            {isDesktopDiagnosticsLayout ? (
+              <aside className="w-72 border-l max-h-none shrink-0 bg-slate-800/80 border-white/10 p-4 flex flex-col gap-4">
+                <div className="shrink-0 rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center">
+                  {cameraState === 'running'
+                    ? <MirroredPreview stream={streamRef} streamId={streamRef.current?.id ?? ''} />
+                    : <span className="text-slate-500 text-sm">sem vídeo</span>}
+                </div>
+
+                <div className="shrink-0 flex flex-wrap gap-2">
+                  {chipData.map(c => <Chip key={c.label} ok={c.ok} label={c.label} neutral={c.neutral} />)}
+                  <Chip ok neutral label={`Escala ${displayScalePct}%`} />
+                </div>
+
+                <div className="min-h-0 overflow-y-auto flex flex-col gap-4 -mr-4 pr-4 [scrollbar-width:thin]">
+                  {diagnosticsCards}
+                </div>
+
+                <div className="shrink-0 flex flex-col gap-2">
+                  {modeSwitch}
+
+                  <button
+                    onClick={beginCalibration}
+                    disabled={!canBeginCaptureCalibration({ capturing, cameraState })}
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-white/10 hover:bg-white/20 disabled:opacity-40 rounded-xl font-bold"
+                  >
+                    <Crosshair className="w-4 h-4" /> {calibrated ? 'Recalibrar' : 'Calibrar'}
+                  </button>
+
+                  {!capturing ? (
+                    <button
+                      onClick={startCapture}
+                      disabled={!canStartCapture}
+                      className="flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-xl font-bold"
+                    >
+                      <Play className="w-4 h-4" /> {workspaceSnapshot.primaryAction.label}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => finishCapture()}
+                      className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold"
+                    >
+                      <Check className="w-4 h-4" /> Terminei de ler ({Math.floor(captureElapsed / 1000)}s)
+                    </button>
+                  )}
+                  {captureBlockReason && (
+                    <p className="text-xs text-amber-300 font-medium text-center px-2">{captureBlockReason}</p>
+                  )}
+
+                  {capturesButton}
+
+                  {stopCameraButton}
+                </div>
+              </aside>
+            ) : (
+              <DiagnosticsDrawer
+                variant={drawerVariant}
+                expanded={drawerExpanded}
+                onToggle={() => setDrawerExpanded(e => !e)}
+                chips={drawerChips}
+                actions={drawerActions}
+              >
+                <DiagnosticsAccordion sections={diagnosticsSections} />
+                {modeSwitch}
+                {captureBlockReason && (
+                  <p className="text-xs text-amber-300 font-medium text-center px-2">{captureBlockReason}</p>
+                )}
+                {capturesButton}
+                {stopCameraButton}
+              </DiagnosticsDrawer>
             )}
           </div>
         </div>
-
-        {/* Diagnostics panel: desktop mantém o <aside> lateral fixo; compacto usa a
-            gaveta overlay colapsável pra superfície de leitura tomar a tela. */}
-        {isDesktopDiagnosticsLayout ? (
-        <aside className="w-72 border-l max-h-none shrink-0 bg-slate-800/80 border-white/10 p-4 flex flex-col gap-4">
-          {/* Mirrored camera preview — desktop only; no phone os chips (Rosto/Olhos)
-              já dão o feedback de enquadramento. */}
-          <div className="shrink-0 rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center">
-            {cameraState === 'running'
-              ? <MirroredPreview stream={streamRef} streamId={streamRef.current?.id ?? ''} />
-              : <span className="text-slate-500 text-sm">sem vídeo</span>}
-          </div>
-
-          <div className="shrink-0 flex flex-wrap gap-2">
-            {chipData.map(c => <Chip key={c.label} ok={c.ok} label={c.label} neutral={c.neutral} />)}
-            <Chip ok neutral label={`Escala ${displayScalePct}%`} />
-          </div>
-
-          {/* On desktop the preview/chips above and the action buttons below stay
-              pinned; only this middle section scrolls, so the camera never leaves
-              view while reaching the controls. -mr-4/pr-4 park a classic
-              (non-overlay) scrollbar inside the panel's own padding so the cards
-              keep the same width as the pinned rows. */}
-          <div className="min-h-0 overflow-y-auto flex flex-col gap-4 -mr-4 pr-4 [scrollbar-width:thin]">
-            {diagnosticsCards}
-          </div>
-
-          <div className="shrink-0 flex flex-col gap-2">
-            {modeSwitch}
-
-            <button
-              onClick={beginCalibration}
-              disabled={!canBeginCaptureCalibration({ capturing, cameraState })}
-              className="flex items-center justify-center gap-2 px-4 py-3 bg-white/10 hover:bg-white/20 disabled:opacity-40 rounded-xl font-bold"
-            >
-              <Crosshair className="w-4 h-4" /> {calibrated ? 'Recalibrar' : 'Calibrar'}
-            </button>
-
-            {!capturing ? (
-              <button
-                onClick={startCapture}
-                disabled={!canStartCapture}
-                className="flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-xl font-bold"
-              >
-                <Play className="w-4 h-4" /> {testMode === 'recall' ? 'Ler e responder' : 'Iniciar captura de leitura'}
-              </button>
-            ) : (
-              <button
-                onClick={() => finishCapture()}
-                className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold"
-              >
-                <Check className="w-4 h-4" /> Terminei de ler ({Math.floor(captureElapsed / 1000)}s)
-              </button>
-            )}
-            {captureBlockReason && (
-              <p className="text-xs text-amber-300 font-medium text-center px-2">{captureBlockReason}</p>
-            )}
-
-            {capturesButton}
-
-            {stopCameraButton}
-          </div>
-        </aside>
-        ) : (
-        <DiagnosticsDrawer
-          variant={drawerVariant}
-          expanded={drawerExpanded}
-          onToggle={() => setDrawerExpanded(e => !e)}
-          chips={drawerChips}
-          actions={drawerActions}
-        >
-          <DiagnosticsAccordion sections={diagnosticsSections} />
-          {modeSwitch}
-          {captureBlockReason && (
-            <p className="text-xs text-amber-300 font-medium text-center px-2">{captureBlockReason}</p>
-          )}
-          {capturesButton}
-          {stopCameraButton}
-        </DiagnosticsDrawer>
-        )}
-      </div>
+      </AssessmentSessionSurface>
 
       {/* Quick pre-test context, asked before the first capture of the session */}
       {contextFormOpen && (
@@ -1509,125 +1570,17 @@ export function EyeTrackingTestScreen() {
       {/* Capture report */}
       {captureResult && reportedCapture && !recallQuiz && recallGenState === 'idle' && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-900/90 p-6">
-          <div ref={captureReportDialogRef} role="dialog" aria-modal="true" aria-labelledby="capture-report-title" tabIndex={-1} className="bg-slate-800 rounded-3xl p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto border border-white/10">
-            <div className="flex items-center gap-2 mb-1">
-              <Eye className="w-5 h-5 text-indigo-400" />
-              <h2 id="capture-report-title" className="text-2xl font-bold">Dinâmica ocular capturada</h2>
-            </div>
-            <p className="text-xs text-slate-400 mb-6">
-              Estimativa experimental por webcam. Prioriza movimento relativo, ritmo e eventos
-              de leitura; não promete palavra exata nem detecta microssacadas.
-            </p>
-
-            <CaptureValiditySummary capture={reportedCapture} />
-            <div className="flex items-center justify-between gap-3 mb-4 text-xs">
-              <span className={captureResult.persistence === 'saved' ? 'text-emerald-300' : captureResult.persistence === 'failed' ? 'text-rose-300' : 'text-slate-400'}>
-                {captureResult.persistence === 'saved'
-                  ? 'Captura salva'
-                  : captureResult.persistence === 'failed'
-                    ? 'Registro não salvo'
-                    : 'Salvando captura…'}
-              </span>
-              {captureResult.persistence === 'failed' && (
-                <button onClick={retryCapturePersistence} className="px-3 py-1.5 rounded-lg bg-rose-500/15 text-rose-200 hover:bg-rose-500/25 font-bold">
-                  Tentar salvar novamente
-                </button>
-              )}
-            </div>
-
-            {recallOutcome && (
-              <div className="rounded-2xl bg-indigo-500/15 border border-indigo-400/30 p-4 mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-1">Recall · {recallOutcome.topic}</div>
-                  <div className="text-2xl font-bold text-white">{recallOutcome.score}/{recallOutcome.total} corretas</div>
-                </div>
-                <BookOpen className="w-8 h-8 text-indigo-300 shrink-0" />
-              </div>
-            )}
-
-            {reportedCapture.metrics.trackingAvailable && captureSummary ? (
-              <>
-                <div className="rounded-2xl bg-slate-900/70 border border-white/10 p-4 mb-4">
-                  <p className="text-xs text-slate-400 mb-2">{captureSummary.positionLabel}</p>
-                  <p className="text-sm text-slate-200 font-medium">{captureSummary.primaryInsight}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <Metric label="Cobertura (rosto)" value={`${reportedCapture.coverage.toFixed(0)}%`} big />
-                  <Metric label="Amostras válidas" value={String(reportedCapture.metrics.samplesValid)} big />
-                  <Metric label="Taxa efetiva" value={formatSampleRateHz(reportedCapture.metrics.sampleRateHz)} big />
-                  <Metric label="Fonte" value={sourceConsistencyLabel(reportedCapture.metrics.signalSource, reportedCapture.calibratedSampleCount, reportedCapture.rawSampleCount)} big />
-                  {(reportedCapture.extrapolatedSampleCount ?? 0) > 0 && (
-                    <Metric label="Extrapolação rejeitada" value={`${reportedCapture.extrapolatedSampleCount} frames`} big />
-                  )}
-                  <Metric label="Sacadas" value={String(reportedCapture.metrics.saccadeCount)} big />
-                  <Metric label="Regressões" value={String(reportedCapture.metrics.regressionCount)} big />
-                  <Metric label="Retornos de linha" value={reportedCapture.metrics.lineReturnCount != null ? String(reportedCapture.metrics.lineReturnCount) : 'N/D'} big />
-                </div>
-                {reportedCapture.environment && (
-                  <div className="rounded-2xl bg-slate-900/70 border border-white/10 p-4 mt-4">
-                    <div className="flex items-center justify-between gap-3 mb-3">
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide">Ambiente e câmera</h3>
-                      <span className="px-2.5 py-1 rounded-full bg-slate-700 text-slate-200 text-xs font-bold">
-                        {reportedCapture.environment.layoutMode === 'desktop' ? 'Layout desktop' : 'Layout compacto'}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Metric label="Câmera negociada" value={cameraNegotiatedLabel(reportedCapture.environment)} />
-                      <Metric label="Vídeo recebido" value={videoSizeLabel(reportedCapture.environment)} />
-                      <Metric label="FPS câmera" value={rateLabel(reportedCapture.environment.camera.frameRate)} />
-                      <Metric label="FPS detecção" value={rateLabel(reportedCapture.environment.rates.detectionFps)} />
-                      <Metric label="Taxa ocular" value={rateLabel(reportedCapture.environment.rates.ocularSampleRateHz)} />
-                      <Metric label="Superfície" value={surfaceSizeLabel(reportedCapture.environment)} />
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <p className="text-amber-300 font-medium">
-                Detecção insuficiente para estimar sacadas ({reportedCapture.metrics.samplesValid} amostras,
-                cobertura {reportedCapture.coverage.toFixed(0)}%). Ajuste o enquadramento, a iluminação e a
-                distância e tente novamente.
-              </p>
-            )}
-
-            {reportedCapture.postural.status !== 'insufficient' && (
-              <div className="rounded-2xl bg-slate-900/70 border border-white/10 p-4 mt-4">
-                <div className="flex flex-wrap items-center gap-2 mb-2">
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                    reportedCapture.postural.status === 'stable'
-                      ? 'bg-emerald-500/15 text-emerald-300'
-                      : 'bg-amber-500/15 text-amber-300'
-                  }`}>
-                    {reportedCapture.postural.label}
-                  </span>
-                  <span className="px-2.5 py-1 rounded-full bg-slate-700 text-slate-200 text-xs font-bold">
-                    Estabilidade cervical {reportedCapture.postural.cervicalStability}%
-                  </span>
-                  <span className="px-2.5 py-1 rounded-full bg-slate-700 text-slate-200 text-xs font-bold">
-                    {reportedCapture.postural.baselineApplied ? 'Baseline aplicado' : 'Sem baseline'}
-                  </span>
-                  <span className="ml-auto text-xs text-slate-400">
-                    Confiança {confidenceLabel(reportedCapture.postural.confidence)}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                  <Metric label="Delta aparelho" value={reportedCapture.postural.motionDeltaDeg != null ? `${reportedCapture.postural.motionDeltaDeg.toFixed(1)}°` : 'N/D'} />
-                  <Metric label="Taxa postura" value={formatSampleRateHz(reportedCapture.postural.sampleRateHz)} />
-                  <Metric label="Yaw Δ" value={reportedCapture.postural.baselineApplied ? reportedCapture.postural.yawOffset.toFixed(1) : 'N/D'} />
-                  <Metric label="Pitch Δ" value={reportedCapture.postural.baselineApplied ? reportedCapture.postural.pitchOffset.toFixed(1) : 'N/D'} />
-                </div>
-                <p className="text-xs text-slate-400">{reportedCapture.postural.insight}</p>
-              </div>
-            )}
-
-            <div className="flex gap-3 mt-8">
-              <button onClick={() => { setCaptureResult(null); setRecallOutcome(null); }} className="flex-1 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold">
-                Fechar
-              </button>
-              <button onClick={() => { setCaptureResult(null); setRecallOutcome(null); startCapture(); }} className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold">
-                Nova captura
-              </button>
-            </div>
+          <div ref={captureReportDialogRef} role="dialog" aria-modal="true" aria-labelledby="capture-report-title" tabIndex={-1}>
+            <h2 id="capture-report-title" className="sr-only">Resultado da captura</h2>
+            <AssessmentResultPanel
+              capture={reportedCapture}
+              persistence={captureResult.persistence}
+              recallOutcome={recallOutcome}
+              captureSummary={captureSummary}
+              onRetrySave={retryCapturePersistence}
+              onClose={() => { setCaptureResult(null); setRecallOutcome(null); }}
+              onRestart={() => { setCaptureResult(null); setRecallOutcome(null); startCapture(); }}
+            />
           </div>
         </div>
       )}

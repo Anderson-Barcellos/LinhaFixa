@@ -48,7 +48,7 @@ async function acceptConsent(page) {
   await page.goto(`${BASE_URL}/consent`, { waitUntil: 'networkidle' });
   await page.getByRole('checkbox').click();
   await page.getByRole('button', { name: 'Começar' }).click();
-  await page.waitForURL(/\/(gaze\/?)?$/, { timeout: 10_000 });
+  await page.waitForURL(/\/assessment(?:\?|$)/, { timeout: 10_000 });
 }
 
 // The panel rows we align-check: direct children of <aside>, with wrappers that

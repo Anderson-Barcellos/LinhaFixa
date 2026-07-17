@@ -8,7 +8,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAppStore } from '@/store/useAppStore';
 import { getProfile, hasConsent } from '@/services/storage';
 
-import { HomeScreen } from '@/screens/HomeScreen';
 import { ConsentScreen } from '@/screens/ConsentScreen';
 import { ExercisePlayerScreen } from '@/screens/ExercisePlayerScreen';
 import { DashboardScreen } from '@/screens/DashboardScreen';
@@ -50,7 +49,7 @@ export default function App() {
     <BrowserRouter basename={basename}>
        <Routes>
           <Route path="/consent" element={<ConsentScreen />} />
-          <Route path="/" element={!hydrated ? <BootScreen /> : consentAccepted ? <HomeScreen /> : <Navigate to="/consent" replace />} />
+          <Route path="/" element={!hydrated ? <BootScreen /> : consentAccepted ? <Navigate to="/assessment" replace /> : <Navigate to="/consent" replace />} />
           <Route path="/player" element={!hydrated ? <BootScreen /> : consentAccepted ? <ExercisePlayerScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/assessment" element={!hydrated ? <BootScreen /> : consentAccepted ? <AssessmentWorkspaceScreen /> : <Navigate to="/consent" replace />} />
           <Route path="/history" element={!hydrated ? <BootScreen /> : consentAccepted ? <HistoryScreen /> : <Navigate to="/consent" replace />} />
