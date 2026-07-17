@@ -16,6 +16,7 @@ import {
   loadSettingsModule,
 } from '@/services/routeModules';
 import { getProfile, hasConsent } from '@/services/storage';
+import { startAdaptiveCameraCodePreload } from '@/services/adaptivePreload';
 
 import { HomeScreen } from '@/screens/HomeScreen';
 import { ConsentScreen } from '@/screens/ConsentScreen';
@@ -46,6 +47,11 @@ export default function App() {
       setHydrated(true);
     });
   }, [setProfile, setConsentAccepted]);
+
+  useEffect(() => {
+    if (!hydrated || !consentAccepted) return;
+    return startAdaptiveCameraCodePreload();
+  }, [hydrated, consentAccepted]);
 
   // Router basename derived from the Vite `base` (APP_BASE_PATH). '/' at the root,
   // '/gaze' when mounted under a sub-path. Keeps client-side routes correct in both.

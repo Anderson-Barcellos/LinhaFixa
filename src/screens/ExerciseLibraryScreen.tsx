@@ -2,9 +2,11 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { registry } from '@/exercises/implementations';
 import { ArrowLeft } from 'lucide-react';
+import { signalCameraIntent } from '@/services/adaptivePreload';
 
 export function ExerciseLibraryScreen() {
   const navigate = useNavigate();
+  const warmCamera = () => signalCameraIntent();
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-12">
       <div className="max-w-5xl mx-auto">
@@ -26,6 +28,8 @@ export function ExerciseLibraryScreen() {
                 <p className="text-slate-500 font-medium line-clamp-3">Módulo de treino visual interativo.</p>
               </div>
               <button 
+                onPointerDown={warmCamera}
+                onFocus={warmCamera}
                 onClick={() => navigate('/player', { state: { singleExercise: k } })}
                 className="mt-6 w-full py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
               >

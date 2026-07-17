@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Play, TrendingUp, Settings, Activity, ArrowRight, Target, Maximize, FastForward, BookOpen, ScanEye } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { getSessions } from '@/services/storage';
+import { signalCameraIntent } from '@/services/adaptivePreload';
 import { SessionResult } from '@/types';
 
 export function HomeScreen() {
@@ -15,6 +16,7 @@ export function HomeScreen() {
   }, []);
 
   const hasSessions = sessions.length > 0;
+  const warmCamera = () => signalCameraIntent();
 
   return (
     <div className="flex flex-col h-full bg-slate-50 p-6 md:p-12 overflow-y-auto">
@@ -45,6 +47,8 @@ export function HomeScreen() {
                 Um plano de treino inteligente variando exercícios de Fixação, Sacadas, Perseguição e Leitura Assistida de forma adaptada para o seu ritmo hoje.
               </p>
               <button 
+                onPointerDown={warmCamera}
+                onFocus={warmCamera}
                 onClick={() => navigate('/player')}
                 className="px-8 py-4 bg-white text-indigo-700 font-bold rounded-2xl hover:bg-indigo-50 hover:scale-105 transition-all shadow-md flex items-center gap-3 text-lg w-full md:w-auto justify-center"
               >
@@ -86,6 +90,8 @@ export function HomeScreen() {
              ].map(ex => (
                 <button 
                   key={ex.id}
+                  onPointerDown={warmCamera}
+                  onFocus={warmCamera}
                   onClick={() => navigate('/player', { state: { singleExercise: ex.id } })}
                   className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all text-left flex flex-col h-full"
                 >
@@ -101,6 +107,8 @@ export function HomeScreen() {
 
         {/* Diagnostics shortcut */}
         <button
+          onPointerDown={warmCamera}
+          onFocus={warmCamera}
           onClick={() => navigate('/eye-tracking-test')}
           className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all text-left flex items-center gap-4"
         >
