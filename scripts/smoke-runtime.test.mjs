@@ -56,3 +56,11 @@ test('isolated built smoke includes loading behavior', async () => {
   const source = await readFile(new URL('./smoke-built.mjs', import.meta.url), 'utf8');
   assert.match(source, /run\(['"]scripts\/smoke-loading\.mjs['"]\)/);
 });
+
+test('loading smoke directly opens and reloads all five lazy routes', async () => {
+  const source = await readFile(new URL('./smoke-loading.mjs', import.meta.url), 'utf8');
+  for (const route of ['/dashboard', '/eye-tracking-test', '/player', '/library', '/settings']) {
+    assert.match(source, new RegExp(`path: ['"]${route}['"]`));
+  }
+  assert.match(source, /page\.reload\(/);
+});

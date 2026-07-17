@@ -259,8 +259,9 @@ Todos os textos voltados ao usuário devem estar em português (pt-BR). Não inc
       }),
     );
     app.use(p(`/${MEDIAPIPE_PUBLIC_ROOT}`), (_req, res) => res.sendStatus(404));
-    // The retired unversioned WASM URL is an asset path, never an SPA route.
-    app.use(p('/vendor/mediapipe/wasm'), (_req, res) => res.sendStatus(404));
+    // Only the mounted versioned root above is valid. Every other MediaPipe
+    // asset namespace must terminate here instead of falling through to HTML.
+    app.use(p('/vendor/mediapipe'), (_req, res) => res.sendStatus(404));
     // Serve static assets under the (optional) base prefix.
     app.use(base || '/', express.static(distPath, {
       setHeaders(res, filePath) {

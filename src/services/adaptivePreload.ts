@@ -44,16 +44,42 @@ type IdleWindow = Window & typeof globalThis & {
   cancelIdleCallback?: (handle: number) => void;
 };
 
+interface IdleSchedulerSource {
+  requestIdleCallback?: (callback: () => void) => number;
+  cancelIdleCallback?: (handle: number) => void;
+  setTimeout(callback: () => void, delay: number): number;
+  clearTimeout(handle: number): void;
+}
+
+export function createPairedIdleScheduler(source: IdleSchedulerSource) {
+  const useNative = typeof source.requestIdleCallback === 'function'
+    && typeof source.cancelIdleCallback === 'function';
+  return {
+    requestIdle: (run: () => void) => useNative
+      ? source.requestIdleCallback!(run)
+      : source.setTimeout(run, 1_500),
+    cancelIdle: (handle: number) => useNative
+      ? source.cancelIdleCallback!(handle)
+      : source.clearTimeout(handle),
+  };
+}
+
 export function startAdaptiveCameraCodePreload(): () => void {
   const browser = window as IdleWindow;
+  const idleScheduler = createPairedIdleScheduler({
+    requestIdleCallback: browser.requestIdleCallback
+      ? run => browser.requestIdleCallback!(run)
+      : undefined,
+    cancelIdleCallback: browser.cancelIdleCallback
+      ? handle => browser.cancelIdleCallback!(handle)
+      : undefined,
+    setTimeout: (run, delay) => window.setTimeout(run, delay),
+    clearTimeout: handle => window.clearTimeout(handle),
+  });
   const controller = createAdaptivePreloadController({
     isVisible: () => document.visibilityState === 'visible',
-    requestIdle: run => browser.requestIdleCallback
-      ? browser.requestIdleCallback(run)
-      : window.setTimeout(run, 1_500),
-    cancelIdle: handle => browser.cancelIdleCallback
-      ? browser.cancelIdleCallback(handle)
-      : window.clearTimeout(handle),
+    requestIdle: idleScheduler.requestIdle,
+    cancelIdle: idleScheduler.cancelIdle,
     preloadCameraCode: preloadCameraRouteCode,
   });
   const onVisibility = () => controller.visibilityChanged();

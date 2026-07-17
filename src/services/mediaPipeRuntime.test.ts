@@ -36,3 +36,31 @@ test('single flight clears a rejected promise and permits a real retry', async (
   assert.equal(calls, 2);
   assert.equal(loader.state(), 'ready');
 });
+
+test('single flight converts a synchronous loader throw into a retryable rejection', async () => {
+  let calls = 0;
+  const loader = createRetryableSingleFlight(() => {
+    calls += 1;
+    if (calls === 1) throw new Error('sync warmup failed');
+    return Promise.resolve('ready');
+  });
+  const first = loader.run();
+  assert.ok(first instanceof Promise);
+  await assert.rejects(first, /sync warmup failed/);
+  assert.equal(loader.state(), 'failed');
+  assert.equal(await loader.run(), 'ready');
+  assert.equal(calls, 2);
+});
+
+test('single flight returns the cached ready value without loading again', async () => {
+  const value = { runtime: 'ready' };
+  let calls = 0;
+  const loader = createRetryableSingleFlight(async () => {
+    calls += 1;
+    return value;
+  });
+  assert.equal(await loader.run(), value);
+  assert.equal(await loader.run(), value);
+  assert.equal(calls, 1);
+  assert.equal(loader.state(), 'ready');
+});

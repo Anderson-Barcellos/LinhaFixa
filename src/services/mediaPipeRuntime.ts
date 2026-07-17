@@ -11,7 +11,13 @@ export function createRetryableSingleFlight<T>(load: () => Promise<T>) {
       if (currentState === 'ready') return Promise.resolve(value as T);
       if (active) return active;
       currentState = 'loading';
-      active = load().then(
+      let pending: Promise<T>;
+      try {
+        pending = load();
+      } catch (error) {
+        pending = Promise.reject(error);
+      }
+      active = pending.then(
         result => {
           value = result;
           currentState = 'ready';

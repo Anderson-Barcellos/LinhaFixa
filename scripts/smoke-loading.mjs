@@ -19,6 +19,8 @@ const chunkFile = source => {
 const dashboardChunk = chunkFile('src/screens/DashboardScreen.tsx');
 const diagnosticChunk = chunkFile('src/screens/EyeTrackingTestScreen.tsx');
 const playerChunk = chunkFile('src/screens/ExercisePlayerScreen.tsx');
+const libraryChunk = chunkFile('src/screens/ExerciseLibraryScreen.tsx');
+const settingsChunk = chunkFile('src/screens/SettingsScreen.tsx');
 const entryChunk = chunkFile('index.html');
 const mediaPipeRecord = Object.values(manifest).find(record => (
   record?.src?.includes('node_modules/@mediapipe/tasks-vision/vision_bundle.mjs')
@@ -29,6 +31,13 @@ if (!mediaPipeRecord?.file) {
 const mediaPipeChunk = `/${mediaPipeRecord.file}`;
 const modelPath = `/${MEDIAPIPE_PUBLIC_ROOT}/face_landmarker.task`;
 const wasmRoot = `/${MEDIAPIPE_PUBLIC_ROOT}/wasm/`;
+const LAZY_ROUTE_CASES = [
+  { path: '/dashboard', label: 'Dashboard', heading: 'Estatísticas', chunk: dashboardChunk },
+  { path: '/eye-tracking-test', label: 'Diagnóstico', heading: 'Dinâmica ocular de leitura', chunk: diagnosticChunk },
+  { path: '/player', label: 'Player', heading: 'Contexto de hoje', chunk: playerChunk },
+  { path: '/library', label: 'Biblioteca', heading: 'Biblioteca', chunk: libraryChunk },
+  { path: '/settings', label: 'Ajustes', heading: 'Ajustes & Perfil', chunk: settingsChunk },
+];
 
 let checks = 0;
 const failures = [];
@@ -79,6 +88,68 @@ async function assertCacheHeader(request, scope, label, path, expected) {
   );
 }
 
+async function assertHttpResponse(request, scope, label, path, expectedStatus, expectedType) {
+  const response = await request.get(new URL(path.replace(/^\//, ''), `${BASE_URL}/`).href);
+  check(scope, `${label} usa status ${expectedStatus}`, response.status() === expectedStatus, `status=${response.status()}`);
+  if (expectedType) {
+    const contentType = response.headers()['content-type'] ?? '';
+    check(scope, `${label} usa MIME esperado`, expectedType.test(contentType), contentType || '(ausente)');
+  }
+}
+
+async function assertLazyRouteMatrix(page, appOrigin, localPaths) {
+  const issues = [];
+  const onConsole = message => {
+    if (message.type() === 'error') issues.push(`console: ${message.text()}`);
+  };
+  const onPageError = error => issues.push(`pageerror: ${String(error)}`);
+  const onRequestFailed = request => {
+    const url = new URL(request.url());
+    if (url.origin === appOrigin) issues.push(`requestfailed: ${url.pathname} ${request.failure()?.errorText ?? ''}`);
+  };
+  const onResponse = response => {
+    const url = new URL(response.url());
+    if (url.origin === appOrigin && response.status() >= 400) {
+      issues.push(`response: ${response.status()} ${url.pathname}`);
+    }
+  };
+  page.on('console', onConsole);
+  page.on('pageerror', onPageError);
+  page.on('requestfailed', onRequestFailed);
+  page.on('response', onResponse);
+
+  try {
+    for (const route of LAZY_ROUTE_CASES) {
+      const directIssueStart = issues.length;
+      const directResponse = await page.goto(`${BASE_URL}${route.path}`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('heading', { name: route.heading, exact: true }).waitFor({ state: 'visible' });
+      const directIssues = issues.slice(directIssueStart);
+      check(
+        'lazy-routes',
+        `${route.label} abre diretamente com sentinela real`,
+        directResponse?.status() === 200 && hasPath(localPaths, route.chunk) && directIssues.length === 0,
+        `status=${directResponse?.status() ?? 'sem resposta'} issues=${directIssues.join(' | ') || '0'}`,
+      );
+
+      const reloadIssueStart = issues.length;
+      const reloadResponse = await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.getByRole('heading', { name: route.heading, exact: true }).waitFor({ state: 'visible' });
+      const reloadIssues = issues.slice(reloadIssueStart);
+      check(
+        'lazy-routes',
+        `${route.label} recarrega diretamente sem erro de chunk`,
+        reloadResponse?.status() === 200 && reloadIssues.length === 0,
+        `status=${reloadResponse?.status() ?? 'sem resposta'} issues=${reloadIssues.join(' | ') || '0'}`,
+      );
+    }
+  } finally {
+    page.off('console', onConsole);
+    page.off('pageerror', onPageError);
+    page.off('requestfailed', onRequestFailed);
+    page.off('response', onResponse);
+  }
+}
+
 console.log(`\nAdaptive loading smoke (${BASE_URL})`);
 const browser = await chromium.launch({
   executablePath: CHROME,
@@ -87,6 +158,11 @@ const browser = await chromium.launch({
 
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 860 } });
+  await context.route('**/api/generateReadingContent', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ text: 'Texto determinístico para o smoke de rotas lazy.' }),
+  }));
   await context.addInitScript(() => {
     const idleCallbacks = new Map();
     let nextIdleId = 1;
@@ -160,9 +236,15 @@ try {
     await page.getByRole('heading', { name: 'Estatísticas' }).waitFor({ state: 'visible' });
     check('dashboard', 'Dashboard/Recharts carrega apenas ao abrir a rota', hasPath(localPaths, dashboardChunk));
 
+    await assertLazyRouteMatrix(page, appOrigin, localPaths);
+
     await assertCacheHeader(context.request, 'cache', 'HTML', '/', HTML_CACHE_CONTROL);
     await assertCacheHeader(context.request, 'cache', 'asset com hash', entryChunk, IMMUTABLE_CACHE_CONTROL);
     await assertCacheHeader(context.request, 'cache', 'modelo versionado', modelPath, IMMUTABLE_CACHE_CONTROL);
+    await assertHttpResponse(context.request, 'routing', 'modelo MediaPipe legado ausente', '/vendor/mediapipe/face_landmarker.task', 404);
+    await assertHttpResponse(context.request, 'routing', 'WASM MediaPipe legado ausente', '/vendor/mediapipe/wasm/vision_wasm_internal.wasm', 404);
+    await assertHttpResponse(context.request, 'routing', 'asset MediaPipe versionado ausente', `/${MEDIAPIPE_PUBLIC_ROOT}/missing.wasm`, 404);
+    await assertHttpResponse(context.request, 'routing', 'rota SPA real', '/settings', 200, /^text\/html(?:;|$)/i);
     check('privacy', 'nenhuma dependência MediaPipe externa foi solicitada', externalMediaPipeRequests.length === 0, externalMediaPipeRequests.join(' | '));
   } catch (error) {
     check('loading', 'suite completa sem erro inesperado', false, error instanceof Error ? error.message : String(error));

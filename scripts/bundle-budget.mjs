@@ -31,6 +31,9 @@ export async function measureInitialGzipBytes({ manifestPath, distDir }) {
 }
 
 export function assertBundleBudget(actualBytes, budgetBytes) {
+  if (!Number.isFinite(budgetBytes) || !Number.isInteger(budgetBytes) || budgetBytes <= 0) {
+    throw new Error(`Bundle budget must be a finite positive integer; received ${budgetBytes}`);
+  }
   if (actualBytes > budgetBytes) {
     throw new Error(`Initial JavaScript ${actualBytes} bytes exceeds budget ${budgetBytes} bytes`);
   }
@@ -47,7 +50,7 @@ async function main() {
   console.log(`Initial JavaScript: ${result.bytes}/${budgetBytes} gzip bytes (${result.files.join(', ')})`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(error => {
     console.error(error.message);
     process.exitCode = 1;
