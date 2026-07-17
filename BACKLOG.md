@@ -59,15 +59,15 @@ Frentes novas de alto nivel (sem bundles ainda): repetibilidade teste-reteste co
 
 Decisao (2026-07-02): Anders assinou a ordem proposta = (1) mergear/deployar PACK GT (feito em `c613990`, revisao iPhone pendente), (2) PACK Validade de Captura (#1,#9,#6,#10) — PACK ativo abaixo, (3) so entao Fase 0 no iPhone.
 
-## PACK Validade de Captura (pausado 2026-07-03 — VC4 pendente; Anders priorizou o PACK Leitura & Recall)
+## PACK Validade de Captura (concluido e aprovado pelo Anders — 2026-07-16)
 
-Contexto: 4 bugs confirmados da auditoria cega Codex que corrompem a validade dos dados capturados; o #1 contamina a Fase 0 se nao morrer antes.
+Contexto: 4 bugs confirmados da auditoria cega Codex corrompiam a validade dos dados capturados; o fechamento de VC4 foi ampliado para um contrato minimo, versionado e fail-closed do instrumento antes da Fase 0.
 Bundles:
 - [x] BUNDLE VC1 — #1: captura sem mistura de coordenadas. FEITO 2026-07-02 (pronto p/ revisao): dois buffers separados (calibrado/bruto) no loop de captura; `selectCaptureSeries()` pura em `validationCapture.ts` escolhe o buffer MAJORITARIO como serie de analise (empate favorece calibrado; ambos vazios = `unavailable`) — nunca concatena, fim dos saltos de unidade e do rotulo "calibrada" com 1 amostra. `ValidationCapture` ganhou `calibratedSampleCount`/`rawSampleCount` (proveniencia persistida); relatorio e drawer mostram "Calibrada (92%)" via `sourceConsistencyLabel`. Sem tocar `saccadeAnalysis.ts` nem o tipo `signalSource` (sem valor `mixed` — serie nunca mistura). Gate: 93/93 testes (6 novos), tsc, lint, build `/gaze`; deployado bundle `index-CnswrC_y.js`. Commitado em `10f4ba2`.
 - [x] BUNDLE VC2 — #9: latencia sem sentinela. FEITO 2026-07-03 (pronto p/ revisao, via TDD): criado `oculomotorAnalysis.test.ts` (12 testes — fixacao/sacada/pursuit sinteticos com latencia/ganho/dispersao conhecidos; caso vermelho: gaze respondendo em 40ms, abaixo do piso de 60ms, expunha `mean([])`=0ms). Fix: `SaccadeTaskMetrics.meanLatencyMs: number | null` + `validLatencyCount`; `ExercisePlayerScreen` mostra "sem latencia valida" quando null. Registros idb antigos com 0ms ficam como estao (single-user, sem migracao). Gate: tsc, 107/107, build `/gaze`, restart, smoke 35/35.
 - [x] BUNDLE VC3 — #6: extrapolacao visivel. FEITO 2026-07-03 (pronto p/ revisao, via TDD): `predictNorm` retorna `{x, y, extrapolated}` — raw fora de [0,1] em qualquer eixo marca a flag; ponto segue clampado p/ display. Consumidores rejeitam: `EyeTrackingTestScreen` (dot azul cai pro ambar, mesmo caminho de assinatura/bounds/distancia) e `ExerciseCanvas` (`latestGazePoint = null`, metricas oculomotoras nao ingerem borda fabricada). Captura conta frames rejeitados em `ValidationCapture.extrapolatedSampleCount` (persistido + export; relatorio mostra "Extrapolacao rejeitada" quando >0) — semente do painel de sanidade #15. `CalibrationOverlay` intocado (targets de validacao vivem dentro da grade calibrada; erro clampado permanece piso conservador). DECISAO: rejeitar-para-raw em vez de so marcar — com a regra majoritaria do VC1, captura dominada por extrapolacao seleciona honestamente a serie bruta. Gate: tsc, 108/108, build `/gaze`, restart, smoke 35/35.
-- [ ] BUNDLE VC4 — #10: visibilitychange/pagehide invalida ou marca captura em background (Safari).
-Notas: frentes futuras fora deste PACK: repetibilidade teste-reteste (#13), painel sanidade do instrumento (#15), px/cm real do iPhone (#4-mitigacao), tiers de metrica (#3), refinamentos #5/#8/#11; harness de regressao restante (golden traces de leitura p/ readingDynamics, safety.ts table-driven, round-trip storage/idb).
+- [x] BUNDLE VC4 — #10 + validade minima instrumental. FEITO e APROVADO 2026-07-16 no head `54beff6`: `visibilitychange`, `pagehide`, navegacao e parada explicita convergem por lifecycle de dono unico e invalidam sem retomar/concatenar; proveniencia e contexto sao congelados no inicio; persistencia mostra `saving/saved/failed` e retry preserva objeto/id/timestamp/snapshot. Calibracao passou a pending→active transacional com avaliacao versionada, compatibilidade geometrica fail-closed e prompt raw/recalibrar; taxas fracionarias chegam intactas ao gate, estimativas ausentes ficam `null`, e o Dashboard separa tendencias comparaveis de auditoria sem mutar legado. Revisao final independente: Ready to merge, 0 findings; gate fresco 235/235, tsc, build `/gaze`, layout 95/95 e validade 72/72. Publicado em 3060 com HTML/JS/CSS/MediaPipe local e publico 200; Anders confirmou a revisao do bundle.
+Notas: frentes futuras fora deste PACK: repetibilidade teste-reteste (#13), painel sanidade do instrumento (#15), px/cm real do iPhone (#4-mitigacao), refinamentos #5/#8/#11. `real-tab-hidden` segue como capability nao reproduzivel no host automatizado; owner, mapeamento, pagehide e nao-retomada possuem cobertura deterministica, e a revisao manual do bundle foi confirmada pelo Anders.
 
 ### 2026-07-03 — Smoke Playwright roteirizado (`npm run smoke`)
 
@@ -257,22 +257,21 @@ Auditoria de robustez (frente paralela) FEITA com 5 agentes em paralelo — sint
 
 ## KICKOFF
 
-Rotacionado em 2026-07-05 apos entrega do BUNDLE D2 (acordeao da gaveta). Working tree LIMPA, tudo commitado ate `44922b2`. ATENCAO: D2 implementado mas DEPLOY PENDENTE de aval explicito do Anders — a 3060 ainda serve o build do MD1; smoke novo (esperado 65/65) so roda pos-deploy.
+Rotacionado em 2026-07-16 apos aprovacao do PACK Validade de Captura. O bundle esta publicado e validado no head `54beff6`; a integracao da branch `feat/instrument-validity` e a limpeza da worktree seguem o fluxo `finishing-development-branch`.
 
 Grande fila de VALIDACAO NO IPHONE do Anders (acumulada, pode fazer numa tacada so em https://ultrassom.ai/gaze):
 - BUNDLE MD1 (gaveta mobile, PACK novo no topo): faixa colapsada + pucador em portrait E landscape, calibracao com guia de 1 linha.
 - BUNDLE D2 (apos deploy): acordeao na gaveta expandida — resumo vivo legivel em 390px, um card por vez, rotacao com card aberto mantem estado.
 - PACK GT (`c613990`): exercicio de sacadas → bloco "Validacao interna do detector" vira baseline do instrumento.
-- PACK Validade de Captura VC1-VC3 (commitados): "Calibrada (92%)" no relatorio; latencia sem 0ms fantasma; extrapolacao rejeitada.
+- PACK Validade de Captura VC1-VC4: aprovado pelo Anders em 2026-07-16; contrato minimo versionado, lifecycle e auditoria publicados.
 - PACK Leitura & Recall + Pescoco v2 (checkpoint `f4c8ff7`): "checo tudo junto" — decisao do Anders.
 
 Frentes de codigo prontas pra ativar depois da validacao:
-- BUNDLE VC4 — #10: listener `visibilitychange`/`pagehide` invalida ou marca captura em background (Safari corrompe silenciosamente). Ultimo bundle do PACK Validade de Captura.
 - BUNDLE PN4 — recalibrar thresholds posturais com dados reais do iPhone.
-- Fase 0 (capturas etiquetadas manuais) SO depois do VC4 fechar — senao os dados nascem contaminados.
+- Fase 0 (capturas etiquetadas manuais) agora esta desbloqueada pelo fechamento de VC4, mas ainda nao foi ativada; Anders define a prioridade.
 
 Ler primeiro na retomada: esta secao; PACK Layout Mobile (topo); `.remember/now.md`.
-Validacao padrao: `npm run test`, `npx tsc --noEmit`, `APP_BASE_PATH=/gaze npm run build`; deploy = `systemctl restart linhafixa.service` + `npm run smoke` (65 checks pos-D2, cobre gaveta/acordeao/calibracao nos 4 viewports). NAO usar vitest (41 fails falsos). Servico e `linhafixa.service` (nao "gaze"); env em `/etc/linhafixa.env` (NAO ler o arquivo — classifier bloqueia, conteudo relevante ja documentado: PORT=3060, APP_BASE_PATH=/gaze).
+Validacao padrao: `npm run test`, `npx tsc --noEmit`, `APP_BASE_PATH=/gaze npm run build`; deploy = `systemctl restart linhafixa.service` + `npm run smoke` (layout 95/95 + validade 72/72 nos 4 viewports, com `real-tab-hidden` reportado separadamente). NAO usar vitest. Servico e `linhafixa.service` (nao "gaze"); env relevante ja documentado: PORT=3060, APP_BASE_PATH=/gaze — nao imprimir o arquivo.
 
 ### 2026-07-02 - PACK GT: ground truth interno do detector I-VT (pronto p/ revisao)
 
