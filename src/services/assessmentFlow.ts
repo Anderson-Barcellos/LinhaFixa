@@ -1,5 +1,4 @@
 import type {
-  AssessedValidationCapture,
   AssessmentMode,
   AssessmentResultSummary,
   AssessmentStage,
@@ -17,8 +16,8 @@ export interface AssessmentStageInput {
 
 export interface AssessmentResultInput {
   mode: AssessmentMode;
-  capture: AssessedValidationCapture;
-  recallOutcome: RecallTestResult | null;
+  captureTitle: string;
+  recallResult: RecallTestResult | null;
 }
 
 export function deriveAssessmentStage(input: AssessmentStageInput): AssessmentStage {
@@ -54,14 +53,14 @@ export function canStartAssessment(input: AssessmentStageInput): { ok: boolean; 
 }
 
 export function buildAssessmentResultSummary(input: AssessmentResultInput): AssessmentResultSummary {
-  if (input.mode === 'recall' && input.recallOutcome) {
+  if (input.mode === 'recall' && input.recallResult) {
     return {
-      title: 'Dinamica ocular capturada',
-      badge: `Recall ${input.recallOutcome.score}/${input.recallOutcome.questions.length}`,
+      title: input.captureTitle,
+      badge: `Recall ${input.recallResult.score}/${input.recallResult.questions.length}`,
     };
   }
   return {
-    title: 'Dinamica ocular capturada',
+    title: input.captureTitle,
     badge: 'Captura simples',
   };
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { AssessedValidationCapture, RecallTestResult } from '@/types';
+import type { RecallTestResult } from '@/types';
 import {
   buildAssessmentResultSummary,
   canStartAssessment,
@@ -17,21 +17,6 @@ const baseInput: AssessmentStageInput = {
   recallQuizOpen: false,
   hasCaptureResult: false,
 };
-
-const baseCapture = {
-  id: 'capture-1',
-  timestamp: 1,
-  conditions: {} as AssessedValidationCapture['conditions'],
-  coverage: 92,
-  calibrated: true,
-  metrics: {} as AssessedValidationCapture['metrics'],
-  postural: {} as AssessedValidationCapture['postural'],
-  axis: {} as AssessedValidationCapture['axis'],
-  sampleCount: 120,
-  samples: [],
-  durationMs: 4000,
-  validity: {} as AssessedValidationCapture['validity'],
-} satisfies AssessedValidationCapture;
 
 const baseRecallResult = {
   id: 'recall-1',
@@ -127,8 +112,8 @@ test('buildAssessmentResultSummary emits capture-only and recall-aware variants'
   assert.deepEqual(
     buildAssessmentResultSummary({
       mode: 'capture',
-      capture: baseCapture,
-      recallOutcome: null,
+      captureTitle: 'Dinamica ocular capturada',
+      recallResult: null,
     }),
     {
       title: 'Dinamica ocular capturada',
@@ -138,8 +123,8 @@ test('buildAssessmentResultSummary emits capture-only and recall-aware variants'
   assert.deepEqual(
     buildAssessmentResultSummary({
       mode: 'recall',
-      capture: baseCapture,
-      recallOutcome: baseRecallResult,
+      captureTitle: 'Dinamica ocular capturada',
+      recallResult: baseRecallResult,
     }),
     {
       title: 'Dinamica ocular capturada',
