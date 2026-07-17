@@ -1,3 +1,11 @@
+## PACK Performance Adaptativa (active — design aprovado em 2026-07-17)
+
+Contexto: o build público entrega atualmente um único JS de ~973 KB minificado/~295 KB gzip, com telas, Dashboard/Recharts e carregador MediaPipe no entrypoint; assets com hash chegam comprimidos, mas com `max-age=0`. Anders aprovou separar núcleo, exercícios, Dashboard, diagnóstico e runtime facial, com aquecimento em dois níveis: código leve durante ociosidade visível e modelo/WASM somente diante de intenção explícita de câmera. Meta aprovada: JavaScript bloqueante inicial <=180 KB gzip, cache imutável seguro e gates de bundle/rede. Spec: `docs/superpowers/specs/2026-07-17-adaptive-loading-performance-design.md`. Estado: especificação escrita aguardando revisão final do Anders; implementação e bundles só seguem após o plano aprovado.
+
+## PACK Repetibilidade e Sanidade do Instrumento (queued — próxima sessão)
+
+Contexto: frente científica escolhida por Anders para suceder Performance Adaptativa. Escopo de alto nível: repetibilidade teste-reteste com dados já persistidos, painel de sanidade do instrumento (incluindo temporização, blink, IPD e extrapolação) e recalibração orientada por capturas reais do iPhone. Nenhum bundle foi antecipado; o PACK será ativado e brainstormado somente depois do fechamento da frente ativa.
+
 ## PACK Layout Mobile — Gaveta de Diagnóstico (aguardando revisão do Anders — 2026-07-04)
 
 Contexto: no iPhone o painel fixo de 42vh espremia a superfície de leitura/calibração; chrome da calibração (badge + contador W×H + guia de 2 linhas) consumia área útil do rect pequeno. Design aprovado pelo Anders (brainstorm 2026-07-04): gaveta colapsável OVERLAY — expandir consulta métricas SEM redimensionar o canvas, então a assinatura de calibração nunca diverge por causa da UI. Spec: `docs/superpowers/specs/2026-07-04-mobile-calibration-drawer-design.md`; plano: `docs/superpowers/plans/2026-07-04-mobile-calibration-drawer.md`.
