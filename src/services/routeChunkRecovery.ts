@@ -19,28 +19,25 @@ export function isDynamicImportFailure(error: unknown): boolean {
 }
 
 export function createRouteChunkRecovery(deps: RecoveryDependencies) {
-  let inMemoryReloadAt = 0;
-
-  const readReloadAt = (): number => {
+  const readReloadAt = (): number | null => {
     try {
       const stored = Number(deps.storage.getItem(RELOAD_AT_KEY) ?? 0);
-      return Number.isFinite(stored) ? Math.max(inMemoryReloadAt, stored) : inMemoryReloadAt;
+      return Number.isFinite(stored) ? stored : 0;
     } catch {
-      return inMemoryReloadAt;
+      return null;
     }
   };
 
-  const rememberReloadAt = (timestamp: number): void => {
-    inMemoryReloadAt = timestamp;
+  const rememberReloadAt = (timestamp: number): boolean => {
     try {
       deps.storage.setItem(RELOAD_AT_KEY, String(timestamp));
+      return true;
     } catch {
-      // sessionStorage is optional; the in-memory guard still limits this runtime.
+      return false;
     }
   };
 
   const clearReloadAt = (): void => {
-    inMemoryReloadAt = 0;
     try {
       deps.storage.removeItem(RELOAD_AT_KEY);
     } catch {
@@ -50,9 +47,11 @@ export function createRouteChunkRecovery(deps: RecoveryDependencies) {
 
   const tryReload = (error: unknown): boolean => {
     if (!isDynamicImportFailure(error)) return false;
+    const previous = readReloadAt();
+    if (previous === null) return false;
     const now = deps.now();
-    if (now - readReloadAt() < RELOAD_COOLDOWN_MS) return false;
-    rememberReloadAt(now);
+    if (now - previous < RELOAD_COOLDOWN_MS) return false;
+    if (!rememberReloadAt(now)) return false;
     deps.reload();
     return true;
   };

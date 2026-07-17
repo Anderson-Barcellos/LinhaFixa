@@ -14,7 +14,7 @@ test('isDynamicImportFailure recognizes browser dynamic-import failures only', (
 test('route recovery reloads once inside the cooldown and never reloads generic errors', () => {
   const values = new Map<string, string>();
   let reloads = 0;
-  const recovery = createRouteChunkRecovery({
+  const dependencies = {
     now: () => 50_000,
     storage: {
       getItem: key => values.get(key) ?? null,
@@ -22,11 +22,14 @@ test('route recovery reloads once inside the cooldown and never reloads generic 
       removeItem: key => { values.delete(key); },
     },
     reload: () => { reloads += 1; },
-  });
+  };
   const chunkError = new TypeError('Importing a module script failed');
-  assert.equal(recovery.tryReload(chunkError), true);
-  assert.equal(recovery.tryReload(chunkError), false);
-  assert.equal(recovery.tryReload(new Error('domain failure')), false);
+  const beforeReload = createRouteChunkRecovery(dependencies);
+  assert.equal(beforeReload.tryReload(chunkError), true);
+
+  const afterReload = createRouteChunkRecovery(dependencies);
+  assert.equal(afterReload.tryReload(chunkError), false);
+  assert.equal(afterReload.tryReload(new Error('domain failure')), false);
   assert.equal(reloads, 1);
 });
 
@@ -46,20 +49,44 @@ test('successful route load clears stale recovery state', async () => {
 });
 
 test('load reloads a failed dynamic import and remains pending for navigation', async () => {
+  const values = new Map<string, string>();
+  const chunkError = new TypeError('Importing a module script failed');
   let reloads = 0;
-  const recovery = createRouteChunkRecovery({
+  let markReloadObserved!: () => void;
+  const reloadObserved = new Promise<void>(resolve => { markReloadObserved = resolve; });
+  const dependencies = {
     now: () => 50_000,
     storage: {
-      getItem: () => null,
-      setItem: () => {},
-      removeItem: () => {},
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
     },
-    reload: () => { reloads += 1; },
+    reload: () => {
+      reloads += 1;
+      markReloadObserved();
+    },
+  };
+  const recovery = createRouteChunkRecovery({
+    ...dependencies,
   });
 
-  void recovery.load(() => Promise.reject(new TypeError('Importing a module script failed')));
-  await new Promise<void>(resolve => setImmediate(resolve));
+  const pendingLoad = recovery.load(() => Promise.reject(chunkError));
+  await reloadObserved;
+  await Promise.resolve();
 
+  let releaseSentinel!: () => void;
+  const sentinel = new Promise<'sentinel'>(resolve => { releaseSentinel = () => resolve('sentinel'); });
+  const pendingState = Promise.race([
+    pendingLoad.then(() => 'resolved' as const, () => 'rejected' as const),
+    sentinel,
+  ]);
+  releaseSentinel();
+
+  assert.equal(reloads, 1);
+  assert.equal(await pendingState, 'sentinel');
+
+  const afterReload = createRouteChunkRecovery(dependencies);
+  await assert.rejects(afterReload.load(() => Promise.reject(chunkError)), error => error === chunkError);
   assert.equal(reloads, 1);
 });
 
@@ -96,24 +123,37 @@ test('storage failures do not prevent a successful route load', async () => {
   assert.deepEqual(await recovery.load(() => Promise.resolve({ screen: 'dashboard' })), { screen: 'dashboard' });
 });
 
-test('storage failures keep chunk reload limited in memory and preserve the original error', async () => {
+test('storage read and write failures skip automatic reload and preserve the original chunk error', async () => {
   const storageError = new Error('storage blocked');
   const chunkError = new TypeError('Failed to fetch dynamically imported module: /gaze/assets/Dashboard.js');
-  let reloads = 0;
-  const recovery = createRouteChunkRecovery({
-    now: () => 50_000,
-    storage: {
-      getItem: () => { throw storageError; },
-      setItem: () => { throw storageError; },
-      removeItem: () => { throw storageError; },
-    },
-    reload: () => { reloads += 1; },
-  });
+  for (const blockedOperation of ['getItem', 'setItem'] as const) {
+    let reloads = 0;
+    let markReloadObserved!: () => void;
+    const reloadObserved = new Promise<'reloaded'>(resolve => { markReloadObserved = () => resolve('reloaded'); });
+    const recovery = createRouteChunkRecovery({
+      now: () => 50_000,
+      storage: {
+        getItem: () => {
+          if (blockedOperation === 'getItem') throw storageError;
+          return null;
+        },
+        setItem: () => {
+          if (blockedOperation === 'setItem') throw storageError;
+        },
+        removeItem: () => {},
+      },
+      reload: () => {
+        reloads += 1;
+        markReloadObserved();
+      },
+    });
 
-  void recovery.load(() => Promise.reject(chunkError));
-  await new Promise<void>(resolve => setImmediate(resolve));
-  assert.equal(reloads, 1);
+    const outcome = await Promise.race([
+      recovery.load(() => Promise.reject(chunkError)).then(() => 'resolved' as const, error => error),
+      reloadObserved,
+    ]);
 
-  await assert.rejects(recovery.load(() => Promise.reject(chunkError)), error => error === chunkError);
-  assert.equal(reloads, 1);
+    assert.equal(outcome, chunkError, blockedOperation);
+    assert.equal(reloads, 0, blockedOperation);
+  }
 });
