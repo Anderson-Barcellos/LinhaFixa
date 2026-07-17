@@ -1,4 +1,5 @@
 import type { FaceLandmarker as FaceLandmarkerInstance } from '@mediapipe/tasks-vision';
+import { MEDIAPIPE_PUBLIC_ROOT } from '../../config/mediapipe-assets.mjs';
 import { GazeSample } from '@/types';
 import { createRetryableSingleFlight, loadMediaPipeRuntime } from './mediaPipeRuntime';
 
@@ -15,17 +16,18 @@ let faceLandmarker: FaceLandmarkerInstance | null = null;
 
 const detectorInitialization = createRetryableSingleFlight(async () => {
   const { FilesetResolver, FaceLandmarker } = await loadMediaPipeRuntime();
+  const mediaPipeBase = `${import.meta.env.BASE_URL}${MEDIAPIPE_PUBLIC_ROOT}`;
   const vision = await FilesetResolver.forVisionTasks(
     // Self-hosted wasm (copied from the pinned @mediapipe/tasks-vision at build time),
     // served under the app base path so it works at '/' or '/gaze/'. Avoids the runtime
     // CDN dependency for offline/privacy/PWA.
-    `${import.meta.env.BASE_URL}vendor/mediapipe/wasm`
+    `${mediaPipeBase}/wasm`
   );
   const create = (delegate: 'GPU' | 'CPU') => FaceLandmarker.createFromOptions(vision, {
     baseOptions: {
       // Self-hosted .task bundle (vendored in public/vendor/mediapipe). Includes the
       // iris mesh (478 landmarks), needed for gaze. Served under the app base path.
-      modelAssetPath: `${import.meta.env.BASE_URL}vendor/mediapipe/face_landmarker.task`,
+      modelAssetPath: `${mediaPipeBase}/face_landmarker.task`,
       delegate,
     },
     // Blendshapes give robust eyeLook* coefficients used as gaze-calibration features.

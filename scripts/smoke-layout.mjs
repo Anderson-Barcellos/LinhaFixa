@@ -133,7 +133,11 @@ async function runViewport(browser, profile) {
   });
   page.on('requestfailed', request => {
     const url = new URL(request.url());
-    const detail = `${url.pathname}: ${request.failure()?.errorText ?? 'request failed'}`;
+    const failure = request.failure()?.errorText ?? 'request failed';
+    // A hard Playwright navigation intentionally cancels any adaptive route preload
+    // still in flight from the previous screen; that is not a broken HTTP asset.
+    if (failure === 'net::ERR_ABORTED') return;
+    const detail = `${url.pathname}: ${failure}`;
     if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') resourceIssues.push(detail);
     else if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') optionalThirdPartyIssues.push(`Google Fonts optional — ${detail}`);
     else resourceIssues.push(`unexpected third-party failure ${url.href}: ${detail}`);
@@ -144,8 +148,8 @@ async function runViewport(browser, profile) {
     if (local && response.ok()) {
       if (/\/assets\/.*\.js$/.test(url.pathname)) requiredAssets.script = true;
       if (/\/assets\/.*\.css$/.test(url.pathname)) requiredAssets.styles = true;
-      if (url.pathname.endsWith('/vendor/mediapipe/face_landmarker.task')) requiredAssets.mediapipeModel = true;
-      if (/\/vendor\/mediapipe\/wasm\/.*\.wasm$/.test(url.pathname)) requiredAssets.mediapipeWasm = true;
+      if (url.pathname.endsWith('/vendor/mediapipe/0.10.35/face_landmarker.task')) requiredAssets.mediapipeModel = true;
+      if (/\/vendor\/mediapipe\/0\.10\.35\/wasm\/.*\.wasm$/.test(url.pathname)) requiredAssets.mediapipeWasm = true;
     }
     if (response.status() < 400) return;
     const detail = `${response.status()} ${url.href}`;
