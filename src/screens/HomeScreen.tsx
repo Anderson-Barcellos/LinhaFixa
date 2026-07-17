@@ -99,17 +99,17 @@ export function HomeScreen() {
            </div>
         </div>
 
-        {/* Diagnostics shortcut */}
+        {/* Assessment shortcut */}
         <button
-          onClick={() => navigate('/eye-tracking-test')}
+          onClick={() => navigate('/assessment')}
           className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all text-left flex items-center gap-4"
         >
            <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-slate-100 shrink-0">
               <ScanEye className="w-6 h-6 text-slate-600" />
            </div>
            <div className="flex-1">
-              <h4 className="font-bold text-slate-800 text-lg">Diagnóstico de rastreamento</h4>
-              <p className="text-slate-500 text-sm font-medium">Teste a detecção e o acompanhamento dos olhos durante a leitura (ideal em landscape).</p>
+              <h4 className="font-bold text-slate-800 text-lg">Avaliacao de leitura</h4>
+              <p className="text-slate-500 text-sm font-medium">Fluxo guiado para captura ocular e recall durante a leitura.</p>
            </div>
            <ArrowRight className="w-5 h-5 text-slate-400" />
         </button>
