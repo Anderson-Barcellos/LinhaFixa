@@ -250,6 +250,7 @@ Todos os textos voltados ao usuário devem estar em português (pt-BR). Não inc
       immutable: true,
       maxAge: '1y',
     }));
+    app.use(p('/assets'), (_req, res) => res.sendStatus(404));
     app.use(
       p(`/${MEDIAPIPE_PUBLIC_ROOT}`),
       express.static(path.join(distPath, MEDIAPIPE_PUBLIC_ROOT), {
@@ -257,6 +258,7 @@ Todos os textos voltados ao usuário devem estar em português (pt-BR). Não inc
         maxAge: '1y',
       }),
     );
+    app.use(p(`/${MEDIAPIPE_PUBLIC_ROOT}`), (_req, res) => res.sendStatus(404));
     // The retired unversioned WASM URL is an asset path, never an SPA route.
     app.use(p('/vendor/mediapipe/wasm'), (_req, res) => res.sendStatus(404));
     // Serve static assets under the (optional) base prefix.

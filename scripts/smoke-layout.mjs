@@ -18,10 +18,12 @@
 // still exercising attachStream/videoFrameLoop/MediaPipe with real frames.
 
 import { chromium } from 'playwright';
+import { MEDIAPIPE_PUBLIC_ROOT } from '../config/mediapipe-assets.mjs';
 import { smokeResultMarker } from './smoke-runtime.mjs';
 
 const BASE_URL = (process.argv[2] ?? 'http://localhost:3060/gaze').replace(/\/$/, '');
 const CHROME = process.env.CHROME_PATH ?? '/usr/bin/google-chrome';
+const MEDIAPIPE_PATH = `/${MEDIAPIPE_PUBLIC_ROOT}`;
 
 const VIEWPORTS = [
   { name: 'iphone-portrait', width: 390, height: 844, touch: true, expectDesktopPanel: false, drawer: 'sheet', checkCalibration: true },
@@ -42,6 +44,18 @@ function check(scope, label, ok, detail = '') {
   const line = `${ok ? '  ✓' : '  ✗'} ${label}${detail ? ` — ${detail}` : ''}`;
   console.log(line);
   if (!ok) failures.push(`[${scope}] ${label}${detail ? ` — ${detail}` : ''}`);
+}
+
+function requiredAssetExpectation(pathname) {
+  if (/\/assets\/.*\.js$/.test(pathname)) return { key: 'script', mime: /^(?:application|text)\/javascript(?:;|$)/i };
+  if (/\/assets\/.*\.css$/.test(pathname)) return { key: 'styles', mime: /^text\/css(?:;|$)/i };
+  if (pathname.endsWith(`${MEDIAPIPE_PATH}/face_landmarker.task`)) {
+    return { key: 'mediapipeModel', mime: /^application\/octet-stream(?:;|$)/i };
+  }
+  if (pathname.includes(`${MEDIAPIPE_PATH}/wasm/`) && pathname.endsWith('.wasm')) {
+    return { key: 'mediapipeWasm', mime: /^application\/wasm(?:;|$)/i };
+  }
+  return null;
 }
 
 async function acceptConsent(page) {
@@ -127,6 +141,7 @@ async function runViewport(browser, profile) {
   const resourceIssues = [];
   const optionalThirdPartyIssues = [];
   const requiredAssets = { script: false, styles: false, mediapipeModel: false, mediapipeWasm: false };
+  const requiredAssetValidations = [];
   page.on('request', req => {
     const url = new URL(req.url());
     if (!ALLOWED_HOSTS.includes(url.hostname)) externalRequests.push(req.url());
@@ -134,9 +149,6 @@ async function runViewport(browser, profile) {
   page.on('requestfailed', request => {
     const url = new URL(request.url());
     const failure = request.failure()?.errorText ?? 'request failed';
-    // A hard Playwright navigation intentionally cancels any adaptive route preload
-    // still in flight from the previous screen; that is not a broken HTTP asset.
-    if (failure === 'net::ERR_ABORTED') return;
     const detail = `${url.pathname}: ${failure}`;
     if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') resourceIssues.push(detail);
     else if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') optionalThirdPartyIssues.push(`Google Fonts optional — ${detail}`);
@@ -145,11 +157,19 @@ async function runViewport(browser, profile) {
   page.on('response', response => {
     const url = new URL(response.url());
     const local = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
-    if (local && response.ok()) {
-      if (/\/assets\/.*\.js$/.test(url.pathname)) requiredAssets.script = true;
-      if (/\/assets\/.*\.css$/.test(url.pathname)) requiredAssets.styles = true;
-      if (url.pathname.endsWith('/vendor/mediapipe/0.10.35/face_landmarker.task')) requiredAssets.mediapipeModel = true;
-      if (/\/vendor\/mediapipe\/0\.10\.35\/wasm\/.*\.wasm$/.test(url.pathname)) requiredAssets.mediapipeWasm = true;
+    const expectation = local ? requiredAssetExpectation(url.pathname) : null;
+    if (expectation && response.ok()) {
+      requiredAssetValidations.push((async () => {
+        const finishError = await response.finished();
+        const contentType = response.headers()['content-type'] ?? '';
+        if (finishError) {
+          resourceIssues.push(`${url.pathname}: ${finishError.message}`);
+        } else if (!expectation.mime.test(contentType)) {
+          resourceIssues.push(`${url.pathname}: unexpected content-type ${contentType || '(missing)'}`);
+        } else {
+          requiredAssets[expectation.key] = true;
+        }
+      })());
     }
     if (response.status() < 400) return;
     const detail = `${response.status()} ${url.href}`;
@@ -160,11 +180,16 @@ async function runViewport(browser, profile) {
 
   try {
     await acceptConsent(page);
-    await page.goto(`${BASE_URL}/eye-tracking-test`, { waitUntil: 'networkidle' });
+    await Promise.all([
+      page.waitForURL(/\/eye-tracking-test$/),
+      page.getByRole('button', { name: /Diagnóstico de rastreamento/ }).click(),
+    ]);
 
     // --- Layout mode and reading surface ---
     const surfaceChip = page.getByText('Área fixa de leitura e calibração');
-    check(profile.name, 'moldura da área de leitura visível', await surfaceChip.isVisible());
+    const surfaceReady = await surfaceChip.waitFor({ state: 'visible', timeout: 10_000 })
+      .then(() => true, () => false);
+    check(profile.name, 'moldura da área de leitura visível', surfaceReady);
 
     const canvasBox = await page.locator('canvas').first().boundingBox();
     check(profile.name, 'canvas com área não nula', !!canvasBox && canvasBox.width > 100 && canvasBox.height > 100,
@@ -363,6 +388,7 @@ async function runViewport(browser, profile) {
     }
 
     // --- Hygiene ---
+    await Promise.all(requiredAssetValidations);
     check(profile.name, 'sem requests externos (CDN)', externalRequests.length === 0,
       externalRequests.slice(0, 3).join(', '));
     check(profile.name, 'sem erros de console', consoleErrors.length === 0,
