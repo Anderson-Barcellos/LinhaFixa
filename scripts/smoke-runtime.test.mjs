@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import test from 'node:test';
 
@@ -49,4 +50,9 @@ test('parseSmokeResult and formatSmokeSummary preserve required blocked capabili
     formatSmokeSummary([layout, validity]),
     'Smoke assertions passed: layout 87/87; validity 48/48; 1 required capability BLOCKED (real-tab-hidden).',
   );
+});
+
+test('isolated built smoke includes loading behavior', async () => {
+  const source = await readFile(new URL('./smoke-built.mjs', import.meta.url), 'utf8');
+  assert.match(source, /run\(['"]scripts\/smoke-loading\.mjs['"]\)/);
 });

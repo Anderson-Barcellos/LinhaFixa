@@ -7,7 +7,7 @@
     "predev": "node scripts/copy-mediapipe.mjs",
     "dev": "tsx server.ts",
     "prebuild": "node scripts/copy-mediapipe.mjs",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && node scripts/bundle-budget.mjs dist 180000 && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
