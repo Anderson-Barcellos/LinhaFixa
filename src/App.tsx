@@ -3,18 +3,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { RouteLoadBoundary } from '@/components/RouteLoadBoundary';
 import { useAppStore } from '@/store/useAppStore';
+import { loadRouteModule } from '@/services/routeChunkRecovery';
+import {
+  loadDashboardModule,
+  loadExerciseLibraryModule,
+  loadExercisePlayerModule,
+  loadEyeTrackingTestModule,
+  loadSettingsModule,
+} from '@/services/routeModules';
 import { getProfile, hasConsent } from '@/services/storage';
 
 import { HomeScreen } from '@/screens/HomeScreen';
 import { ConsentScreen } from '@/screens/ConsentScreen';
-import { ExercisePlayerScreen } from '@/screens/ExercisePlayerScreen';
-import { DashboardScreen } from '@/screens/DashboardScreen';
-import { ExerciseLibraryScreen } from '@/screens/ExerciseLibraryScreen';
-import { SettingsScreen } from '@/screens/SettingsScreen';
-import { EyeTrackingTestScreen } from '@/screens/EyeTrackingTestScreen';
+
+const ExercisePlayerScreen = lazy(() => loadRouteModule(loadExercisePlayerModule).then(module => ({ default: module.ExercisePlayerScreen })));
+const DashboardScreen = lazy(() => loadRouteModule(loadDashboardModule).then(module => ({ default: module.DashboardScreen })));
+const ExerciseLibraryScreen = lazy(() => loadRouteModule(loadExerciseLibraryModule).then(module => ({ default: module.ExerciseLibraryScreen })));
+const SettingsScreen = lazy(() => loadRouteModule(loadSettingsModule).then(module => ({ default: module.SettingsScreen })));
+const EyeTrackingTestScreen = lazy(() => loadRouteModule(loadEyeTrackingTestModule).then(module => ({ default: module.EyeTrackingTestScreen })));
 
 export default function App() {
   const { profile, setProfile, consentAccepted, setConsentAccepted } = useAppStore();
@@ -43,16 +53,20 @@ export default function App() {
 
   return (
     <BrowserRouter basename={basename}>
-       <Routes>
-          <Route path="/consent" element={<ConsentScreen />} />
-          <Route path="/" element={!hydrated ? <BootScreen /> : consentAccepted ? <HomeScreen /> : <Navigate to="/consent" replace />} />
-          <Route path="/player" element={!hydrated ? <BootScreen /> : consentAccepted ? <ExercisePlayerScreen /> : <Navigate to="/consent" replace />} />
-          <Route path="/dashboard" element={!hydrated ? <BootScreen /> : consentAccepted ? <DashboardScreen /> : <Navigate to="/consent" replace />} />
-          <Route path="/statistics" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/library" element={!hydrated ? <BootScreen /> : consentAccepted ? <ExerciseLibraryScreen /> : <Navigate to="/consent" replace />} />
-          <Route path="/settings" element={!hydrated ? <BootScreen /> : consentAccepted ? <SettingsScreen /> : <Navigate to="/consent" replace />} />
-          <Route path="/eye-tracking-test" element={!hydrated ? <BootScreen /> : consentAccepted ? <EyeTrackingTestScreen /> : <Navigate to="/consent" replace />} />
-       </Routes>
+      <RouteLoadBoundary>
+        <Suspense fallback={<BootScreen />}>
+          <Routes>
+            <Route path="/consent" element={<ConsentScreen />} />
+            <Route path="/" element={!hydrated ? <BootScreen /> : consentAccepted ? <HomeScreen /> : <Navigate to="/consent" replace />} />
+            <Route path="/player" element={!hydrated ? <BootScreen /> : consentAccepted ? <ExercisePlayerScreen /> : <Navigate to="/consent" replace />} />
+            <Route path="/dashboard" element={!hydrated ? <BootScreen /> : consentAccepted ? <DashboardScreen /> : <Navigate to="/consent" replace />} />
+            <Route path="/statistics" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/library" element={!hydrated ? <BootScreen /> : consentAccepted ? <ExerciseLibraryScreen /> : <Navigate to="/consent" replace />} />
+            <Route path="/settings" element={!hydrated ? <BootScreen /> : consentAccepted ? <SettingsScreen /> : <Navigate to="/consent" replace />} />
+            <Route path="/eye-tracking-test" element={!hydrated ? <BootScreen /> : consentAccepted ? <EyeTrackingTestScreen /> : <Navigate to="/consent" replace />} />
+          </Routes>
+        </Suspense>
+      </RouteLoadBoundary>
     </BrowserRouter>
   );
 }
