@@ -50,6 +50,7 @@ try {
     await run('scripts/smoke-layout.mjs'),
     await run('scripts/smoke-validity.mjs'),
     await run('scripts/smoke-assessment-workflow.mjs'),
+    await run('scripts/smoke-loading.mjs'),
   ];
   console.log(`\n${formatSmokeSummary(results)}`);
 } finally {

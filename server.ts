@@ -2,6 +2,8 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import OpenAI from "openai";
+import { MEDIAPIPE_PUBLIC_ROOT } from "./config/mediapipe-assets.mjs";
+import { HTML_CACHE_CONTROL } from "./config/static-cache.mjs";
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
@@ -244,13 +246,36 @@ Todos os textos voltados ao usuário devem estar em português (pt-BR). Não inc
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    app.use(p('/assets'), express.static(path.join(distPath, 'assets'), {
+      immutable: true,
+      maxAge: '1y',
+    }));
+    app.use(p('/assets'), (_req, res) => res.sendStatus(404));
+    app.use(
+      p(`/${MEDIAPIPE_PUBLIC_ROOT}`),
+      express.static(path.join(distPath, MEDIAPIPE_PUBLIC_ROOT), {
+        immutable: true,
+        maxAge: '1y',
+      }),
+    );
+    app.use(p(`/${MEDIAPIPE_PUBLIC_ROOT}`), (_req, res) => res.sendStatus(404));
+    // Only the mounted versioned root above is valid. Every other MediaPipe
+    // asset namespace must terminate here instead of falling through to HTML.
+    app.use(p('/vendor/mediapipe'), (_req, res) => res.sendStatus(404));
     // Serve static assets under the (optional) base prefix.
-    app.use(base || '/', express.static(distPath));
+    app.use(base || '/', express.static(distPath, {
+      setHeaders(res, filePath) {
+        if (path.basename(filePath) === 'index.html') {
+          res.setHeader('Cache-Control', HTML_CACHE_CONTROL);
+        }
+      },
+    }));
     // Convenience: redirect the bare root to the mounted app when sub-pathed.
     if (base) app.get('/', (_req, res) => res.redirect(base + '/'));
     // SPA fallback: any other GET returns index.html (its asset URLs already carry
     // the base, baked in by Vite at build time).
     app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', HTML_CACHE_CONTROL);
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

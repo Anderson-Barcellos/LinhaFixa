@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { BookOpenText, CheckCircle2, Clock3, ScanEye } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -12,8 +12,16 @@ import {
   isLiveAssessmentWorkspace,
   LIVE_ASSESSMENT_WORKSPACE_ROUTE,
 } from '@/services/assessmentAdapter';
-import { EyeTrackingTestScreen } from '@/screens/EyeTrackingTestScreen';
+import { loadRouteModule } from '@/services/routeChunkRecovery';
+import { loadEyeTrackingTestModule } from '@/services/routeModules';
+import { signalCameraIntent } from '@/services/adaptivePreload';
 import type { AssessmentMode, RecallTestResult, ValidationCapture } from '@/types';
+
+// A superfície ocular é o módulo mais pesado do app (MediaPipe, análise, canvas);
+// carrega sob demanda ao entrar no workspace live, aquecida antes por idle/intent.
+const EyeTrackingTestScreen = lazy(() =>
+  loadRouteModule(loadEyeTrackingTestModule).then(module => ({ default: module.EyeTrackingTestScreen })),
+);
 
 function formatRelativeLabel(timestamp: number): string {
   const diffMs = Date.now() - timestamp;
@@ -112,11 +120,13 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
     return (
       <div className="overflow-hidden bg-slate-100 text-slate-900">
         <div className="mx-auto h-[100dvh] max-w-7xl min-h-0">
-          <EyeTrackingTestScreen
-            embedded
-            initialMode={requestedMode}
-            onExit={closeSession}
-          />
+          <Suspense fallback={<div className="h-full min-h-[100dvh] bg-slate-950" />}>
+            <EyeTrackingTestScreen
+              embedded
+              initialMode={requestedMode}
+              onExit={closeSession}
+            />
+          </Suspense>
         </div>
       </div>
     );
@@ -134,6 +144,7 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
               latestSessionLabel={latestSessionLabel}
               onStartCapture={() => openSession('capture')}
               onStartRecall={() => openSession('recall')}
+              onWarmSession={signalCameraIntent}
             />
 
             <section className="rounded-[2rem] bg-slate-900 p-6 text-white shadow-lg md:p-8">

@@ -2,10 +2,12 @@ export function AssessmentSetupPanel({
   latestSessionLabel,
   onStartCapture,
   onStartRecall,
+  onWarmSession,
 }: {
   latestSessionLabel: string | null;
   onStartCapture: () => void;
   onStartRecall: () => void;
+  onWarmSession?: () => void;
 }) {
   return (
     <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
@@ -21,6 +23,8 @@ export function AssessmentSetupPanel({
       <div className="mt-6 flex flex-col gap-3 sm:flex-row">
         <button
           type="button"
+          onPointerDown={onWarmSession}
+          onFocus={onWarmSession}
           onClick={onStartCapture}
           className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-800"
         >
@@ -28,6 +32,8 @@ export function AssessmentSetupPanel({
         </button>
         <button
           type="button"
+          onPointerDown={onWarmSession}
+          onFocus={onWarmSession}
           onClick={onStartRecall}
           className="rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-indigo-500"
         >

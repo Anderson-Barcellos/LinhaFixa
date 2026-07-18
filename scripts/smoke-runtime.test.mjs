@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import test from 'node:test';
 
@@ -49,4 +50,26 @@ test('parseSmokeResult and formatSmokeSummary preserve required blocked capabili
     formatSmokeSummary([layout, validity]),
     'Smoke assertions passed: layout 87/87; validity 48/48; 1 required capability BLOCKED (real-tab-hidden).',
   );
+});
+
+test('isolated built smoke includes loading behavior', async () => {
+  const source = await readFile(new URL('./smoke-built.mjs', import.meta.url), 'utf8');
+  assert.match(source, /run\(['"]scripts\/smoke-loading\.mjs['"]\)/);
+});
+
+test('loading smoke directly opens and reloads all five lazy routes', async () => {
+  const source = await readFile(new URL('./smoke-loading.mjs', import.meta.url), 'utf8');
+  for (const route of ['/dashboard', '/eye-tracking-test', '/player', '/library', '/settings']) {
+    assert.match(source, new RegExp(`path: ['"]${route}['"]`));
+  }
+  assert.match(source, /page\.reload\(/);
+});
+
+test('loading smoke intercepts reading content only at the exact same-origin API URL', async () => {
+  const source = await readFile(new URL('./smoke-loading.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /context\.route\(['"]\*\*\/api\/generateReadingContent/);
+  assert.match(source, /const READING_CONTENT_URL = `\$\{BASE_URL\}\/api\/generateReadingContent`/);
+  assert.match(source, /context\.route\(READING_CONTENT_URL/);
+  assert.match(source, /request\.method\(\) !== 'POST'/);
+  assert.match(source, /readingContentCalls === EXPECTED_READING_CONTENT_CALLS/);
 });
