@@ -11,9 +11,9 @@ Direcao aprovada: fachada nova por fatias, preservando os contratos e servicos
 oculares existentes. A experiencia usa shell claro para navegacao/preparo e
 superficie escura imersiva para calibracao, leitura, captura e recall.
 
-### BUNDLE Fatia 1 - Avaliacao primeiro (aguardando revisao do Anders)
+### BUNDLE Fatia 1 - Avaliacao primeiro (commitada em 2026-07-17; revisao visual do Anders pendente)
 
-Implementado no working tree atual:
+Implementado e commitado na `main` (`8066735` e anteriores):
 
 - `/` e o aceite do consentimento encaminham para `/assessment`; a home visual
   antiga nao participa mais do fluxo principal.
@@ -25,14 +25,32 @@ Implementado no working tree atual:
 - adapter, contratos de fluxo, componentes de setup/resultado e smoke dedicado
   protegem a costura entre a fachada nova e os servicos existentes.
 
-Validacao fresca da fatia:
+### Performance Adaptativa integrada (2026-07-17, merge `c5aee54`)
+
+A frente de carregamento adaptativo foi mergeada da branch
+`feat/adaptive-loading-performance` sobre a shell assessment-first e deployada:
+
+- rotas lazy com recuperacao de chunk velho; `/assessment` permanece no bundle
+  inicial (primeira pintura sem round trip extra) e a superficie ocular pesada
+  carrega lazy dentro dele, aquecida por idle preload e intencao de camera;
+- runtime MediaPipe single-flight com assets versionados e cache imutavel;
+- orcamento de bundle dentro do `npm run build` (falha acima de 180 KB gzip);
+- entry publico: 85 KB gzip (antes: monolito ~295 KB gzip).
+
+Validacao fresca pos-merge (2026-07-17):
 
 - `npm run lint`: passou.
-- `npm test`: 249/249.
-- `APP_BASE_PATH=/gaze npm run build`: passou.
-- `npm run smoke`: layout 95/95, validade 72/72 e assessment 7/7.
+- `npm test`: 276/276.
+- `APP_BASE_PATH=/gaze npm run build`: passou, budget 85233/180000 gzip.
+- `npm run smoke`: layout 95/95, validade 72/72, assessment 7/7, loading 43/43.
 - capacidade automatizada `real-tab-hidden`: bloqueada pelo ambiente, sem falha
   funcional observada.
+- publico: `https://ultrassom.ai/gaze/` 200, asset `immutable` e HTML `no-cache`
+  atravessando o Apache.
+
+Nota de flakiness: o smoke de layout ja abriu 93/95 numa rodada ("ponto de
+calibracao — geometria indisponivel") e passou limpo em seguida; se repetir,
+investigar race de timing na geometria de calibracao do workspace embutido.
 
 ### Limites atuais
 
@@ -42,7 +60,6 @@ Validacao fresca da fatia:
   apontam para telas funcionais anteriores dentro da navegacao comum.
 - `HomeScreen.tsx` permanece no repositorio como codigo desligado; nao e importado
   nem roteado pelo app.
-- A fatia ainda nao foi commitada nem marcada como fechada por Anders.
 
 ### Continuidade do PACK
 
@@ -52,9 +69,6 @@ plano detalhado dessas frentes fica ativo antes da escolha de Anders.
 
 ## Frentes estacionadas
 
-- Performance Adaptativa: implementacao isolada na branch
-  `feat/adaptive-loading-performance` e worktree correspondente; nao representa o
-  estado da `main`.
 - Repetibilidade e Sanidade do Instrumento: analise teste-reteste e painel de
   sanidade aguardam ativacao.
 - Deteccao de Pescoco PN4: thresholds finais dependem de capturas reais do iPhone.
