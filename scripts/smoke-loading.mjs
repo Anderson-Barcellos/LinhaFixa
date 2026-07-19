@@ -38,7 +38,9 @@ const LAZY_ROUTE_CASES = [
   { path: '/dashboard', label: 'Dashboard', heading: 'Estatísticas', chunk: dashboardChunk },
   // O alias legado redireciona para /assessment?workspace=live, que carrega a
   // superfície ocular lazy dentro da shell de avaliação.
-  { path: '/eye-tracking-test', label: 'Workspace live (alias legado)', heading: 'Sessao de avaliacao', chunk: diagnosticChunk },
+  // O header único do workspace mostra o título do estágio da sessão (regex:
+  // o estágio inicial pode variar entre setup e leitura conforme o preload).
+  { path: '/eye-tracking-test', label: 'Workspace live (alias legado)', heading: /sessao pronta para iniciar|preparando leitura|leitura guiada/i, chunk: diagnosticChunk },
   { path: '/player', label: 'Player', heading: 'Contexto de hoje', chunk: playerChunk },
   { path: '/library', label: 'Biblioteca', heading: 'Biblioteca', chunk: libraryChunk },
   { path: '/settings', label: 'Ajustes', heading: 'Ajustes & Perfil', chunk: settingsChunk },

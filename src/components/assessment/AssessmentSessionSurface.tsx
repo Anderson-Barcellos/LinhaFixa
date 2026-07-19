@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 
 import type { AssessmentStage } from '@/types';
 
-const SESSION_TITLES: Record<AssessmentStage, string> = {
+export const SESSION_TITLES: Record<AssessmentStage, string> = {
   setup: 'Sessao pronta para iniciar',
   'loading-text': 'Preparando leitura',
   'text-ready': 'Leitura guiada',
@@ -25,29 +25,32 @@ export function AssessmentSessionSurface({
   constrainedHeight?: boolean;
   children: ReactNode;
 }) {
-  const shellSpacing = constrainedHeight ? 'px-0 py-2' : 'px-0 py-6 md:p-8';
-  const chromePadding = constrainedHeight ? 'px-4' : 'px-6 md:px-0';
-  const titleSpacing = constrainedHeight ? 'text-lg' : 'mt-2 text-2xl';
+  if (constrainedHeight) {
+    // Embedded (100dvh): o título de estágio vive no header único do workspace
+    // (EyeTrackingTestScreen); aqui nenhum card/moldura — toda a altura é da sessão.
+    return (
+      <section className="flex h-full min-h-0 flex-col bg-slate-950 text-white">
+        {blockReason ? (
+          <p className="px-4 pt-2 text-sm font-medium text-amber-300">{blockReason}</p>
+        ) : null}
+        <div className="flex-1 min-h-0">{children}</div>
+      </section>
+    );
+  }
 
   return (
-    <section
-      className={`flex h-full min-h-0 flex-col rounded-[2rem] border border-slate-800 bg-slate-950 text-white shadow-xl ${shellSpacing} ${
-        constrainedHeight ? '' : 'md:min-h-[720px]'
-      }`}
-    >
-      <div className={`${constrainedHeight ? 'mb-1' : 'mb-3'} flex items-center justify-between gap-4 ${chromePadding}`}>
+    <section className="flex h-full min-h-0 flex-col rounded-[2rem] border border-slate-800 bg-slate-950 text-white shadow-xl px-0 py-6 md:p-8 md:min-h-[720px]">
+      <div className="mb-3 flex items-center justify-between gap-4 px-6 md:px-0">
         <div>
           <h1 className="text-xs font-bold uppercase tracking-[0.25em] text-slate-500">
             Avaliacao
           </h1>
-          <h2 className={`${titleSpacing} font-bold`}>{SESSION_TITLES[stage]}</h2>
+          <h2 className="mt-2 text-2xl font-bold">{SESSION_TITLES[stage]}</h2>
         </div>
       </div>
-      {!constrainedHeight ? (
-        <p className={`mb-2 text-sm font-medium text-slate-300 ${chromePadding}`}>{text}</p>
-      ) : null}
+      <p className="mb-2 text-sm font-medium text-slate-300 px-6 md:px-0">{text}</p>
       {blockReason ? (
-        <p className={`mb-4 text-sm font-medium text-amber-300 ${chromePadding}`}>{blockReason}</p>
+        <p className="mb-4 text-sm font-medium text-amber-300 px-6 md:px-0">{blockReason}</p>
       ) : null}
       <div className="flex-1 min-h-0">{children}</div>
     </section>

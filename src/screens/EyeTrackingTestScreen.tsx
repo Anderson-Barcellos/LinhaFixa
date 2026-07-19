@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Camera, Check, Play, RotateCcw, Crosshair, Trash2, Database } from 'lucide-react';
 import { AssessmentResultPanel } from '@/components/assessment/AssessmentResultPanel';
-import { AssessmentSessionSurface } from '@/components/assessment/AssessmentSessionSurface';
+import { AssessmentSessionSurface, SESSION_TITLES } from '@/components/assessment/AssessmentSessionSurface';
 import { useAppStore } from '@/store/useAppStore';
 import {
   initFaceTracking, isFaceTrackingActive, estimateHeadPose, estimateGaze, extractGazeFeatures, getLastLandmarks,
@@ -1373,7 +1373,7 @@ export function EyeTrackingTestScreen({
             </button>
             <div className="min-w-0">
               <h1 className={`${embedded ? 'text-base' : 'text-lg'} font-bold`}>
-                {embedded ? 'Sessao de avaliacao' : 'Dinâmica ocular de leitura'}
+                {embedded ? SESSION_TITLES[workspaceSnapshot.stage] : 'Dinâmica ocular de leitura'}
               </h1>
               {!embedded ? (
                 <p className="text-xs text-slate-400">

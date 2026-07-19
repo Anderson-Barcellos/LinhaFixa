@@ -2,7 +2,7 @@ Arquivo operacional do Codex neste repositorio. Nao confundir com notas do Claud
 
 # Estado do projeto
 
-Atualizado em 2026-07-17. Este arquivo registra somente a frente ativa, os limites
+Atualizado em 2026-07-18. Este arquivo registra somente a frente ativa, os limites
 atuais e as proximas frentes reais. O historico detalhado permanece no Git.
 
 ## PACK Reconstrucao do App Linha Fixa (active)
@@ -51,6 +51,41 @@ Validacao fresca pos-merge (2026-07-17):
 Nota de flakiness: o smoke de layout ja abriu 93/95 numa rodada ("ponto de
 calibracao — geometria indisponivel") e passou limpo em seguida; se repetir,
 investigar race de timing na geometria de calibracao do workspace embutido.
+
+### BUNDLE Layout Mobile (commitado em 2026-07-19; revisao visual do Anders pendente)
+
+Escopo: chrome mobile compacto na shell e header unico no workspace embedded.
+Plano em `docs/plans/2026-07-18-mobile-layout.md`. Implementado em 2026-07-18 e
+commitado em 2026-07-19 com autorizacao de Anders; a revisao visual dele no
+iPhone segue pendente como gate final do BUNDLE.
+
+- Workspace embedded (100dvh): chrome duplicado eliminado — o
+  `AssessmentSessionSurface` nao renderiza card/header no modo
+  `constrainedHeight`; o header unico do `EyeTrackingTestScreen` mostra o titulo
+  do estagio via `SESSION_TITLES` (agora exportado). O canvas comeca a ~37px
+  (antes ~100px) e a superficie ocupa >= 75% do viewport.
+- Sidebar mobile compacta (`AppSidebar`): marca slim (linha "Navegacao clinica"
+  e card explicativo so em md:+), nav densa; `AppShell` com titulo `text-2xl` no
+  mobile e `text-3xl` em md:+.
+- `/assessment` mobile-first (`AssessmentWorkspaceScreen`): card escuro com
+  headline `text-xl` no mobile (`data-testid="workspace-headline"`), paddings e
+  gaps escalonados. O h1 do main comeca a <= 160px no viewport 390x844 (antes
+  ~330px).
+- Smokes ajustados: `smoke-layout.mjs` com 13 checks novos de chrome mobile;
+  `smoke-assessment-workflow.mjs` e `smoke-loading.mjs` atualizados para o
+  heading novo (titulo de estagio em vez de "Sessao de avaliacao").
+
+Validacao fresca (2026-07-18):
+
+- `npm run lint`: passou.
+- `npm test`: 276/276.
+- `APP_BASE_PATH=/gaze npm run build`: passou, budget 85382/180000 gzip.
+- `npm run smoke`: layout 108/108 (95 antigos + 13 novos), validade 72/72,
+  assessment 7/7, loading 43/43.
+- capacidade automatizada `real-tab-hidden`: bloqueada pelo ambiente
+  (pre-existente), sem falha funcional observada.
+- Deploy ja no ar: `linhafixa.service` restartado; `https://ultrassom.ai/gaze/`
+  200 (prod e localhost:3060).
 
 ### Limites atuais
 

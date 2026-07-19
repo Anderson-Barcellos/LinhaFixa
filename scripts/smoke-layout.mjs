@@ -188,6 +188,37 @@ async function runViewport(browser, profile) {
 
   try {
     await acceptConsent(page);
+
+    // --- Shell /assessment: chrome mobile compacto (BUNDLE Layout Mobile) ---
+    // md: do Tailwind é 768px; iphone-landscape (844px) usa estilos desktop de shell.
+    const mobileShell = profile.width < 768;
+    if (mobileShell) {
+      // Posição absoluta no documento (boundingBox é viewport-relativo e a página
+      // pode chegar rolada do fluxo de consent).
+      const mainH1Y = await page.evaluate(() => {
+        const el = document.querySelector('main h1');
+        return el ? el.getBoundingClientRect().top + window.scrollY : null;
+      });
+      check(profile.name, 'conteúdo do /assessment começa no topo (h1 y ≤ 160px)',
+        mainH1Y !== null && mainH1Y <= 160, mainH1Y !== null ? `y=${Math.round(mainH1Y)}` : 'ausente');
+      const explainerVisible = await page.getByText('Avaliacao primeiro').isVisible().catch(() => false);
+      check(profile.name, 'card explicativo da sidebar oculto no mobile', !explainerVisible);
+    } else {
+      const explainerVisible = await page.getByText('Avaliacao primeiro').isVisible().catch(() => false);
+      check(profile.name, 'card explicativo da sidebar presente no desktop', explainerVisible);
+    }
+    const headlinePx = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="workspace-headline"]');
+      return el ? parseFloat(getComputedStyle(el).fontSize) : null;
+    });
+    if (mobileShell) {
+      check(profile.name, 'headline do card escuro escalada pra mobile (≤ 24px)',
+        headlinePx !== null && headlinePx <= 24, `font-size=${headlinePx}px`);
+    } else {
+      check(profile.name, 'headline do card escuro mantém escala desktop (≥ 28px)',
+        headlinePx !== null && headlinePx >= 28, `font-size=${headlinePx}px`);
+    }
+
     await page.goto(`${BASE_URL}/eye-tracking-test`, { waitUntil: 'networkidle' });
 
     // --- Layout mode and reading surface ---
@@ -199,6 +230,18 @@ async function runViewport(browser, profile) {
     const canvasBox = await page.locator('canvas').first().boundingBox();
     check(profile.name, 'canvas com área não nula', !!canvasBox && canvasBox.width > 100 && canvasBox.height > 100,
       canvasBox ? `${Math.round(canvasBox.width)}×${Math.round(canvasBox.height)}` : 'ausente');
+
+    // Workspace embedded: header único e compacto acima da superfície (sem o
+    // cabeçalho duplicado do AssessmentSessionSurface). Só perfis touch — no
+    // desktop a superfície é centrada e o y varia com a folga vertical.
+    if (profile.touch) {
+      check(profile.name, 'chrome acima da superfície ≤ 64px (header único)',
+        !!canvasBox && canvasBox.y <= 64,
+        canvasBox ? `canvas y=${Math.round(canvasBox.y)}` : 'ausente');
+      check(profile.name, 'superfície ocupa ≥ 75% da altura do viewport',
+        !!canvasBox && canvasBox.height >= profile.height * 0.75,
+        canvasBox ? `h=${Math.round(canvasBox.height)} (${Math.round((canvasBox.height / profile.height) * 100)}%)` : 'ausente');
+    }
 
     if (profile.expectPortraitSurface) {
       check(profile.name, 'superfície portrait ocupa a coluna (mais alta que larga)',

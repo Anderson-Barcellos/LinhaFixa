@@ -53,8 +53,13 @@ try {
 
   console.log(`\n▸ legacy alias route`);
   await page.goto(`${BASE_URL}/eye-tracking-test`, { waitUntil: 'networkidle' });
-  await heading.waitFor();
-  check('legacy alias resolves to assessment heading', await heading.isVisible());
+  // O workspace embedded tem header único com o título do estágio da sessão
+  // (o eyebrow "Avaliacao" saiu junto com o chrome duplicado — BUNDLE Layout Mobile).
+  const stageHeading = page.getByRole('heading', {
+    name: /sessao pronta para iniciar|preparando leitura|leitura guiada|captura em andamento|gerando questionario|questionario de recall|resultado da sessao/i,
+  }).first();
+  await stageHeading.waitFor();
+  check('legacy alias resolves to assessment stage heading', await stageHeading.isVisible());
   check('legacy alias stays under /assessment family', /\/assessment(?:\?|$)/.test(page.url()), page.url());
 
   if (failures.length > 0) {

@@ -138,8 +138,8 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
       title={snapshot.heading}
       subtitle={snapshot.subheading}
     >
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,0.9fr)]">
-          <section className="space-y-6">
+      <div className="grid gap-4 md:gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,0.9fr)]">
+          <section className="space-y-4 md:space-y-6">
             <AssessmentSetupPanel
               latestSessionLabel={latestSessionLabel}
               onStartCapture={() => openSession('capture')}
@@ -147,14 +147,14 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
               onWarmSession={signalCameraIntent}
             />
 
-            <section className="rounded-[2rem] bg-slate-900 p-6 text-white shadow-lg md:p-8">
+            <section className="rounded-3xl bg-slate-900 p-5 text-white shadow-lg md:rounded-[2rem] md:p-8">
               <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
                 <div className="max-w-2xl">
                   <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-200">
                     <ScanEye className="h-3.5 w-3.5" />
                     Workspace de avaliacao
                   </div>
-                  <h2 className="mt-4 text-3xl font-bold tracking-tight">
+                  <h2 data-testid="workspace-headline" className="mt-4 text-xl font-bold tracking-tight md:text-3xl">
                     A shell clara agora abre a sessao real no proprio /assessment.
                   </h2>
                   <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-slate-300">
@@ -168,7 +168,7 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
                   <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">
                     Estado atual
                   </span>
-                  <strong className="text-xl">
+                  <strong className="text-lg md:text-xl">
                     {liveWorkspace ? 'Sessao em andamento' : 'Pronto para iniciar'}
                   </strong>
                   <span className="text-sm text-slate-300">
@@ -177,8 +177,8 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
                 </div>
               </div>
 
-              <div className="mt-8 grid gap-4 md:grid-cols-3">
-                <article className="rounded-3xl border border-white/10 bg-white/10 p-5">
+              <div className="mt-6 grid gap-3 md:mt-8 md:gap-4 md:grid-cols-3">
+                <article className="rounded-2xl border border-white/10 bg-white/10 p-4 md:rounded-3xl md:p-5">
                   <div className="flex items-center gap-3">
                     <div className="rounded-2xl bg-white/10 p-3 text-slate-100">
                       <BookOpenText className="h-5 w-5" />
@@ -194,7 +194,7 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
                   </div>
                 </article>
 
-                <article className="rounded-3xl border border-white/10 bg-white/10 p-5">
+                <article className="rounded-2xl border border-white/10 bg-white/10 p-4 md:rounded-3xl md:p-5">
                   <div className="flex items-center gap-3">
                     <div className="rounded-2xl bg-white/10 p-3 text-slate-100">
                       <CheckCircle2 className="h-5 w-5" />
@@ -210,7 +210,7 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
                   </div>
                 </article>
 
-                <article className="rounded-3xl border border-white/10 bg-white/10 p-5">
+                <article className="rounded-2xl border border-white/10 bg-white/10 p-4 md:rounded-3xl md:p-5">
                   <div className="flex items-center gap-3">
                     <div className="rounded-2xl bg-white/10 p-3 text-slate-100">
                       <Clock3 className="h-5 w-5" />
@@ -229,13 +229,13 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
             </section>
           </section>
 
-          <aside className="space-y-6">
+          <aside className="space-y-4 md:space-y-6">
             {snapshot.resultSummary ? (
-              <article className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+              <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:rounded-[2rem] md:p-6">
                 <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
                   Ultimo resultado
                 </p>
-                <h2 className="mt-3 text-2xl font-bold text-slate-900">
+                <h2 className="mt-3 text-xl font-bold text-slate-900 md:text-2xl">
                   {snapshot.resultSummary.title}
                 </h2>
                 <p className="mt-3 inline-flex rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
@@ -247,11 +247,11 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
                 </p>
               </article>
             ) : (
-              <article className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+              <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:rounded-[2rem] md:p-6">
                 <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
                   Primeira avaliacao
                 </p>
-                <h2 className="mt-3 text-2xl font-bold text-slate-900">
+                <h2 className="mt-3 text-xl font-bold text-slate-900 md:text-2xl">
                   Tudo pronto para a primeira rodada
                 </h2>
                 <p className="mt-4 text-sm leading-6 text-slate-500">
