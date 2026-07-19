@@ -1,5 +1,4 @@
 export const APP_SECTIONS = [
-  { id: 'home', label: 'Hoje', href: '/', available: true },
   { id: 'training', label: 'Treino', href: '/player', available: true },
   { id: 'assessment', label: 'Avaliacao', href: '/assessment', available: true },
   { id: 'progress', label: 'Progresso', href: '/dashboard', available: true },

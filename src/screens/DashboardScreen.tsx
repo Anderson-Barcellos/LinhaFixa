@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
+import { AppShell } from '@/components/app/AppShell';
 import { getSessions, getValidationCaptures } from '@/services/storage';
 import { apiUrl } from '@/services/apiBase';
 import {
@@ -15,11 +16,11 @@ import { summarizeSaccadeSignalQuality } from '@/services/signalQuality';
 import { describeCaptureValidity } from '@/services/captureValidity';
 import { formatSampleRateHz } from '@/services/sampleRatePresentation';
 import { SessionResult, ValidationCapture } from '@/types';
-import { Activity, ArrowLeft, Clock, Eye, AlertTriangle, Smile, Sparkles, Download, BookOpen, ClipboardCheck, TrendingDown, BarChart3 } from 'lucide-react';
+import { Activity, Clock, Eye, AlertTriangle, Smile, Sparkles, Download, BookOpen, ClipboardCheck, TrendingDown, BarChart3 } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ZAxis } from 'recharts';
 
 export function DashboardScreen() {
-  const navigate = useNavigate();
+  const location = useLocation();
   const [sessions, setSessions] = useState<SessionResult[]>([]);
   const [captures, setCaptures] = useState<ValidationCapture[]>([]);
   const [loading, setLoading] = useState(true);
@@ -157,24 +158,18 @@ export function DashboardScreen() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-12">
-      <div className="max-w-5xl mx-auto">
-        <header className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-6">
-          <div className="flex items-center gap-6">
-            <button onClick={() => navigate('/')} className="p-3 bg-white rounded-full hover:bg-slate-100 shadow-sm transition-colors border border-slate-100">
-               <ArrowLeft className="w-6 h-6 text-slate-700" />
-            </button>
-            <div>
-              <h1 className="text-3xl font-bold text-slate-800">Estatísticas</h1>
-              <p className="text-slate-500 font-medium">Histórico de treinos e sintomas</p>
-            </div>
-          </div>
-          <button onClick={exportData} className="px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl font-bold hover:bg-slate-50 flex items-center gap-2 shadow-sm whitespace-nowrap">
-             <Download className="w-5 h-5"/> Exportar Histórico (JSON)
-          </button>
-        </header>
+    <AppShell
+      currentPath={`${location.pathname}${location.search}`}
+      title="Estatísticas"
+      subtitle="Histórico de treinos, capturas e sintomas deste dispositivo."
+    >
+      <div className="mb-6 flex justify-end">
+        <button onClick={exportData} className="px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl font-bold hover:bg-slate-50 flex items-center gap-2 shadow-sm whitespace-nowrap">
+          <Download className="w-5 h-5"/> Exportar Histórico (JSON)
+        </button>
+      </div>
 
-        {loading ? (
+      {loading ? (
           <div className="text-slate-400 font-medium">Carregando...</div>
         ) : sessions.length === 0 && captures.length === 0 ? (
           <div className="bg-white p-12 rounded-3xl text-center shadow-sm border border-slate-100">
@@ -466,9 +461,8 @@ export function DashboardScreen() {
                )
             })}
           </div>
-        )}
-      </div>
-    </div>
+      )}
+    </AppShell>
   );
 }
 

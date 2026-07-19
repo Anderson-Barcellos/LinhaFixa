@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { AppShell } from '@/components/app/AppShell';
 import { useAppStore } from '@/store/useAppStore';
 import { saveProfile } from '@/services/storage';
 import { LIVE_ASSESSMENT_WORKSPACE_ROUTE } from '@/services/assessmentAdapter';
@@ -7,10 +8,11 @@ import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { isCalibrated, getAccuracyDeg } from '@/services/gazeCalibration';
 import { clampViewingDistanceCm, normalizeViewingDistanceInput, viewingDistanceInputValue } from '@/services/viewingDistance';
 import { requestMotionPermissionFromGesture, startMotionSensor } from '@/services/motionSensor';
-import { ArrowLeft, Save, Eye, ScanEye } from 'lucide-react';
+import { Save, Eye, ScanEye } from 'lucide-react';
 
 export function SettingsScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { profile, setProfile } = useAppStore();
   const [showCalibration, setShowCalibration] = useState(false);
   // Bump to refresh the calibration status label after calibrating.
@@ -55,15 +57,12 @@ export function SettingsScreen() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-12">
-      <div className="max-w-3xl mx-auto">
-        <header className="flex items-center mb-10 gap-6">
-          <button onClick={() => navigate('/')} className="p-3 bg-white rounded-full hover:bg-slate-100 shadow-sm border border-slate-100">
-             <ArrowLeft className="w-6 h-6 text-slate-700" />
-          </button>
-          <h1 className="text-3xl font-bold text-slate-800">Ajustes & Perfil</h1>
-        </header>
-
+    <AppShell
+      currentPath={`${location.pathname}${location.search}`}
+      title="Ajustes & Perfil"
+      subtitle="Perfil, leitura e câmera — preferências deste dispositivo."
+    >
+      <div className="max-w-3xl">
         <div className="bg-white p-8 md:p-12 rounded-3xl shadow-sm border border-slate-100 space-y-8">
           
           <div>
@@ -177,6 +176,6 @@ export function SettingsScreen() {
           </button>
         </div>
       </div>
-    </div>
+    </AppShell>
   );
 }

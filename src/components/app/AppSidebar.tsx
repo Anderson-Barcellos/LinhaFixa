@@ -1,7 +1,6 @@
 import {
   Activity,
   Clock3,
-  House,
   Play,
   ScanEye,
   Settings,
@@ -12,13 +11,12 @@ import { Link } from 'react-router-dom';
 import { APP_SECTIONS } from '@/services/appSections';
 
 const SECTION_ICONS = {
-  home: House,
   training: Play,
   assessment: ScanEye,
   progress: TrendingUp,
   history: Clock3,
   settings: Settings,
-} satisfies Record<(typeof APP_SECTIONS)[number]['id'], typeof House>;
+} satisfies Record<(typeof APP_SECTIONS)[number]['id'], typeof Play>;
 
 function isSectionActive(currentPath: string, href: string): boolean {
   const currentUrl = new URL(currentPath, 'https://gaze.local');
