@@ -26,6 +26,10 @@ interface ExerciseCanvasProps {
   forceRawSignal: boolean;
   viewingDistanceCm?: number;
   fontSizePreference?: string;
+  // Hands the parent a clean early-stop: truncates via finishExercise (partial
+  // result, postural summary intact) instead of discarding the run. Must be
+  // referentially stable (useCallback) — it participates in the setup effect.
+  registerStop?: (stop: () => void) => void;
 }
 
 // Standard CSS reference is 96px/inch => ~37.8px/cm.
@@ -34,7 +38,7 @@ interface ExerciseCanvasProps {
 // the DPR, so PX_PER_CM correctly stays a CSS-px constant here.
 const PX_PER_CM = 37.8;
 
-export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled, forceRawSignal, viewingDistanceCm = 40, fontSizePreference = 'normal' }: ExerciseCanvasProps) {
+export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled, forceRawSignal, viewingDistanceCm = 40, fontSizePreference = 'normal', registerStop }: ExerciseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const contextRef = useRef<any>(null);
@@ -194,6 +198,11 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
 
       impl.init(exContext);
 
+      registerStop?.(() => {
+        const partial = impl.getResultData ? impl.getResultData(exContext) : undefined;
+        exContext.finishExercise({ ...(partial || {}), stoppedEarly: true });
+      });
+
       // Loop
       let lastTime = performance.now();
 
@@ -313,7 +322,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
       videoFrameLoop?.stop();
       resizeObserver?.disconnect();
     };
-  }, [exerciseId, parameters, cameraEnabled, forceRawSignal, onFinish, viewingDistanceCm, fontSizePreference]);
+  }, [exerciseId, parameters, cameraEnabled, forceRawSignal, onFinish, viewingDistanceCm, fontSizePreference, registerStop]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     const canvas = canvasRef.current;

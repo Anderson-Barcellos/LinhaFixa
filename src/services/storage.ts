@@ -1,5 +1,6 @@
 import { openDB, DBSchema } from 'idb';
 import { UserProfile, SessionResult, ValidationCapture, PreTestContext, RecallTestResult } from '@/types';
+import { selectTodayPreContext } from './preTestContext';
 
 interface LinhaFixaDB extends DBSchema {
   profile: {
@@ -88,16 +89,13 @@ export async function getSessions(): Promise<SessionResult[]> {
 
 // Prefill helper: the latest pre-test context saved today, so a second test in the
 // same day starts from the morning's answers instead of asking everything again.
+// Both record sources count — the /assessment flow only ever writes captures.
 export async function getTodayPreContext(): Promise<PreTestContext | null> {
-  const sessions = await getSessions();
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
-  for (let i = sessions.length - 1; i >= 0; i--) {
-    const s = sessions[i];
-    if (s.timestamp < startOfDay.getTime()) break; // by-date index: older from here on
-    if (s.contextBefore) return s.contextBefore;
-  }
-  return null;
+  const [sessions, captures] = await Promise.all([getSessions(), getValidationCaptures()]);
+  return selectTodayPreContext([
+    ...sessions.map(s => ({ timestamp: s.timestamp, context: s.contextBefore })),
+    ...captures.map(c => ({ timestamp: c.timestamp, context: c.context })),
+  ]);
 }
 
 export async function saveValidationCapture(capture: ValidationCapture) {

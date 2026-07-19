@@ -53,8 +53,27 @@ test('assisted reading sizes the font by visual angle via degToPx, matching the 
 
   assistedReadingExercise.init(context);
 
-  // 'normal' preference = 1.2 degrees of visual angle (viewingGeometry.READING_ANGLE_DEG).
-  assert.equal(context.state.fontPx, 60);
+  // 'normal' preference = 1.2 degrees of visual angle (viewingGeometry.READING_ANGLE_DEG),
+  // 1.2 * 50 = 60px, capped at the 56px readability ceiling.
+  assert.equal(context.state.fontPx, 56);
+});
+
+test('assisted reading clamps the font to 56px even with a huge profile distance', () => {
+  const { context } = makeContext({ degToPx: (deg: number) => deg * 100, fontSizePreference: 'huge' });
+  context.state = {};
+
+  assistedReadingExercise.init(context);
+
+  assert.equal(context.state.fontPx, 56);
+});
+
+test('assisted reading clamps the font to at least 18px', () => {
+  const { context } = makeContext({ degToPx: (deg: number) => deg * 10, fontSizePreference: 'small' });
+  context.state = {};
+
+  assistedReadingExercise.init(context);
+
+  assert.equal(context.state.fontPx, 18);
 });
 
 test('forced-raw assisted reading produces raw MediaPipe metrics', () => {
@@ -65,6 +84,8 @@ test('forced-raw assisted reading produces raw MediaPipe metrics', () => {
     context.latestGaze = { t: context.timeMs, h: 0.2 + index * 0.1, v: 0.5 };
     assistedReadingExercise.update(context);
   }
+  // Past the minimum reading window, so the final tap is allowed to finish.
+  context.timeMs = 100_000;
   assistedReadingExercise.onInput(0, 0, context);
 
   const finished = getFinished();
@@ -138,6 +159,25 @@ test('assisted reading returns ocular metrics when the exercise times out', () =
   assert.equal(result?.textComplexity, 'facil');
   assert.equal(result?.calibratedSampleCount, 6);
   assert.equal(result?.rawSampleCount, 0);
+});
+
+test('finishing the chunks before 70% of the duration restarts the loop instead of ending', () => {
+  const { context, getFinished } = makeContext();
+  context.timeMs = 1000; // durationSec=120 → minimum window is 84s
+
+  assistedReadingExercise.onInput(0, 0, context);
+
+  assert.equal(getFinished(), null);
+  assert.equal(context.state.currentIndex, 0);
+});
+
+test('finishing the chunks after 70% of the duration ends the exercise', () => {
+  const { context, getFinished } = makeContext();
+  context.timeMs = 90_000;
+
+  assistedReadingExercise.onInput(0, 0, context);
+
+  assert.notEqual(getFinished(), null);
 });
 
 test('assisted reading keeps mid-run calibrated and raw samples in separate units', () => {

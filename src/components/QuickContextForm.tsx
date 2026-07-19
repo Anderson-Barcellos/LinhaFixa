@@ -70,11 +70,11 @@ function EmojiScale({ label, options, value, onChange, tone }: {
           <button
             key={opt.value}
             onClick={() => onChange(opt.value)}
-            className={`flex-1 flex flex-col items-center gap-1 py-2.5 rounded-xl transition-all active:scale-95 ${
+            className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-xl transition-all active:scale-95 ${
               value === opt.value ? t.activeButton : t.idleButton
             }`}
           >
-            <span className="text-2xl">{opt.emoji}</span>
+            <span className="text-xl">{opt.emoji}</span>
             <span className="text-[11px] font-bold uppercase tracking-wide">{opt.label}</span>
           </button>
         ))}
@@ -109,11 +109,11 @@ export function PreContextForm({ value, onChange, onSubmit, tone = 'light', subm
 }) {
   const t = toneClasses(tone);
   return (
-    <div className={`max-w-2xl mx-auto p-6 rounded-2xl ${t.card}`}>
+    <div className={`max-w-2xl mx-auto p-5 rounded-2xl ${t.card}`}>
       <h2 className="text-2xl font-semibold mb-1">Contexto de hoje</h2>
-      <p className={`mb-6 font-medium ${t.hint}`}>Quatro toques rápidos antes de começar.</p>
+      <p className={`mb-4 font-medium ${t.hint}`}>Quatro toques rápidos antes de começar.</p>
 
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div>
           <div className={`font-medium mb-2 ${t.label}`}>Horário do Venvanse</div>
           <div className="flex gap-2">
@@ -137,8 +137,8 @@ export function PreContextForm({ value, onChange, onSubmit, tone = 'light', subm
         <EmojiScale label="Como te sentes agora?" options={SCALE_FEELING} value={value.feeling} onChange={v => onChange({ ...value, feeling: v })} tone={tone} />
       </div>
 
-      <div className="mt-8">
-        <button onClick={onSubmit} className={`w-full py-4 font-semibold text-lg rounded-xl active:scale-95 transition-all ${t.submit}`}>
+      <div className="mt-5">
+        <button onClick={onSubmit} className={`w-full py-3.5 font-semibold text-lg rounded-xl active:scale-95 transition-all ${t.submit}`}>
           {submitLabel}
         </button>
       </div>
@@ -155,18 +155,18 @@ export function PostContextForm({ value, onChange, onSubmit, tone = 'light', sub
 }) {
   const t = toneClasses(tone);
   return (
-    <div className={`max-w-2xl mx-auto p-6 rounded-2xl ${t.card}`}>
+    <div className={`max-w-2xl mx-auto p-5 rounded-2xl ${t.card}`}>
       <h2 className="text-2xl font-semibold mb-1">Como terminaste?</h2>
-      <p className={`mb-6 font-medium ${t.hint}`}>Três toques e o registro fecha.</p>
+      <p className={`mb-4 font-medium ${t.hint}`}>Três toques e o registro fecha.</p>
 
-      <div className="space-y-6">
+      <div className="space-y-4">
         <EmojiScale label="Como te sentes agora?" options={SCALE_FEELING} value={value.feeling} onChange={v => onChange({ ...value, feeling: v })} tone={tone} />
         <EmojiScale label="Fadiga" options={SCALE_FATIGUE} value={value.fatigue} onChange={v => onChange({ ...value, fatigue: v })} tone={tone} />
         <EmojiScale label="Humor" options={SCALE_MOOD} value={value.mood} onChange={v => onChange({ ...value, mood: v })} tone={tone} />
       </div>
 
-      <div className="mt-8">
-        <button onClick={onSubmit} className={`w-full py-4 font-semibold text-lg rounded-xl active:scale-95 transition-all ${t.submit}`}>
+      <div className="mt-5">
+        <button onClick={onSubmit} className={`w-full py-3.5 font-semibold text-lg rounded-xl active:scale-95 transition-all ${t.submit}`}>
           {submitLabel}
         </button>
       </div>

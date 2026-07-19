@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { PreContextForm, PostContextForm } from '@/components/QuickContextForm';
 import { ExerciseCanvas } from '@/components/ExerciseCanvas';
@@ -50,6 +50,13 @@ export function ExercisePlayerScreen() {
   const [calibrationMismatchReasons, setCalibrationMismatchReasons] = useState<string[]>([]);
   const [forceRawSignal, setForceRawSignal] = useState(false);
   const cameraPreflightGateRef = useRef(createAsyncOperationGate());
+  // Manual stop: truncate the running exercise via its finishExercise pipeline
+  // (partial result saved) instead of discarding the run outright.
+  const stopExerciseRef = useRef<(() => void) | null>(null);
+  const stopEarlyRef = useRef(false);
+  const registerStop = useCallback((stop: () => void) => {
+    stopExerciseRef.current = stop;
+  }, []);
 
   useEffect(() => {
     cameraPreflightGateRef.current.mount();
@@ -195,7 +202,15 @@ export function ExercisePlayerScreen() {
     };
     
     setResults([...results, newResult]);
-    
+
+    // Manual stop: partial result is saved above, but the session ends here —
+    // no reading rating, no next exercise.
+    if (stopEarlyRef.current) {
+      stopEarlyRef.current = false;
+      setStage('POST_CONTEXT');
+      return;
+    }
+
     if (extraData && !extraData.invalidReason && Array.isArray(extraData.intervals)) {
        setReadingExtraData(extraData);
        setStage('POST_READING_RATING');
@@ -306,8 +321,19 @@ export function ExercisePlayerScreen() {
     const ex = plan.exercises[currentExerciseIndex];
     return (
       <div className="w-screen h-screen relative bg-slate-900">
-         <button onClick={() => setStage('POST_CONTEXT')} className="absolute top-6 right-6 z-50 px-6 py-3 bg-slate-800/80 hover:bg-red-600/90 text-white rounded-full font-medium transition-colors border border-slate-700">Parar Imediatamente</button>
+         <button
+           onClick={() => {
+             if (stopExerciseRef.current) {
+               stopEarlyRef.current = true;
+               stopExerciseRef.current();
+             } else {
+               setStage('POST_CONTEXT');
+             }
+           }}
+           className="absolute top-6 right-6 z-50 px-6 py-3 bg-slate-800/80 hover:bg-red-600/90 text-white rounded-full font-medium transition-colors border border-slate-700"
+         >Parar Imediatamente</button>
          <ExerciseCanvas
+           registerStop={registerStop}
            exerciseId={ex.exerciseId}
            parameters={ex.parameters}
            onFinish={handleExerciseFinish}

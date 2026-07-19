@@ -4,6 +4,7 @@ import { createServer as createViteServer } from "vite";
 import OpenAI from "openai";
 import { MEDIAPIPE_PUBLIC_ROOT } from "./config/mediapipe-assets.mjs";
 import { HTML_CACHE_CONTROL } from "./config/static-cache.mjs";
+import { readingWordRange } from "./src/services/readingLength";
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
@@ -41,9 +42,14 @@ async function startServer() {
 
   app.post(p("/api/generateReadingContent"), async (req, res) => {
     try {
-      const { complexity } = req.body;
+      const { complexity, targetDurationSec } = req.body;
       const client = requireOpenAI(res, "Geracao de texto de leitura");
       if (!client) return;
+
+      const durationSec = Number.isFinite(Number(targetDurationSec)) && Number(targetDurationSec) > 0
+        ? Number(targetDurationSec)
+        : 20;
+      const range = readingWordRange(durationSec);
 
       const difficultyRule = complexity === 'facil'
         ? "Produza um texto mais fácil e ameno, com encadeamento de ideias direto, frases mais curtas e vocabulário cotidiano sobre programação/tecnologia."
@@ -51,7 +57,7 @@ async function startServer() {
 
       const prompt = `Gere um trecho de curiosidade sobre tecnologias e programação.
 Requisito de Formatação/Complexidade: ${difficultyRule}
-O texto deve servir para uma sessão curta de leitura (em torno de 30-50 palavras).
+O texto deve sustentar uma leitura contínua de aproximadamente ${Math.round(durationSec)} segundos (entre ${range.min} e ${range.max} palavras).
 Apenas o texto, sem título, sem formatação markdown. Responda em português (pt-BR).`;
 
       const completion = await client.chat.completions.create({

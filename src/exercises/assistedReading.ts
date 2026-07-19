@@ -51,7 +51,9 @@ export const assistedReadingExercise: ExerciseImplementation = {
     // Size the reading font by visual angle (same geometry as the diagnostics
     // screen), so saccade amplitudes are comparable between the exercise and the
     // diagnostic capture instead of depending on device-specific fixed px.
-    const fontPx = Math.round(context.degToPx(readingFontAngleDeg(context.fontSizePreference)));
+    // Clamped: the profile distance feeding degToPx is self-declared (up to 120cm),
+    // so an entry error would otherwise blow the text up to ~140px.
+    const fontPx = Math.max(18, Math.min(56, Math.round(context.degToPx(readingFontAngleDeg(context.fontSizePreference)))));
     context.state = {
       text: "Aguarde, gerando texto adaptado...",
       chunks: [],
@@ -67,7 +69,7 @@ export const assistedReadingExercise: ExerciseImplementation = {
       fontPx
     };
 
-    getReadingContent(context.parameters.textComplexity || 'facil')
+    getReadingContent(context.parameters.textComplexity || 'facil', context.parameters.durationSec)
       .then(text => {
         const cleanText = text.trim();
         if (!cleanText) throw new Error('empty generated reading text');
@@ -202,7 +204,15 @@ export const assistedReadingExercise: ExerciseImplementation = {
        s.currentIndex++;
 
        if (s.currentIndex === s.chunks.length) {
-          context.finishExercise(buildReadingResult(context));
+          const minMs = (context.parameters.durationSec || 0) * 1000 * 0.7;
+          if (context.timeMs >= minMs) {
+             context.finishExercise(buildReadingResult(context));
+          } else {
+             // Text ran out early: restart the pass so the exercise sustains its
+             // target duration; intervals keep accumulating and the canvas
+             // durationSec ceiling still ends the run.
+             s.currentIndex = 0;
+          }
        }
     }
   },
