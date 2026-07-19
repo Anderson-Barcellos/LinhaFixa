@@ -1,13 +1,13 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Camera, Check, Play, RotateCcw, Crosshair, Trash2, Database } from 'lucide-react';
 import { AssessmentResultPanel } from '@/components/assessment/AssessmentResultPanel';
 import { AssessmentSessionSurface, SESSION_TITLES } from '@/components/assessment/AssessmentSessionSurface';
 import { useAppStore } from '@/store/useAppStore';
-import { extractGazeFeatures, getLastLandmarks, getDetectionTelemetry } from '@/services/faceTracking';
+import { extractGazeFeatures, getLastLandmarks } from '@/services/faceTracking';
 import {
   interpupillaryPx, estimateDistanceCm, getDistanceAnchor, readingFontCssPx, readingFontAngleDeg,
-  cssPxPerDeg, distanceWithinAnchorTolerance,
+  distanceWithinAnchorTolerance,
 } from '@/services/viewingGeometry';
 import { isCalibrated, predictNorm, getAccuracyDeg, getCalibrationSignature, getCalibrationAssessment } from '@/services/gazeCalibration';
 import { getMotionQuality, type MotionQuality } from '@/services/motionSensor';
@@ -16,30 +16,17 @@ import { CaptureValiditySummary } from '@/components/CaptureValiditySummary';
 import { DiagnosticsDrawer } from '@/components/DiagnosticsDrawer';
 import { DiagnosticsAccordion, type DiagnosticsSection } from '@/components/DiagnosticsAccordion';
 import type { DrawerVariant } from '@/services/diagnosticsDrawerLayout';
-import { analyzeSaccades } from '@/exercises/saccadeAnalysis';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
-import {
-  getPosturalBaseline,
-  resetPosturalBaseline,
-  summarizePosturalStability,
-  toPosturalSample,
-  type PosturalSample,
-} from '@/exercises/posturalStability';
-import { AssessedValidationCapture, CaptureEnvironment, GazeSample, PreTestContext, RecallQuestion, RecallTestResult, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
-import { saveValidationCapture, getValidationCaptures, deleteValidationCapture, getTodayPreContext, saveRecallTest } from '@/services/storage';
+import { resetPosturalBaseline } from '@/exercises/posturalStability';
+import { CaptureEnvironment, PreTestContext, RecallQuestion, RecallTestResult, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
+import { getValidationCaptures, deleteValidationCapture, getTodayPreContext, saveRecallTest } from '@/services/storage';
 import { PreContextForm } from '@/components/QuickContextForm';
 import { RecallQuiz } from '@/components/RecallQuiz';
 import { getRecallText, getRecallQuestions, type RecallContent } from '@/services/recallService';
-import { summarizeAxisSignal, serializeValidationExport, selectCaptureSeries } from '@/services/validationCapture';
+import { serializeValidationExport } from '@/services/validationCapture';
 import { summarizeSaccadeSignalQuality } from '@/services/signalQuality';
-import {
-  assessCaptureValidity,
-  countTrackingGaps,
-  pageInterruptionReason,
-  type CaptureInterruptionReason,
-} from '@/services/captureValidity';
-import { persistValidationCapture, type CapturePersistenceStatus } from '@/services/capturePersistence';
-import { cameraStopInterruptionReason, canBeginCaptureCalibration, createCaptureLifecycleLock } from '@/services/captureLifecycle';
+import type { CaptureInterruptionReason } from '@/services/captureValidity';
+import { cameraStopInterruptionReason, canBeginCaptureCalibration } from '@/services/captureLifecycle';
 import {
   summarizeFunctionalVisualSignal,
   type FunctionalVisualSignalSummary,
@@ -51,6 +38,7 @@ import { computeDiagnosticsSurface } from '@/services/captureGeometry';
 import { useMeasuredSurface } from '@/hooks/useMeasuredSurface';
 import { useModalDialog } from '@/hooks/useModalDialog';
 import { useCameraPipeline, type CameraPipelineFrame } from '@/hooks/useCameraPipeline';
+import { useCaptureLifecycle, type CaptureStartSnapshot } from '@/hooks/useCaptureLifecycle';
 import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { formatSampleRateHz } from '@/services/sampleRatePresentation';
 import {
@@ -60,19 +48,13 @@ import {
   rectFromElement,
   viewportNormToRectPoint,
   type SurfaceRect,
-  type CalibrationReuseDecision,
 } from '@/services/ocularSignalContract';
-import type { CalibrationAssessment } from '@/services/calibrationValidity';
 import { buildAssessmentWorkspaceSnapshot } from '@/services/assessmentAdapter';
 
 // Standalone diagnostics screen: shows reading text, runs the front camera and
 // overlays a live gaze dot + detection status so we can validate that the eyes are
 // actually being detected/tracked on the target device (iPhone Pro Max, landscape)
 // before relying on the signal inside the exercises.
-
-// Safety ceiling only: the capture normally ends when the reader clicks
-// "Terminei de ler", so the reading pace (not a fixed timer) sets the duration.
-const CAPTURE_SAFETY_CAP_MS = 120000;
 
 // Target for the generated reading passage: enough words to sustain ~20s of
 // continuous reading (the old fixed 30-50 words ran out in ~10s).
@@ -107,22 +89,6 @@ interface LiveSnapshot {
   inferenceMs: number | null; // EMA of the sync detectForVideo main-thread cost
   delegate: 'GPU' | 'CPU' | null;
   blinkScore: number | null;  // live max(eyeBlinkLeft, eyeBlinkRight)
-}
-
-interface CaptureStartSnapshot {
-  captureId: string;
-  monotonicStart: number;
-  wallClockTimestamp: number;
-  conditions: ValidationConditions;
-  context?: PreTestContext;
-  calibrationAssessment: CalibrationAssessment | null;
-  compatibility: CalibrationReuseDecision;
-  environment: CaptureEnvironment;
-}
-
-interface CaptureReportState {
-  capture: AssessedValidationCapture;
-  persistence: CapturePersistenceStatus;
 }
 
 const EMPTY_LIVE: LiveSnapshot = {
@@ -166,9 +132,6 @@ export function EyeTrackingTestScreen({
   const [live, setLive] = useState<LiveSnapshot>(EMPTY_LIVE);
   const [text, setText] = useState('Carregando texto de leitura…');
   const [readingTextState, setReadingTextState] = useState<ReadingTextState>('loading');
-  const [capturing, setCapturing] = useState(false);
-  const [captureElapsed, setCaptureElapsed] = useState(0);
-  const [captureResult, setCaptureResult] = useState<CaptureReportState | null>(null);
   const [motionQuality, setMotionQuality] = useState<MotionQuality>(() => getMotionQuality());
   const [liveSignal, setLiveSignal] = useState<FunctionalVisualSignalSummary>(EMPTY_VISUAL_SIGNAL);
   const [conditions, setConditions] = useState<ValidationConditions>({
@@ -214,6 +177,47 @@ export function EyeTrackingTestScreen({
   const [recallGenState, setRecallGenState] = useState<'idle' | 'generating' | 'error'>('idle');
   const [recallOutcome, setRecallOutcome] = useState<{ score: number; total: number; topic: string } | null>(null);
   const lastRecallCaptureRef = useRef<{ captureId: string; readingDurationMs: number } | null>(null);
+
+  // Capture lifecycle (lock, buffers, safety cap, persistence) lives in the hook;
+  // the screen keeps the start-snapshot provenance and every consumer (recall quiz,
+  // saved list, frozen font). Called before useCameraPipeline so its unmount
+  // cleanup (finish the in-flight capture) runs before the pipeline teardown —
+  // same order as the old inline effects.
+  const {
+    capturing,
+    capturingRef,
+    captureElapsed,
+    captureResult,
+    clearCaptureResult,
+    startCapture: startCaptureLifecycle,
+    finishCapture,
+    retryCapturePersistence,
+    pushFrameSample,
+    handleCameraTeardown,
+  } = useCaptureLifecycle({
+    videoRef,
+    getDetectionFps: () => liveRef.current.fps,
+    // Unfreeze the capture-locked reading font as soon as the capture lock releases.
+    onCaptureRelease: () => { frozenFontPxRef.current = null; },
+    onCaptureFinished: ({ captureId, durationMs, interruption }) => {
+      // Recall mode: the reading just ended, generate the quiz over the text that
+      // was actually on screen. The capture is saved either way — only the quiz is
+      // at the mercy of the AI call.
+      lastRecallCaptureRef.current = { captureId, readingDurationMs: Math.round(durationMs) };
+      if (!interruption && testModeRef.current === 'recall' && recallContentRef.current) {
+        setRecallGenState('generating');
+        getRecallQuestions(recallContentRef.current.text)
+          .then(questions => { setRecallQuiz(questions); setRecallGenState('idle'); })
+          .catch(() => setRecallGenState('error'));
+      }
+    },
+    onCapturePersisted: capture => {
+      setCaptures(previous => (
+        previous.some(item => item.id === capture.id) ? previous : [capture, ...previous]
+      ));
+    },
+  });
+
   const [calibrationSurfaceRect, setCalibrationSurfaceRect] = useState<SurfaceRect | null>(null);
   const contextDialogRef = useModalDialog({
     open: contextFormOpen,
@@ -228,7 +232,7 @@ export function EyeTrackingTestScreen({
   });
   const captureReportDialogRef = useModalDialog({
     open: captureResult !== null && recallQuiz === null && recallGenState === 'idle',
-    onEscape: () => { setCaptureResult(null); setRecallOutcome(null); },
+    onEscape: () => { clearCaptureResult(); setRecallOutcome(null); },
   });
   const capturesDialogRef = useModalDialog({
     open: showCaptures,
@@ -251,30 +255,6 @@ export function EyeTrackingTestScreen({
   // mid-capture would re-wrap the text and silently change what the h/v samples
   // mean; the stimulus geometry must be frozen for the whole measurement window.
   const frozenFontPxRef = useRef<number | null>(null);
-
-  // Capture state.
-  const capturingRef = useRef(false);
-  const captureStartSnapshotRef = useRef<CaptureStartSnapshot | null>(null);
-  const finishCaptureRef = useRef<(interruption?: CaptureInterruptionReason | null) => void>(() => {});
-  const captureLifecycleRef = useRef(createCaptureLifecycleLock());
-  const captureOwnerRef = useRef<number | null>(null);
-  const persistenceInFlightRef = useRef<Set<string>>(new Set());
-  // Calibrated predictions and raw iris ratios use different units/gains, so each
-  // source accumulates in its own buffer; finishCapture analyzes the majority buffer
-  // only (selectCaptureSeries) — mixing them creates unit jumps the detector reads
-  // as fake saccades.
-  const captureCalSamplesRef = useRef<GazeSample[]>([]);
-  const captureRawSamplesRef = useRef<GazeSample[]>([]);
-  // Frames whose calibrated prediction was rejected for extrapolation (clamped
-  // outside [0,1]); provenance for how often the model left its fitted region.
-  const captureExtrapolatedRef = useRef(0);
-  const captureFaceRef = useRef(0);
-  const captureTotalRef = useRef(0);
-  const posturalSamplesRef = useRef<PosturalSample[]>([]);
-  const captureShakeRef = useRef(false);
-  // Per-frame IPD-based distance estimates gathered during the capture; their median
-  // becomes the capture's geometric provenance (distanceEstimatedCm).
-  const captureDistanceSamplesRef = useRef<number[]>([]);
   useEffect(() => { textRef.current = text; layoutRef.current = null; }, [text]);
 
   useEffect(() => {
@@ -417,24 +397,16 @@ export function EyeTrackingTestScreen({
   // it tears the stream/loop down, so the combined sequence matches the old
   // inline teardownCameraResources().
   const handlePipelineTeardown = () => {
-    capturingRef.current = false;
-    captureStartSnapshotRef.current = null;
+    handleCameraTeardown();
     frozenFontPxRef.current = null;
     resetPosturalBaseline();
     liveRef.current = EMPTY_LIVE;
     visualSignalSamplesRef.current = [];
   };
 
-  // Declared before the pipeline hook so on unmount this cleanup (finish the
-  // in-flight capture) runs before the hook's teardown — same order as before.
   useEffect(() => {
     mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (capturingRef.current) {
-        finishCaptureRef.current('navigation-during-capture');
-      }
-    };
+    return () => { mountedRef.current = false; };
   }, []);
 
   useEffect(() => {
@@ -574,34 +546,22 @@ export function EyeTrackingTestScreen({
         ctx.fill();
       }
 
-      // Measured capture.
-      if (capturingRef.current) {
-        const captureStart = captureStartSnapshotRef.current;
-        if (!captureStart) {
-          capturingRef.current = false;
-          setCapturing(false);
-          return;
-        }
-        const tMs = ts - captureStart.monotonicStart;
-        captureTotalRef.current += 1;
-        if (faceFound) captureFaceRef.current += 1;
-        if (pose) posturalSamplesRef.current.push(toPosturalSample(pose));
-        if (getMotionQuality().status === 'shaking') captureShakeRef.current = true;
+      // Measured capture: forward this frame's samples to the lifecycle hook.
+      const framePush = pushFrameSample({
+        ts,
+        faceFound,
+        pose,
+        gaze,
+        blinking,
+        dot: dot ? { h: dot.x / cssW, v: dot.y / cssH } : null,
+        dotCalibrated,
+        dotExtrapolated,
         // Only real IPD-based estimates enter the provenance median; the profile
         // fallback would fake a measurement that never happened.
-        if (ipdPx != null && anchor) captureDistanceSamplesRef.current.push(dEst);
-        if (!blinking && dotExtrapolated) captureExtrapolatedRef.current += 1;
-        if (!blinking && dotCalibrated && dot) {
-          captureCalSamplesRef.current.push({ t: tMs, h: dot.x / cssW, v: dot.y / cssH });
-        } else if (!blinking && gaze) {
-          captureRawSamplesRef.current.push({ t: tMs, h: gaze.h, v: gaze.v });
-        }
-        if (tMs >= CAPTURE_SAFETY_CAP_MS) {
-          finishCapture();
-        } else if (ts - lastLivePushRef.current > 200) {
-          setCaptureElapsed(tMs);
-        }
-      }
+        distanceEstimateCm: ipdPx != null && anchor ? dEst : null,
+        elapsedUpdateDue: ts - lastLivePushRef.current > 200,
+      });
+      if (framePush === 'aborted') return;
 
       // Throttled UI snapshot (~5/s) to avoid re-rendering every frame.
       const snap: LiveSnapshot = {
@@ -641,16 +601,15 @@ export function EyeTrackingTestScreen({
   });
 
   const stopCamera = (interruption: CaptureInterruptionReason | null = null) => {
-    if (capturingRef.current) finishCaptureRef.current(interruption);
+    if (capturingRef.current) finishCapture(interruption);
     stopCameraPipeline();
     if (!mountedRef.current) return;
-    setCapturing(false);
     setLive(EMPTY_LIVE);
     setLiveSignal(EMPTY_VISUAL_SIGNAL);
   };
 
   const startCamera = () => {
-    setCaptureResult(null);
+    clearCaptureResult();
     void startCameraPipeline();
   };
 
@@ -664,190 +623,11 @@ export function EyeTrackingTestScreen({
     }
     const startSnapshot = buildCaptureStartSnapshot();
     if (!startSnapshot) return;
-    const captureOwner = captureLifecycleRef.current.begin();
-    if (captureOwner === null) return;
-    // Freeze the stimulus geometry and provenance for the whole measurement window.
+    if (!startCaptureLifecycle(startSnapshot)) return;
+    // Freeze the stimulus geometry for the whole measurement window (the hook owns
+    // the provenance snapshot; the font lock is the screen's stimulus concern).
     frozenFontPxRef.current = Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
-    captureStartSnapshotRef.current = startSnapshot;
-    captureOwnerRef.current = captureOwner;
-    capturingRef.current = true;
-    captureCalSamplesRef.current = [];
-    captureRawSamplesRef.current = [];
-    captureExtrapolatedRef.current = 0;
-    captureFaceRef.current = 0;
-    captureTotalRef.current = 0;
-    posturalSamplesRef.current = [];
-    captureShakeRef.current = false;
-    captureDistanceSamplesRef.current = [];
-    setCaptureResult(null);
-    setCaptureElapsed(0);
-    setCapturing(true);
   };
-
-  const finishCapture = (interruption: CaptureInterruptionReason | null = null) => {
-    const captureOwner = captureOwnerRef.current;
-    if (
-      captureOwner === null
-      || !captureLifecycleRef.current.finish(captureOwner)
-    ) return;
-    // The synchronous lock is deliberately first: pagehide + visibilitychange can
-    // arrive back-to-back, and only the first event may own this immutable record.
-    captureOwnerRef.current = null;
-    capturingRef.current = false;
-    frozenFontPxRef.current = null;
-    if (mountedRef.current) setCapturing(false);
-    const startSnapshot = captureStartSnapshotRef.current;
-    captureStartSnapshotRef.current = null;
-    if (!startSnapshot) return;
-
-    // Copy every mutable buffer before analysis or async persistence begins.
-    const calibratedSamples = captureCalSamplesRef.current.slice();
-    const rawSamples = captureRawSamplesRef.current.slice();
-    const posturalSamples = posturalSamplesRef.current.slice();
-    const distanceSamples = captureDistanceSamplesRef.current.slice();
-    const extrapolatedSampleCount = captureExtrapolatedRef.current;
-    const faceFrames = captureFaceRef.current;
-    const totalFrames = captureTotalRef.current;
-    const motionHighMovement = captureShakeRef.current;
-
-    const durationMs = Math.max(0, performance.now() - startSnapshot.monotonicStart);
-    const series = selectCaptureSeries(calibratedSamples, rawSamples);
-    const metrics = analyzeSaccades(series.samples, { signalSource: series.signalSource });
-    const detectionTelemetry = getDetectionTelemetry();
-    const measuredRates = readCameraPipelineTelemetry(videoRef.current, {
-      detectionFps: liveRef.current.fps,
-      ocularSampleRateHz: metrics.sampleRateHz,
-      inferenceEmaMs: detectionTelemetry.inferenceEmaMs ?? undefined,
-      delegate: detectionTelemetry.delegate ?? undefined,
-    }).measured;
-    const environment: CaptureEnvironment = {
-      ...startSnapshot.environment,
-      viewport: { ...startSnapshot.environment.viewport },
-      surfaceRect: { ...startSnapshot.environment.surfaceRect },
-      video: { ...startSnapshot.environment.video },
-      camera: { ...startSnapshot.environment.camera },
-      rates: measuredRates,
-    };
-    const coverage = totalFrames
-      ? (faceFrames / totalFrames) * 100
-      : 0;
-    const finalMotionQuality = getMotionQuality();
-    const postural = summarizePosturalStability(posturalSamples, {
-      baseline: getPosturalBaseline(),
-      motionHighMovement,
-      motionStatus: finalMotionQuality.status,
-      motionDeltaDeg: finalMotionQuality.deltaDeg,
-      motionConfidence: finalMotionQuality.confidence,
-      durationMs,
-      faceCoverage: coverage,
-    });
-
-    // Persist the tagged capture so PACK 1 thresholds can be calibrated on real data.
-    const samples = series.samples.slice();
-    // Geometric provenance: median of the live distance estimates (robust to blinks
-    // and brief tracking losses) and the px/deg it implies, so normalized amplitudes
-    // stay convertible to degrees offline.
-    const distSamples = distanceSamples.sort((a, b) => a - b);
-    const distanceEstimatedCm = distSamples.length ? distSamples[Math.floor(distSamples.length / 2)] : undefined;
-    const validity = assessCaptureValidity({
-      assessedAt: Date.now(),
-      durationMs,
-      coverage,
-      signalSource: series.signalSource,
-      selectedSourceRatio: series.selectedSourceRatio,
-      sampleRateHz: metrics.sampleRateHz,
-      calibrationAccepted: startSnapshot.calibrationAssessment?.accepted === true,
-      calibrationCompatible: startSnapshot.compatibility.reusable,
-      gapCount: countTrackingGaps(samples),
-      interruption,
-    });
-    const capture = {
-      id: startSnapshot.captureId,
-      timestamp: startSnapshot.wallClockTimestamp,
-      durationMs,
-      conditions: startSnapshot.conditions,
-      context: startSnapshot.context,
-      coverage,
-      calibrated: series.signalSource === 'calibrated-mediapipe',
-      metrics,
-      postural,
-      axis: summarizeAxisSignal(samples),
-      environment,
-      calibrationAssessment: startSnapshot.calibrationAssessment ?? undefined,
-      validity,
-      sampleCount: samples.length,
-      samples,
-      distanceEstimatedCm,
-      pxPerDegAtCapture: cssPxPerDeg(distanceEstimatedCm ?? startSnapshot.conditions.distanceCm),
-      canvasWidthPx: environment.surfaceRect.width,
-      orientation: environment.viewport.orientation,
-      calibratedSampleCount: series.calibratedSampleCount,
-      rawSampleCount: series.rawSampleCount,
-      extrapolatedSampleCount,
-    } satisfies AssessedValidationCapture;
-    // Report first, persist second. A slow/failing IndexedDB can never hide evidence.
-    if (mountedRef.current) setCaptureResult({ capture, persistence: 'saving' });
-    void persistCaptureAndPublish(capture);
-
-    // Recall mode: the reading just ended, generate the quiz over the text that was
-    // actually on screen. The capture above is saved either way — only the quiz is
-    // at the mercy of the AI call.
-    lastRecallCaptureRef.current = { captureId: capture.id, readingDurationMs: Math.round(durationMs) };
-    if (!interruption && testModeRef.current === 'recall' && recallContentRef.current) {
-      setRecallGenState('generating');
-      getRecallQuestions(recallContentRef.current.text)
-        .then(questions => { setRecallQuiz(questions); setRecallGenState('idle'); })
-        .catch(() => setRecallGenState('error'));
-    }
-  };
-
-  const persistCaptureAndPublish = async (capture: AssessedValidationCapture) => {
-    if (persistenceInFlightRef.current.has(capture.id)) return;
-    persistenceInFlightRef.current.add(capture.id);
-    try {
-      const result = await persistValidationCapture(capture, saveValidationCapture);
-      if (mountedRef.current) {
-        setCaptureResult(previous => (
-          previous?.capture === capture ? result : previous
-        ));
-        if (result.persistence === 'saved') {
-          setCaptures(previous => (
-            previous.some(item => item.id === capture.id) ? previous : [capture, ...previous]
-          ));
-        }
-      }
-    } finally {
-      persistenceInFlightRef.current.delete(capture.id);
-    }
-  };
-
-  const retryCapturePersistence = () => {
-    const report = captureResult;
-    if (!report || report.persistence !== 'failed') return;
-    const capture = report.capture;
-    setCaptureResult({ capture, persistence: 'saving' });
-    void persistCaptureAndPublish(capture);
-  };
-
-  // Publish the latest committed callback after render. The DOM listeners below
-  // remain registered once, while their ref never observes an uncommitted closure.
-  useLayoutEffect(() => {
-    finishCaptureRef.current = finishCapture;
-  }, [finishCapture]);
-
-  useEffect(() => {
-    const onVisibility = () => {
-      const reason = pageInterruptionReason('visibilitychange', document.visibilityState);
-      if (reason) finishCaptureRef.current(reason);
-    };
-    const onPageHide = () => finishCaptureRef.current('pagehide-during-capture');
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('pagehide', onPageHide);
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('pagehide', onPageHide);
-    };
-  }, []);
 
   const removeCapture = (id: string) => {
     deleteValidationCapture(id)
@@ -1502,8 +1282,8 @@ export function EyeTrackingTestScreen({
               recallOutcome={recallOutcome}
               captureSummary={captureSummary}
               onRetrySave={retryCapturePersistence}
-              onClose={() => { setCaptureResult(null); setRecallOutcome(null); }}
-              onRestart={() => { setCaptureResult(null); setRecallOutcome(null); startCapture(); }}
+              onClose={() => { clearCaptureResult(); setRecallOutcome(null); }}
+              onRestart={() => { clearCaptureResult(); setRecallOutcome(null); startCapture(); }}
             />
           </div>
         </div>
