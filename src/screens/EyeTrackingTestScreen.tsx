@@ -18,11 +18,10 @@ import { DiagnosticsAccordion, type DiagnosticsSection } from '@/components/Diag
 import type { DrawerVariant } from '@/services/diagnosticsDrawerLayout';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
 import { resetPosturalBaseline } from '@/exercises/posturalStability';
-import { CaptureEnvironment, PreTestContext, RecallQuestion, RecallTestResult, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
-import { getValidationCaptures, deleteValidationCapture, getTodayPreContext, saveRecallTest } from '@/services/storage';
+import { CaptureEnvironment, PreTestContext, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
+import { getValidationCaptures, deleteValidationCapture, getTodayPreContext } from '@/services/storage';
 import { PreContextForm } from '@/components/QuickContextForm';
 import { RecallQuiz } from '@/components/RecallQuiz';
-import { getRecallText, getRecallQuestions, type RecallContent } from '@/services/recallService';
 import { serializeValidationExport } from '@/services/validationCapture';
 import { summarizeSaccadeSignalQuality } from '@/services/signalQuality';
 import type { CaptureInterruptionReason } from '@/services/captureValidity';
@@ -39,6 +38,7 @@ import { useMeasuredSurface } from '@/hooks/useMeasuredSurface';
 import { useModalDialog } from '@/hooks/useModalDialog';
 import { useCameraPipeline, type CameraPipelineFrame } from '@/hooks/useCameraPipeline';
 import { useCaptureLifecycle, type CaptureStartSnapshot } from '@/hooks/useCaptureLifecycle';
+import { useRecallFlow, type ReadingTextState } from '@/hooks/useRecallFlow';
 import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { formatSampleRateHz } from '@/services/sampleRatePresentation';
 import {
@@ -72,8 +72,6 @@ const optionLabel = <T extends string>(options: [T, string][], value: T) =>
 // the gentle orientation nudge below; touch is our proxy for "rotates camera with orientation".
 const IS_MOBILE = typeof navigator !== 'undefined'
   && (navigator.maxTouchPoints > 0 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent));
-
-type ReadingTextState = 'loading' | 'ready' | 'error';
 
 interface LiveSnapshot {
   faceFound: boolean;
@@ -166,17 +164,31 @@ export function EyeTrackingTestScreen({
   }, []);
 
   // --- Leitura + Recall mode ---
-  // 'capture' shows the short AI text and just records gaze; 'recall' swaps in an
-  // intermediate factual text and, after "Terminei de ler", runs a 6-question quiz.
-  const [testMode, setTestMode] = useState<'capture' | 'recall'>(initialMode);
-  const testModeRef = useRef<'capture' | 'recall'>(initialMode);
-  const [recallContent, setRecallContent] = useState<RecallContent | null>(null);
-  const recallContentRef = useRef<RecallContent | null>(null);
-  const shortTextRef = useRef<string | null>(null);
-  const [recallQuiz, setRecallQuiz] = useState<RecallQuestion[] | null>(null);
-  const [recallGenState, setRecallGenState] = useState<'idle' | 'generating' | 'error'>('idle');
-  const [recallOutcome, setRecallOutcome] = useState<{ score: number; total: number; topic: string } | null>(null);
-  const lastRecallCaptureRef = useRef<{ captureId: string; readingDurationMs: number } | null>(null);
+  // Mode, recall passage, post-capture quiz and its persistence live in the hook;
+  // the screen keeps the displayed text (setText/readingTextState) and feeds the
+  // flow through the callbacks below. isCapturing reads capturingRef lazily —
+  // the lifecycle hook is declared right after (same pattern as getDetectionFps).
+  const {
+    testMode,
+    recallContent,
+    recallQuiz,
+    recallGenState,
+    recallOutcome,
+    switchMode,
+    registerShortText,
+    noteCaptureFinished,
+    handleQuizDone,
+    dismissRecallError,
+    clearRecallOutcome,
+  } = useRecallFlow({
+    initialMode,
+    isCapturing: () => capturingRef.current,
+    getPreTestContext: () => preContextRef.current,
+    onReadingTextChange: (nextText, state) => {
+      setText(nextText);
+      setReadingTextState(state);
+    },
+  });
 
   // Capture lifecycle (lock, buffers, safety cap, persistence) lives in the hook;
   // the screen keeps the start-snapshot provenance and every consumer (recall quiz,
@@ -199,18 +211,8 @@ export function EyeTrackingTestScreen({
     getDetectionFps: () => liveRef.current.fps,
     // Unfreeze the capture-locked reading font as soon as the capture lock releases.
     onCaptureRelease: () => { frozenFontPxRef.current = null; },
-    onCaptureFinished: ({ captureId, durationMs, interruption }) => {
-      // Recall mode: the reading just ended, generate the quiz over the text that
-      // was actually on screen. The capture is saved either way — only the quiz is
-      // at the mercy of the AI call.
-      lastRecallCaptureRef.current = { captureId, readingDurationMs: Math.round(durationMs) };
-      if (!interruption && testModeRef.current === 'recall' && recallContentRef.current) {
-        setRecallGenState('generating');
-        getRecallQuestions(recallContentRef.current.text)
-          .then(questions => { setRecallQuiz(questions); setRecallGenState('idle'); })
-          .catch(() => setRecallGenState('error'));
-      }
-    },
+    // Recall mode reaction (capture link + quiz generation) lives in useRecallFlow.
+    onCaptureFinished: noteCaptureFinished,
     onCapturePersisted: capture => {
       setCaptures(previous => (
         previous.some(item => item.id === capture.id) ? previous : [capture, ...previous]
@@ -225,14 +227,14 @@ export function EyeTrackingTestScreen({
   });
   const recallErrorDialogRef = useModalDialog({
     open: recallGenState === 'error',
-    onEscape: () => setRecallGenState('idle'),
+    onEscape: dismissRecallError,
   });
   const recallQuizDialogRef = useModalDialog({
     open: recallQuiz !== null && recallContent !== null,
   });
   const captureReportDialogRef = useModalDialog({
     open: captureResult !== null && recallQuiz === null && recallGenState === 'idle',
-    onEscape: () => { clearCaptureResult(); setRecallOutcome(null); },
+    onEscape: () => { clearCaptureResult(); clearRecallOutcome(); },
   });
   const capturesDialogRef = useModalDialog({
     open: showCaptures,
@@ -273,85 +275,22 @@ export function EyeTrackingTestScreen({
     };
   }, []);
 
-  // Load reading content once.
+  // Load reading content once. The generated short text is registered with the
+  // recall flow, which restores it as the displayed text while in 'capture' mode.
   useEffect(() => {
     getReadingContent('facil', READING_TARGET_DURATION_SEC)
       .then(generatedText => {
         const cleanText = generatedText.trim();
         if (!cleanText) throw new Error('empty generated reading text');
-        shortTextRef.current = cleanText;
-        if (testModeRef.current === 'capture') {
-          setText(cleanText);
-          setReadingTextState('ready');
-        }
+        registerShortText(cleanText);
       })
       .catch(() => {
         setText('Não foi possível gerar o texto de leitura por IA.');
         setReadingTextState('error');
       });
-  }, []);
-
-  const loadRecallText = () => {
-    setReadingTextState('loading');
-    setText('Gerando texto de leitura para recall…');
-    setRecallContent(null);
-    recallContentRef.current = null;
-    getRecallText()
-      .then(content => {
-        setRecallContent(content);
-        recallContentRef.current = content;
-        setText(content.text);
-        setReadingTextState('ready');
-      })
-      .catch(() => {
-        setText('Não foi possível gerar o texto de recall por IA.');
-        setReadingTextState('error');
-      });
-  };
-
-  const switchMode = (mode: 'capture' | 'recall') => {
-    if (mode === testMode || capturingRef.current) return;
-    setTestMode(mode);
-    testModeRef.current = mode;
-    setRecallOutcome(null);
-    if (mode === 'recall') {
-      loadRecallText();
-    } else if (shortTextRef.current) {
-      setText(shortTextRef.current);
-      setReadingTextState('ready');
-    }
-  };
-
-  useEffect(() => {
-    if (initialMode === 'recall') {
-      switchMode('recall');
-    }
-  // switchMode is intentionally not a dependency; this sync is only for the initial mount mode.
+  // registerShortText is intentionally not a dependency; this load runs once on mount.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialMode]);
-
-  const handleQuizDone = (answers: number[], score: number) => {
-    const content = recallContentRef.current;
-    if (content && recallQuiz) {
-      const result: RecallTestResult = {
-        id: Date.now().toString(),
-        timestamp: Date.now(),
-        topic: content.topic,
-        text: content.text,
-        questions: recallQuiz,
-        answers,
-        score,
-        readingDurationMs: lastRecallCaptureRef.current?.readingDurationMs ?? 0,
-        captureId: lastRecallCaptureRef.current?.captureId,
-        context: preContextRef.current ?? undefined,
-      };
-      saveRecallTest(result).catch(() => {/* keep the on-screen result */});
-      setRecallOutcome({ score, total: recallQuiz.length, topic: content.topic });
-    }
-    setRecallQuiz(null);
-    // Fresh text for the next run — rereading the same passage would inflate recall.
-    loadRecallText();
-  };
+  }, []);
 
   // Load saved validation captures once.
   useEffect(() => {
@@ -1261,7 +1200,7 @@ export function EyeTrackingTestScreen({
         <div ref={recallErrorDialogRef} role="dialog" aria-modal="true" aria-labelledby="recall-error-title" tabIndex={-1} className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/90 p-6 text-center">
           <h2 id="recall-error-title" className="text-rose-300 font-bold mb-2">Não foi possível gerar as questões.</h2>
           <p className="text-slate-400 text-sm mb-6 max-w-md">A captura da leitura foi salva normalmente; só o questionário falhou. Tente outra rodada.</p>
-          <button onClick={() => setRecallGenState('idle')} className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold">Fechar</button>
+          <button onClick={dismissRecallError} className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold">Fechar</button>
         </div>
       )}
       {recallQuiz && recallContent && (
@@ -1282,8 +1221,8 @@ export function EyeTrackingTestScreen({
               recallOutcome={recallOutcome}
               captureSummary={captureSummary}
               onRetrySave={retryCapturePersistence}
-              onClose={() => { clearCaptureResult(); setRecallOutcome(null); }}
-              onRestart={() => { clearCaptureResult(); setRecallOutcome(null); startCapture(); }}
+              onClose={() => { clearCaptureResult(); clearRecallOutcome(); }}
+              onRestart={() => { clearCaptureResult(); clearRecallOutcome(); startCapture(); }}
             />
           </div>
         </div>
