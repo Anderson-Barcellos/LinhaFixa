@@ -5,13 +5,15 @@ import OpenAI from "openai";
 import { MEDIAPIPE_PUBLIC_ROOT } from "./config/mediapipe-assets.mjs";
 import { HTML_CACHE_CONTROL } from "./config/static-cache.mjs";
 import { readingWordRange } from "./src/services/readingLength";
+import { createRateLimiter, clampDurationSec, capText, normalizeComplexity } from "./src/services/serverGuards";
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 function getClient() {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
-  return new OpenAI({ apiKey });
+  // Bounded upstream: never hold a request longer than 30s, retry once at most.
+  return new OpenAI({ apiKey, timeout: 30000, maxRetries: 1 });
 }
 
 function requireOpenAI(res: express.Response, feature: string) {
@@ -32,13 +34,123 @@ function basePrefix(): string {
   return '/' + v.replace(/^\/+|\/+$/g, '');
 }
 
+// --- Structured Output schemas (strict mode: additionalProperties:false and
+// every field in required). Shapes mirror what the client already validates
+// (recallService.isValidRecallQuestions, planner.isValidPlan, types.ts).
+
+const RECALL_TEXT_SCHEMA = {
+  type: "object",
+  properties: {
+    topic: { type: "string" },
+    text: { type: "string" },
+  },
+  required: ["topic", "text"],
+  additionalProperties: false,
+} as const;
+
+// Counts (6 questions / 5 options) stay enforced by the prompt + client-side
+// isValidRecallQuestions; strict mode rejects minItems/maxItems on some models.
+const RECALL_QUESTIONS_SCHEMA = {
+  type: "object",
+  properties: {
+    questions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          question: { type: "string" },
+          options: { type: "array", items: { type: "string" } },
+          correctIndex: { type: "integer" },
+          rationale: { type: "string" },
+        },
+        required: ["question", "options", "correctIndex", "rationale"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["questions"],
+  additionalProperties: false,
+} as const;
+
+const PLAN_SCHEMA = {
+  type: "object",
+  properties: {
+    sessionTitle: { type: "string" },
+    safetyStatus: {
+      type: "object",
+      properties: {
+        allowTraining: { type: "boolean" },
+        reason: { type: "string" },
+        recommendPause: { type: "boolean" },
+        recommendProfessionalReview: { type: "boolean" },
+      },
+      required: ["allowTraining", "reason", "recommendPause", "recommendProfessionalReview"],
+      additionalProperties: false,
+    },
+    exercises: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          exerciseId: { type: "string", enum: ["fixation", "saccades", "smooth_pursuit", "assistedReading"] },
+          durationSec: { type: "number" },
+          difficulty: { type: "number" },
+          parameters: {
+            type: "object",
+            properties: {
+              targetSizeMm: { type: "number" },
+              speedDegPerSec: { type: "number" },
+              amplitudeDeg: { type: "number" },
+              lineSpacingMultiplier: { type: "number" },
+              contrastMode: { type: "string" },
+              durationSec: { type: "number" },
+              // Optional in types.ts; strict mode requires the key, so nullable.
+              textComplexity: { type: ["string", "null"], enum: ["facil", "dificil", null] },
+            },
+            required: [
+              "targetSizeMm", "speedDegPerSec", "amplitudeDeg",
+              "lineSpacingMultiplier", "contrastMode", "durationSec", "textComplexity",
+            ],
+            additionalProperties: false,
+          },
+          rationalePtBR: { type: "string" },
+          stopRules: { type: "array", items: { type: "string" } },
+        },
+        required: ["exerciseId", "durationSec", "difficulty", "parameters", "rationalePtBR", "stopRules"],
+        additionalProperties: false,
+      },
+    },
+    patientFeedbackPtBR: { type: "string" },
+    clinicianSummaryPtBR: { type: "string" },
+  },
+  required: ["sessionTitle", "safetyStatus", "exercises", "patientFeedbackPtBR", "clinicianSummaryPtBR"],
+  additionalProperties: false,
+} as const;
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
   const base = basePrefix();
   const p = (route: string) => `${base}${route}`;
 
+  // Apache runs on the same host; trust only loopback so req.ip reflects the
+  // real client from X-Forwarded-For without honoring spoofed headers.
+  app.set('trust proxy', 'loopback');
+
   app.use(express.json());
+
+  // 30 req / 10 min per IP across every OpenAI-proxied endpoint.
+  const apiLimiter = createRateLimiter({ limit: 30, windowMs: 600000 });
+  app.use(p('/api'), (req, res, next) => {
+    const result = apiLimiter.check(req.ip || 'unknown');
+    if (result.allowed) return next();
+    res.set('Retry-After', String(result.retryAfterSec ?? 1));
+    res.status(429).json({ error: 'RATE_LIMITED' });
+  });
+
+  app.get(p('/healthz'), (_req, res) => {
+    res.json({ ok: true });
+  });
 
   app.post(p("/api/generateReadingContent"), async (req, res) => {
     try {
@@ -46,12 +158,10 @@ async function startServer() {
       const client = requireOpenAI(res, "Geracao de texto de leitura");
       if (!client) return;
 
-      const durationSec = Number.isFinite(Number(targetDurationSec)) && Number(targetDurationSec) > 0
-        ? Number(targetDurationSec)
-        : 20;
+      const durationSec = clampDurationSec(targetDurationSec, { min: 5, max: 120, fallback: 20 });
       const range = readingWordRange(durationSec);
 
-      const difficultyRule = complexity === 'facil'
+      const difficultyRule = normalizeComplexity(complexity) === 'facil'
         ? "Produza um texto mais fácil e ameno, com encadeamento de ideias direto, frases mais curtas e vocabulário cotidiano sobre programação/tecnologia."
         : "Produza um texto estruturalmente mais complexo, com encadeamento de ideias denso, orações subordinadas e jargão técnico sobre programação/tecnologia.";
 
@@ -94,7 +204,10 @@ Responda SOMENTE com um objeto JSON: { "topic": string curta com o tema, "text":
       const completion = await client.chat.completions.create({
         model: MODEL,
         temperature: 0.8,
-        response_format: { type: "json_object" },
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "recall_text", strict: true, schema: RECALL_TEXT_SCHEMA },
+        },
         messages: [
           { role: "system", content: "Você gera textos expositivos factuais para testes de leitura e memória. Responda apenas com JSON válido." },
           { role: "user", content: prompt }
@@ -111,7 +224,8 @@ Responda SOMENTE com um objeto JSON: { "topic": string curta com o tema, "text":
 
   app.post(p("/api/generateRecallQuestions"), async (req, res) => {
     try {
-      const { text } = req.body;
+      // Cap prompt injection surface/cost: recall texts are ~250 words anyway.
+      const text = capText(req.body?.text, 4000);
       const client = requireOpenAI(res, "Geracao de questoes de recall");
       if (!client) return;
 
@@ -130,7 +244,10 @@ Responda SOMENTE com JSON: { "questions": [ { "question": string, "options": [st
       const completion = await client.chat.completions.create({
         model: MODEL,
         temperature: 0.2,
-        response_format: { type: "json_object" },
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "recall_questions", strict: true, schema: RECALL_QUESTIONS_SCHEMA },
+        },
         messages: [
           { role: "system", content: "Você elabora questões objetivas de compreensão leitora, precisas e sem ambiguidade. Responda apenas com JSON válido." },
           { role: "user", content: prompt }
@@ -227,7 +344,10 @@ Todos os textos voltados ao usuário devem estar em português (pt-BR). Não inc
       const completion = await client.chat.completions.create({
         model: MODEL,
         temperature: 0.4,
-        response_format: { type: "json_object" },
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "treatment_plan", strict: true, schema: PLAN_SCHEMA },
+        },
         messages: [
           { role: "system", content: "Você gera planos de treino oculomotor seguros e conservadores como assistente de software, sem fazer diagnóstico médico. Responda apenas com JSON válido." },
           { role: "user", content: prompt }
