@@ -4,31 +4,13 @@ import { ArrowLeft, Camera, Check, Play, RotateCcw, Crosshair, Trash2, Database 
 import { AssessmentResultPanel } from '@/components/assessment/AssessmentResultPanel';
 import { AssessmentSessionSurface, SESSION_TITLES } from '@/components/assessment/AssessmentSessionSurface';
 import { useAppStore } from '@/store/useAppStore';
-import {
-  initFaceTracking, isFaceTrackingActive, estimateHeadPose, estimateGaze, extractGazeFeatures, getLastLandmarks,
-  getBlinkScore, shouldDropGazeForBlink, getDetectionTelemetry,
-} from '@/services/faceTracking';
+import { extractGazeFeatures, getLastLandmarks, getDetectionTelemetry } from '@/services/faceTracking';
 import {
   interpupillaryPx, estimateDistanceCm, getDistanceAnchor, readingFontCssPx, readingFontAngleDeg,
   cssPxPerDeg, distanceWithinAnchorTolerance,
 } from '@/services/viewingGeometry';
 import { isCalibrated, predictNorm, getAccuracyDeg, getCalibrationSignature, getCalibrationAssessment } from '@/services/gazeCalibration';
-import {
-  attachStream,
-  discardFrontCameraRequest,
-  getActiveCameraStream,
-  getFrontCameraStream,
-  requestFrontCameraStream,
-  retainFrontCameraRequest,
-  stopCameraStream,
-} from '@/services/cameraStream';
-import {
-  getMotionQuality,
-  requestMotionPermissionFromGesture,
-  startMotionSensor,
-  stopMotionSensor,
-  type MotionQuality,
-} from '@/services/motionSensor';
+import { getMotionQuality, type MotionQuality } from '@/services/motionSensor';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { CaptureValiditySummary } from '@/components/CaptureValiditySummary';
 import { DiagnosticsDrawer } from '@/components/DiagnosticsDrawer';
@@ -68,10 +50,9 @@ import { diagnosticsLayoutMode } from '@/services/deviceProfile';
 import { computeDiagnosticsSurface } from '@/services/captureGeometry';
 import { useMeasuredSurface } from '@/hooks/useMeasuredSurface';
 import { useModalDialog } from '@/hooks/useModalDialog';
+import { useCameraPipeline, type CameraPipelineFrame } from '@/hooks/useCameraPipeline';
 import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { formatSampleRateHz } from '@/services/sampleRatePresentation';
-import { createAsyncOperationGate, guardedAwait } from '@/services/asyncOperation';
-import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import {
   calibrationSignatureMatches,
   calibrationReuseDecision,
@@ -110,7 +91,6 @@ const optionLabel = <T extends string>(options: [T, string][], value: T) =>
 const IS_MOBILE = typeof navigator !== 'undefined'
   && (navigator.maxTouchPoints > 0 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent));
 
-type CameraState = 'idle' | 'starting' | 'running' | 'unavailable';
 type ReadingTextState = 'loading' | 'ready' | 'error';
 
 interface LiveSnapshot {
@@ -170,10 +150,8 @@ export function EyeTrackingTestScreen({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mountedRef = useRef(true);
-  const cameraStartupGateRef = useRef(createAsyncOperationGate());
   const { ref: surfaceHostRef, surface: measuredHost } = useMeasuredSurface<HTMLDivElement>();
 
-  const [cameraState, setCameraState] = useState<CameraState>('idle');
   const [viewportWidth, setViewportWidth] = useState(
     typeof window !== 'undefined' ? window.innerWidth : 1024
   );
@@ -257,14 +235,9 @@ export function EyeTrackingTestScreen({
     onEscape: () => { setShowCaptures(false); setExportNote(null); },
   });
 
-  // Loop-local mutable state (refs so the rAF loop is created once).
-  const streamRef = useRef<MediaStream | null>(null);
-  const frameLoopRef = useRef<VideoFrameLoopHandle | null>(null);
-  const runningRef = useRef(false);
+  // Loop-local mutable state (refs so the frame callback stays allocation-friendly).
   const liveRef = useRef<LiveSnapshot>(EMPTY_LIVE);
   const lastLivePushRef = useRef(0);
-  const frameTimesRef = useRef<number[]>([]);
-  const coverageWindowRef = useRef<{ t: number; face: boolean }[]>([]);
   const visualSignalSamplesRef = useRef<VisualSignalSample[]>([]);
   const rawVEmaRef = useRef<number | null>(null);
   const textRef = useRef(text);
@@ -439,44 +412,28 @@ export function EyeTrackingTestScreen({
     return lines;
   };
 
-  const teardownCameraResources = () => {
-    runningRef.current = false;
+  // Screen-side residue of the camera teardown: capture bookkeeping and the
+  // frame-fed buffers the pipeline hook does not own. Invoked by the hook while
+  // it tears the stream/loop down, so the combined sequence matches the old
+  // inline teardownCameraResources().
+  const handlePipelineTeardown = () => {
     capturingRef.current = false;
     captureStartSnapshotRef.current = null;
     frozenFontPxRef.current = null;
-    frameLoopRef.current?.stop();
-    frameLoopRef.current = null;
-    stopCameraStream();
-    stopMotionSensor();
     resetPosturalBaseline();
-    streamRef.current = null;
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
     liveRef.current = EMPTY_LIVE;
     visualSignalSamplesRef.current = [];
   };
 
-  const stopCamera = (interruption: CaptureInterruptionReason | null = null) => {
-    if (capturingRef.current) finishCaptureRef.current(interruption);
-    teardownCameraResources();
-    if (!mountedRef.current) return;
-    setCapturing(false);
-    setCameraState('idle');
-    setLive(EMPTY_LIVE);
-    setLiveSignal(EMPTY_VISUAL_SIGNAL);
-  };
-
+  // Declared before the pipeline hook so on unmount this cleanup (finish the
+  // in-flight capture) runs before the hook's teardown — same order as before.
   useEffect(() => {
     mountedRef.current = true;
-    cameraStartupGateRef.current.mount();
     return () => {
       mountedRef.current = false;
-      cameraStartupGateRef.current.unmount();
       if (capturingRef.current) {
         finishCaptureRef.current('navigation-during-capture');
       }
-      teardownCameraResources();
     };
   }, []);
 
@@ -485,114 +442,14 @@ export function EyeTrackingTestScreen({
     return () => window.clearInterval(id);
   }, []);
 
-  useEffect(() => {
-    if (showCalibration) {
-      runningRef.current = false;
-      frameLoopRef.current?.stop();
-      frameLoopRef.current = null;
-      return;
-    }
-    const stream = getActiveCameraStream();
-    if (!stream) return;
-
-    streamRef.current = stream;
-    setCameraState('running');
-    if (videoRef.current) {
-      attachStream(videoRef.current, stream).catch(() => setCameraState('unavailable'));
-    }
-    if (!runningRef.current) {
-      runningRef.current = true;
-      frameTimesRef.current = [];
-      coverageWindowRef.current = [];
-      visualSignalSamplesRef.current = [];
-      frameLoopRef.current = startVideoFrameLoop(videoRef.current!, loop);
-    }
-  }, [showCalibration]);
-
-  const startCamera = async () => {
-    const gate = cameraStartupGateRef.current;
-    const operation = gate.begin();
-    setCameraState('starting');
-    setCaptureResult(null);
-    const motionPermission = await guardedAwait(
-      gate,
-      operation,
-      requestMotionPermissionFromGesture(),
-    );
-    if (!motionPermission.current) return;
-    if (motionPermission.value === 'granted') {
-      startMotionSensor();
-      if (!gate.isCurrent(operation)) {
-        stopMotionSensor();
-        return;
-      }
-      setMotionQuality(getMotionQuality());
-    }
-    const faceTracking = await guardedAwait(gate, operation, initFaceTracking());
-    if (!faceTracking.current) return;
-    if (!isFaceTrackingActive()) {
-      setCameraState('unavailable');
-      return;
-    }
-    const cameraRequest = requestFrontCameraStream();
-    let stream: MediaStream | null = null;
-    const discardStartupStream = () => {
-      if (!stream) return;
-      discardFrontCameraRequest(cameraRequest, stream);
-      if (streamRef.current === stream) streamRef.current = null;
-      if (videoRef.current?.srcObject === stream) videoRef.current.srcObject = null;
-    };
-    try {
-      stream = await cameraRequest.promise;
-      if (!gate.isCurrent(operation)) {
-        discardStartupStream();
-        return;
-      }
-      streamRef.current = stream;
-      if (videoRef.current) {
-        await attachStream(videoRef.current, stream);
-        if (!gate.isCurrent(operation)) {
-          discardStartupStream();
-          return;
-        }
-      }
-    } catch {
-      discardStartupStream();
-      if (!gate.isCurrent(operation)) return;
-      setCameraState('unavailable');
-      return;
-    }
-    if (!gate.isCurrent(operation)) {
-      discardStartupStream();
-      return;
-    }
-    retainFrontCameraRequest(cameraRequest);
-    setCameraState('running');
-    runningRef.current = true;
-    frameTimesRef.current = [];
-    coverageWindowRef.current = [];
-    visualSignalSamplesRef.current = [];
-    frameLoopRef.current?.stop();
-    frameLoopRef.current = startVideoFrameLoop(videoRef.current!, loop);
-  };
-
-  const loop = (ts: number) => {
-    if (!runningRef.current) return;
-    const video = videoRef.current;
+  const handleFrame = (frame: CameraPipelineFrame) => {
+    const { ts, video, pose, gaze, faceFound, eyesFound, blinking } = frame;
     const canvas = canvasRef.current;
 
-    if (video && canvas && video.readyState >= 2) {
-      // One detection per frame; head pose, gaze and features share the cache.
-      const pose = estimateHeadPose(video, ts);
-      const gaze = estimateGaze(video, ts, ts);
-      const faceFound = pose !== null;
-      const eyesFound = gaze !== null;
-      // Blink score is measured, but hard rejection is disabled by default until tuned
-      // on real iPhone/Safari data. Coverage still counts the face either way.
-      const blinking = shouldDropGazeForBlink(getBlinkScore());
-
-      // Distance from IPD (detect already ran above) → font sized by visual angle so the
-      // apparent text size is stable as the user leans in/out and across devices.
+    if (canvas) {
+      // Distance from IPD (detect already ran in the pipeline hook) → font sized by
+      // visual angle so the apparent text size is stable as the user leans in/out
+      // and across devices.
       const anchor = getDistanceAnchor();
       const ipdPx = interpupillaryPx(getLastLandmarks(), video.videoWidth || 1280, video.videoHeight || 720);
       const dEst = estimateDistanceCm(ipdPx, anchor, profileDistanceRef.current);
@@ -604,15 +461,7 @@ export function EyeTrackingTestScreen({
         ? frozenFontPxRef.current
         : Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
 
-      // FPS over the last second.
-      const ft = frameTimesRef.current;
-      ft.push(ts);
-      while (ft.length && ts - ft[0] > 1000) ft.shift();
-      // Detection coverage over the last 2s.
-      const cw = coverageWindowRef.current;
-      cw.push({ t: ts, face: faceFound });
-      while (cw.length && ts - cw[0].t > 2000) cw.shift();
-      const coverage = cw.length ? (cw.filter(c => c.face).length / cw.length) * 100 : 0;
+      const coverage = frame.coverage;
 
       // Resize backing store for crisp text on high-DPR screens (iPhone ≈ 3).
       const dpr = window.devicePixelRatio || 1;
@@ -755,17 +604,15 @@ export function EyeTrackingTestScreen({
       }
 
       // Throttled UI snapshot (~5/s) to avoid re-rendering every frame.
-      const detectionTelemetry = getDetectionTelemetry();
-      const negotiatedFps = ((video.srcObject as MediaStream | null)?.getVideoTracks()[0])?.getSettings?.().frameRate;
       const snap: LiveSnapshot = {
         faceFound, eyesFound,
         h: gaze ? gaze.h : null, v: gaze ? gaze.v : null,
         yaw: pose ? pose.yaw : null, pitch: pose ? pose.pitch : null, roll: pose ? pose.roll : null,
-        fps: ft.length, coverage,
-        cameraFps: typeof negotiatedFps === 'number' && Number.isFinite(negotiatedFps) ? negotiatedFps : null,
-        inferenceMs: detectionTelemetry.inferenceEmaMs,
-        delegate: detectionTelemetry.delegate,
-        blinkScore: getBlinkScore(),
+        fps: frame.fps, coverage,
+        cameraFps: frame.cameraFps,
+        inferenceMs: frame.inferenceMs,
+        delegate: frame.delegate,
+        blinkScore: frame.blinkScore,
       };
       liveRef.current = snap;
       if (ts - lastLivePushRef.current > 200) {
@@ -774,6 +621,37 @@ export function EyeTrackingTestScreen({
         setLiveSignal(summarizeFunctionalVisualSignal(visualSignalSamplesRef.current, { coverage }));
       }
     }
+  };
+
+  const {
+    cameraState,
+    startCamera: startCameraPipeline,
+    stopCamera: stopCameraPipeline,
+    streamRef,
+  } = useCameraPipeline({
+    videoRef,
+    suspended: showCalibration,
+    onFrame: handleFrame,
+    // Mirrors the old inline guard: no canvas mounted → skip the frame entirely
+    // (no detection, no fps/coverage advance).
+    shouldProcessFrame: () => canvasRef.current !== null,
+    onLoopStart: () => { visualSignalSamplesRef.current = []; },
+    onMotionSensorStarted: () => setMotionQuality(getMotionQuality()),
+    onTeardown: handlePipelineTeardown,
+  });
+
+  const stopCamera = (interruption: CaptureInterruptionReason | null = null) => {
+    if (capturingRef.current) finishCaptureRef.current(interruption);
+    stopCameraPipeline();
+    if (!mountedRef.current) return;
+    setCapturing(false);
+    setLive(EMPTY_LIVE);
+    setLiveSignal(EMPTY_VISUAL_SIGNAL);
+  };
+
+  const startCamera = () => {
+    setCaptureResult(null);
+    void startCameraPipeline();
   };
 
   const startCapture = () => {
