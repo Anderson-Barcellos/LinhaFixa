@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { AppShell } from '@/components/app/AppShell';
-import { getSessions, getValidationCaptures } from '@/services/storage';
+import { getSessions, getValidationCaptures, getRecallTests } from '@/services/storage';
 import { apiUrl } from '@/services/apiBase';
+import { interpretInsightResponse } from '@/services/insightResponse';
 import {
   buildDiagnosticInsightPayload,
   buildSessionInsightSummary,
@@ -135,10 +136,8 @@ export function DashboardScreen() {
           }
         })
       });
-      const data = await res.json();
-      if (data.text) {
-        setInsight(data.text);
-      }
+      const data = await res.json().catch(() => null);
+      setInsight(interpretInsightResponse(res.status, data));
     } catch(e) {
       console.error(e);
       setInsight("Não foi possível gerar a análise no momento.");
@@ -147,9 +146,12 @@ export function DashboardScreen() {
     }
   };
 
-  const exportData = () => {
+  const exportData = async () => {
+    // Recalls não vivem no estado da tela; buscados só na hora do export para o
+    // arquivo cobrir o histórico inteiro (sessões + capturas + recalls).
+    const recallTests = await getRecallTests().catch(() => []);
     const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
-      JSON.stringify({ sessions, diagnosticCaptures: captures }, null, 2)
+      JSON.stringify({ sessions, diagnosticCaptures: captures, recallTests }, null, 2)
     )}`;
     const link = document.createElement("a");
     link.href = jsonString;
