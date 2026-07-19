@@ -2,6 +2,7 @@ import type { FaceLandmarker as FaceLandmarkerInstance } from '@mediapipe/tasks-
 import { MEDIAPIPE_PUBLIC_ROOT } from '../../config/mediapipe-assets.mjs';
 import { GazeSample } from '@/types';
 import { createRetryableSingleFlight, loadMediaPipeRuntime } from './mediaPipeRuntime';
+import { createInferenceMeter } from './inferenceMeter';
 
 export interface HeadPose {
   pitch: number;
@@ -13,6 +14,11 @@ export interface HeadPose {
 }
 
 let faceLandmarker: FaceLandmarkerInstance | null = null;
+
+// Which MediaPipe delegate actually initialized — the GPU→CPU fallback is silent
+// (console.warn only) and CPU inference is 3-5x slower; the diagnostics UI needs this.
+let activeDelegate: 'GPU' | 'CPU' | null = null;
+const inferenceMeter = createInferenceMeter();
 
 const detectorInitialization = createRetryableSingleFlight(async () => {
   const { FilesetResolver, FaceLandmarker } = await loadMediaPipeRuntime();
@@ -37,9 +43,11 @@ const detectorInitialization = createRetryableSingleFlight(async () => {
   });
   try {
     faceLandmarker = await create('GPU');
+    activeDelegate = 'GPU';
   } catch (gpuErr) {
     console.warn('GPU face tracking unavailable; falling back to CPU.', gpuErr);
     faceLandmarker = await create('CPU');
+    activeDelegate = 'CPU';
   }
   return true;
 });
@@ -76,6 +84,7 @@ function detect(videoElement: HTMLVideoElement, timestamp: number) {
   }
   lastDetectTimestamp = timestamp;
   let results;
+  const inferenceStart = performance.now();
   try {
     results = faceLandmarker.detectForVideo(videoElement, timestamp);
   } catch (err) {
@@ -87,6 +96,9 @@ function detect(videoElement: HTMLVideoElement, timestamp: number) {
     }
     return null;
   }
+  // Main-thread cost of the sync inference call — exactly what competes with the
+  // camera frame budget (a >33ms EMA at a 30fps camera is the 30→15 harmonic).
+  inferenceMeter.record(performance.now() - inferenceStart);
   lastLandmarks = (results.faceLandmarks && results.faceLandmarks.length > 0)
     ? results.faceLandmarks[0]
     : null;
@@ -218,6 +230,11 @@ const GAZE_BLENDSHAPES = [
 // Number of features produced by extractGazeFeatures (kept in sync with the layout
 // below). Consumers can rely on this for fixed-width model matrices.
 export const GAZE_FEATURE_LENGTH = 4 + GAZE_BLENDSHAPES.length;
+
+// Live telemetry for the diagnostics UI and capture provenance.
+export function getDetectionTelemetry(): { delegate: 'GPU' | 'CPU' | null; inferenceEmaMs: number | null; inferenceCount: number } {
+  return { delegate: activeDelegate, inferenceEmaMs: inferenceMeter.emaMs(), inferenceCount: inferenceMeter.count() };
+}
 
 // Build the gaze feature vector for the current frame, combining iris ratios,
 // head pose (to compensate head movement) and eyeLook* blendshapes. Returns null

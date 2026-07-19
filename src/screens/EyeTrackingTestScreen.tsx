@@ -6,7 +6,7 @@ import { AssessmentSessionSurface, SESSION_TITLES } from '@/components/assessmen
 import { useAppStore } from '@/store/useAppStore';
 import {
   initFaceTracking, isFaceTrackingActive, estimateHeadPose, estimateGaze, extractGazeFeatures, getLastLandmarks,
-  getBlinkScore, shouldDropGazeForBlink,
+  getBlinkScore, shouldDropGazeForBlink, getDetectionTelemetry,
 } from '@/services/faceTracking';
 import {
   interpupillaryPx, estimateDistanceCm, getDistanceAnchor, readingFontCssPx, readingFontAngleDeg,
@@ -93,6 +93,10 @@ import { buildAssessmentWorkspaceSnapshot } from '@/services/assessmentAdapter';
 // "Terminei de ler", so the reading pace (not a fixed timer) sets the duration.
 const CAPTURE_SAFETY_CAP_MS = 120000;
 
+// Target for the generated reading passage: enough words to sustain ~20s of
+// continuous reading (the old fixed 30-50 words ran out in ~10s).
+const READING_TARGET_DURATION_SEC = 20;
+
 // Opções de condição compartilhadas entre os botões do card e o resumo do acordeão.
 const LIGHTING_OPTIONS: [ValidationLighting, string][] = [['dim', 'Fraca'], ['normal', 'Normal'], ['bright', 'Forte']];
 const POSTURE_OPTIONS: [ValidationPosture, string][] = [['upright', 'Reta'], ['tilted', 'Inclinada'], ['slouched', 'Curvada'], ['reclined', 'Recostada']];
@@ -119,6 +123,10 @@ interface LiveSnapshot {
   roll: number | null;
   fps: number;
   coverage: number; // % of recent frames with a face
+  cameraFps: number | null;   // negotiated track frameRate (what the camera promised)
+  inferenceMs: number | null; // EMA of the sync detectForVideo main-thread cost
+  delegate: 'GPU' | 'CPU' | null;
+  blinkScore: number | null;  // live max(eyeBlinkLeft, eyeBlinkRight)
 }
 
 interface CaptureStartSnapshot {
@@ -140,6 +148,7 @@ interface CaptureReportState {
 const EMPTY_LIVE: LiveSnapshot = {
   faceFound: false, eyesFound: false, h: null, v: null,
   yaw: null, pitch: null, roll: null, fps: 0, coverage: 0,
+  cameraFps: null, inferenceMs: null, delegate: null, blinkScore: null,
 };
 const EMPTY_VISUAL_SIGNAL = summarizeFunctionalVisualSignal([]);
 
@@ -199,10 +208,19 @@ export function EyeTrackingTestScreen({
   const [contextDraft, setContextDraft] = useState<PreTestContext>({ venvanseTakenAt: null, sleepHours: 7, mood: 3, feeling: 3 });
   const [contextFormOpen, setContextFormOpen] = useState(false);
   const preContextRef = useRef<PreTestContext | null>(null);
+  // "Pular por agora": start capturing without context instead of reopening the form.
+  const skipContextRef = useRef(false);
   useEffect(() => { preContextRef.current = preContext; }, [preContext]);
   useEffect(() => {
     getTodayPreContext()
-      .then(ctx => { if (ctx) setContextDraft(ctx); })
+      .then(ctx => {
+        if (!ctx) return;
+        setContextDraft(ctx);
+        // Adopt today's answers outright: the form only shows on the first
+        // capture of the day, later sessions start on the first tap.
+        preContextRef.current = ctx;
+        setPreContext(ctx);
+      })
       .catch(() => {/* keep defaults */});
   }, []);
 
@@ -304,7 +322,7 @@ export function EyeTrackingTestScreen({
 
   // Load reading content once.
   useEffect(() => {
-    getReadingContent('facil')
+    getReadingContent('facil', READING_TARGET_DURATION_SEC)
       .then(generatedText => {
         const cleanText = generatedText.trim();
         if (!cleanText) throw new Error('empty generated reading text');
@@ -737,11 +755,17 @@ export function EyeTrackingTestScreen({
       }
 
       // Throttled UI snapshot (~5/s) to avoid re-rendering every frame.
+      const detectionTelemetry = getDetectionTelemetry();
+      const negotiatedFps = ((video.srcObject as MediaStream | null)?.getVideoTracks()[0])?.getSettings?.().frameRate;
       const snap: LiveSnapshot = {
         faceFound, eyesFound,
         h: gaze ? gaze.h : null, v: gaze ? gaze.v : null,
         yaw: pose ? pose.yaw : null, pitch: pose ? pose.pitch : null, roll: pose ? pose.roll : null,
         fps: ft.length, coverage,
+        cameraFps: typeof negotiatedFps === 'number' && Number.isFinite(negotiatedFps) ? negotiatedFps : null,
+        inferenceMs: detectionTelemetry.inferenceEmaMs,
+        delegate: detectionTelemetry.delegate,
+        blinkScore: getBlinkScore(),
       };
       liveRef.current = snap;
       if (ts - lastLivePushRef.current > 200) {
@@ -756,7 +780,7 @@ export function EyeTrackingTestScreen({
     setDrawerExpanded(false);
     if (readingTextState !== 'ready') return;
     // First capture of the session: collect the quick context before recording.
-    if (!preContextRef.current) {
+    if (!preContextRef.current && !skipContextRef.current) {
       setContextFormOpen(true);
       return;
     }
@@ -811,9 +835,12 @@ export function EyeTrackingTestScreen({
     const durationMs = Math.max(0, performance.now() - startSnapshot.monotonicStart);
     const series = selectCaptureSeries(calibratedSamples, rawSamples);
     const metrics = analyzeSaccades(series.samples, { signalSource: series.signalSource });
+    const detectionTelemetry = getDetectionTelemetry();
     const measuredRates = readCameraPipelineTelemetry(videoRef.current, {
       detectionFps: liveRef.current.fps,
       ocularSampleRateHz: metrics.sampleRateHz,
+      inferenceEmaMs: detectionTelemetry.inferenceEmaMs ?? undefined,
+      delegate: detectionTelemetry.delegate ?? undefined,
     }).measured;
     const environment: CaptureEnvironment = {
       ...startSnapshot.environment,
@@ -1140,6 +1167,10 @@ export function EyeTrackingTestScreen({
     <div className="grid grid-cols-2 gap-2 text-sm">
       <Metric label="FPS detecção" value={live.fps ? String(live.fps) : '—'} />
       <Metric label="Cobertura" value={`${live.coverage.toFixed(0)}%`} />
+      <Metric label="Câmera fps" value={live.cameraFps != null ? String(Math.round(live.cameraFps)) : '—'} />
+      <Metric label="Inferência" value={live.inferenceMs != null ? `${live.inferenceMs.toFixed(0)} ms` : '—'} />
+      <Metric label="Delegate" value={live.delegate ?? '—'} />
+      <Metric label="Blink" value={live.blinkScore != null ? live.blinkScore.toFixed(2) : '—'} />
       <Metric label="Olhar H" value={fmt(live.h)} />
       <Metric label="Olhar V" value={fmt(live.v)} />
       <Metric label="Yaw idx" value={live.yaw != null ? live.yaw.toFixed(0) : '—'} />
@@ -1257,7 +1288,7 @@ export function EyeTrackingTestScreen({
 
   // Resumos vivos derivam de estado que já existe — nenhum buffer ou cálculo novo.
   const diagnosticsSections: DiagnosticsSection[] = [
-    { id: 'metrics', title: 'Métricas', summary: `${live.fps ? `${live.fps}fps` : '—'} · H ${fmt(live.h)}`, content: metricsGrid },
+    { id: 'metrics', title: 'Métricas', summary: `${live.fps ? `${live.fps}fps` : '—'}${live.cameraFps != null ? `/${Math.round(live.cameraFps)}cam` : ''} · ${live.inferenceMs != null ? `${live.inferenceMs.toFixed(0)}ms` : `H ${fmt(live.h)}`}`, content: metricsGrid },
     { id: 'signal', title: 'Captação', summary: `${liveSignal.sensitivityScore}% · ${liveSignal.sourceLabel}`, content: signalCard },
     { id: 'conditions', title: 'Condição', summary: `${optionLabel(LIGHTING_OPTIONS, conditions.lighting)} · ${optionLabel(POSTURE_OPTIONS, conditions.posture)}`, content: conditionsCard },
     { id: 'interpret', title: 'Como interpretar', content: <div className="text-xs text-slate-400 px-1">{interpretBody}</div> },
@@ -1331,7 +1362,7 @@ export function EyeTrackingTestScreen({
           className="flex items-center gap-1 p-2.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold"
         >
           <Check className="w-4 h-4" />
-          {drawerVariant === 'sheet' && <span>{Math.floor(captureElapsed / 1000)}s</span>}
+          <span>{Math.floor(captureElapsed / 1000)}s</span>
         </button>
       )}
     </div>
@@ -1389,6 +1420,10 @@ export function EyeTrackingTestScreen({
                 className={`relative min-w-0 min-h-0 ${isDesktopDiagnosticsLayout ? 'shrink-0 overflow-hidden rounded-2xl border-2 border-indigo-300/70 bg-slate-900/30 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_24px_70px_rgba(15,23,42,0.45)]' : 'w-full h-full'}`}
                 style={readingSurfaceStyle}
                 aria-label="Área fixa de leitura, captura e calibração"
+                // Tap anywhere on the reading surface ends the capture at that exact
+                // instant — no eye excursion hunting for the stop button. Inert when
+                // not capturing, and finishCapture() already truncates the buffers.
+                onPointerDown={() => { if (capturingRef.current) finishCapture(); }}
               >
                 <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
                 <div className="pointer-events-none absolute inset-0 z-10 rounded-2xl ring-1 ring-indigo-400/40">
@@ -1519,7 +1554,7 @@ export function EyeTrackingTestScreen({
 
       {/* Quick pre-test context, asked before the first capture of the session */}
       {contextFormOpen && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-900/90 p-6 overflow-y-auto">
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-900 p-6 overflow-y-auto">
           <div ref={contextDialogRef} role="dialog" aria-modal="true" aria-labelledby="capture-context-title" tabIndex={-1} className="w-full max-w-2xl">
             <h2 id="capture-context-title" className="sr-only">Contexto antes da captura</h2>
             <PreContextForm
@@ -1536,6 +1571,17 @@ export function EyeTrackingTestScreen({
                 startCapture();
               }}
             />
+            <button
+              onClick={() => {
+                // Context is provenance, not a gate: capture proceeds untagged.
+                skipContextRef.current = true;
+                setContextFormOpen(false);
+                startCapture();
+              }}
+              className="w-full mt-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 text-sm font-bold"
+            >
+              Pular por agora e iniciar
+            </button>
             <button
               onClick={() => setContextFormOpen(false)}
               className="w-full mt-3 py-2 text-slate-400 hover:text-slate-200 text-sm font-medium"

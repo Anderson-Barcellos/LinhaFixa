@@ -23,6 +23,11 @@ export interface CameraVideoTelemetry {
 export interface CameraMeasuredRates {
   detectionFps?: number;
   ocularSampleRateHz?: number;
+  // Main-thread cost of one MediaPipe inference (EMA) and which delegate ran it —
+  // together they discriminate "camera delivers few frames" from "processing
+  // can't keep up" when detectionFps looks low.
+  inferenceEmaMs?: number;
+  delegate?: 'GPU' | 'CPU';
 }
 
 export interface CameraPipelineTelemetry {
@@ -48,6 +53,8 @@ export function readCameraPipelineTelemetry(
     measured: {
       detectionFps: finiteNumber(measured.detectionFps),
       ocularSampleRateHz: finiteNumber(measured.ocularSampleRateHz),
+      inferenceEmaMs: finiteNumber(measured.inferenceEmaMs),
+      delegate: measured.delegate === 'GPU' || measured.delegate === 'CPU' ? measured.delegate : undefined,
     },
   };
 }
