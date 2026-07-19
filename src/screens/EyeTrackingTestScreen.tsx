@@ -18,8 +18,8 @@ import { DiagnosticsAccordion, type DiagnosticsSection } from '@/components/Diag
 import type { DrawerVariant } from '@/services/diagnosticsDrawerLayout';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
 import { resetPosturalBaseline } from '@/exercises/posturalStability';
-import { CaptureEnvironment, PreTestContext, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
-import { getValidationCaptures, deleteValidationCapture, getTodayPreContext } from '@/services/storage';
+import { CaptureEnvironment, SaccadeMetrics, ValidationCapture, ValidationConditions, ValidationLighting, ValidationPosture } from '@/types';
+import { getValidationCaptures, deleteValidationCapture } from '@/services/storage';
 import { PreContextForm } from '@/components/QuickContextForm';
 import { RecallQuiz } from '@/components/RecallQuiz';
 import { serializeValidationExport } from '@/services/validationCapture';
@@ -38,6 +38,7 @@ import { useMeasuredSurface } from '@/hooks/useMeasuredSurface';
 import { useModalDialog } from '@/hooks/useModalDialog';
 import { useCameraPipeline, type CameraPipelineFrame } from '@/hooks/useCameraPipeline';
 import { useCaptureLifecycle, type CaptureStartSnapshot } from '@/hooks/useCaptureLifecycle';
+import { usePreTestContext } from '@/hooks/usePreTestContext';
 import { useRecallFlow, type ReadingTextState } from '@/hooks/useRecallFlow';
 import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { formatSampleRateHz } from '@/services/sampleRatePresentation';
@@ -143,25 +144,22 @@ export function EyeTrackingTestScreen({
   // Quick pre-test context: asked once per session (prefilled from today's first
   // test), tagged onto every capture saved afterwards. Unlike the exercise player
   // this screen never blocks — it's instrument validation, the context is provenance.
-  const [preContext, setPreContext] = useState<PreTestContext | null>(null);
-  const [contextDraft, setContextDraft] = useState<PreTestContext>({ venvanseTakenAt: null, sleepHours: 7, mood: 3, feeling: 3 });
-  const [contextFormOpen, setContextFormOpen] = useState(false);
-  const preContextRef = useRef<PreTestContext | null>(null);
-  // "Pular por agora": start capturing without context instead of reopening the form.
-  const skipContextRef = useRef(false);
-  useEffect(() => { preContextRef.current = preContext; }, [preContext]);
-  useEffect(() => {
-    getTodayPreContext()
-      .then(ctx => {
-        if (!ctx) return;
-        setContextDraft(ctx);
-        // Adopt today's answers outright: the form only shows on the first
-        // capture of the day, later sessions start on the first tap.
-        preContextRef.current = ctx;
-        setPreContext(ctx);
-      })
-      .catch(() => {/* keep defaults */});
-  }, []);
+  // Adoption, draft, form visibility and the session skip live in the hook; the
+  // screen keeps the form JSX and asks shouldOpenContextForm() at capture start.
+  const {
+    contextDraft,
+    setContextDraft,
+    contextFormOpen,
+    shouldOpenContextForm,
+    adoptContextDraft,
+    skipContextForNow,
+    closeContextForm,
+    getPreTestContext,
+  } = usePreTestContext({
+    // Resume the capture the form interrupted (adopt or skip); startCapture is
+    // declared below, called only from user events after render.
+    onResume: () => startCapture(),
+  });
 
   // --- Leitura + Recall mode ---
   // Mode, recall passage, post-capture quiz and its persistence live in the hook;
@@ -183,7 +181,7 @@ export function EyeTrackingTestScreen({
   } = useRecallFlow({
     initialMode,
     isCapturing: () => capturingRef.current,
-    getPreTestContext: () => preContextRef.current,
+    getPreTestContext,
     onReadingTextChange: (nextText, state) => {
       setText(nextText);
       setReadingTextState(state);
@@ -223,7 +221,7 @@ export function EyeTrackingTestScreen({
   const [calibrationSurfaceRect, setCalibrationSurfaceRect] = useState<SurfaceRect | null>(null);
   const contextDialogRef = useModalDialog({
     open: contextFormOpen,
-    onEscape: () => setContextFormOpen(false),
+    onEscape: closeContextForm,
   });
   const recallErrorDialogRef = useModalDialog({
     open: recallGenState === 'error',
@@ -556,10 +554,7 @@ export function EyeTrackingTestScreen({
     setDrawerExpanded(false);
     if (readingTextState !== 'ready') return;
     // First capture of the session: collect the quick context before recording.
-    if (!preContextRef.current && !skipContextRef.current) {
-      setContextFormOpen(true);
-      return;
-    }
+    if (shouldOpenContextForm()) return;
     const startSnapshot = buildCaptureStartSnapshot();
     if (!startSnapshot) return;
     if (!startCaptureLifecycle(startSnapshot)) return;
@@ -669,6 +664,7 @@ export function EyeTrackingTestScreen({
     });
     const monotonicStart = performance.now();
     const wallClockTimestamp = Date.now();
+    const preTestContext = getPreTestContext();
     return {
       captureId: typeof globalThis.crypto?.randomUUID === 'function'
         ? globalThis.crypto.randomUUID()
@@ -676,7 +672,7 @@ export function EyeTrackingTestScreen({
       monotonicStart,
       wallClockTimestamp,
       conditions: { ...conditions },
-      context: preContextRef.current ? { ...preContextRef.current } : undefined,
+      context: preTestContext ? { ...preTestContext } : undefined,
       calibrationAssessment,
       compatibility,
       environment,
@@ -1159,28 +1155,16 @@ export function EyeTrackingTestScreen({
               value={contextDraft}
               onChange={setContextDraft}
               submitLabel="Registrar e iniciar captura"
-              onSubmit={() => {
-                // The ref is set directly so the capture that starts right now (before
-                // the state effect runs) already sees the context.
-                preContextRef.current = contextDraft;
-                setPreContext(contextDraft);
-                setContextFormOpen(false);
-                startCapture();
-              }}
+              onSubmit={adoptContextDraft}
             />
             <button
-              onClick={() => {
-                // Context is provenance, not a gate: capture proceeds untagged.
-                skipContextRef.current = true;
-                setContextFormOpen(false);
-                startCapture();
-              }}
+              onClick={skipContextForNow}
               className="w-full mt-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 text-sm font-bold"
             >
               Pular por agora e iniciar
             </button>
             <button
-              onClick={() => setContextFormOpen(false)}
+              onClick={closeContextForm}
               className="w-full mt-3 py-2 text-slate-400 hover:text-slate-200 text-sm font-medium"
             >
               Cancelar
