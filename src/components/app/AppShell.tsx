@@ -14,12 +14,12 @@ export function AppShell({
   children: ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 md:grid md:grid-cols-[280px_minmax(0,1fr)]">
+    <div className="min-h-screen bg-app-inset text-strong md:grid md:grid-cols-[280px_minmax(0,1fr)]">
       <AppSidebar currentPath={currentPath} />
       <main className="min-w-0 p-4 md:p-8">
         <header className="mb-5 md:mb-6">
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">{title}</h1>
-          <p className="mt-2 text-sm font-medium text-slate-500">{subtitle}</p>
+          <p className="mt-2 text-sm font-medium text-mild">{subtitle}</p>
         </header>
         {children}
       </main>
