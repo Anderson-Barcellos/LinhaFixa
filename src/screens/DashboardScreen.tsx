@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { AppShell } from '@/components/app/AppShell';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 import { getSessions, getValidationCaptures, getRecallTests } from '@/services/storage';
 import { apiUrl } from '@/services/apiBase';
 import { interpretInsightResponse } from '@/services/insightResponse';
@@ -166,48 +168,48 @@ export function DashboardScreen() {
       subtitle="Histórico de treinos, capturas e sintomas deste dispositivo."
     >
       <div className="mb-6 flex justify-end">
-        <button onClick={exportData} className="px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl font-bold hover:bg-slate-50 flex items-center gap-2 shadow-sm whitespace-nowrap">
+        <button onClick={exportData} className="px-6 py-3 bg-surface border border-line-strong text-mild rounded-xl font-bold hover:bg-surface-sunken flex items-center gap-2 shadow-sm whitespace-nowrap">
           <Download className="w-5 h-5"/> Exportar Histórico (JSON)
         </button>
       </div>
 
       {loading ? (
-          <div className="text-slate-400 font-medium">Carregando...</div>
+          <div className="text-faint font-medium">Carregando...</div>
         ) : sessions.length === 0 && captures.length === 0 ? (
-          <div className="bg-white p-12 rounded-3xl text-center shadow-sm border border-slate-100">
-             <p className="text-slate-500 text-lg font-medium">Nenhuma sessão registrada ainda.</p>
-          </div>
+          <Card className="p-12 text-center">
+             <p className="text-mild text-lg font-medium">Nenhuma sessão registrada ainda.</p>
+          </Card>
         ) : (
           <div className="space-y-6">
             
-            <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 mb-8 bg-gradient-to-br from-indigo-50 to-white relative overflow-hidden">
+            <Card className="p-8 mb-8 bg-gradient-to-br from-accent-soft to-surface relative overflow-hidden">
                <div className="absolute top-0 right-0 p-8 opacity-10">
                   <Sparkles className="w-24 h-24 text-indigo-500" />
                </div>
-               <h3 className="text-xl font-bold text-slate-800 mb-2 flex items-center gap-2">
+               <h3 className="text-xl font-bold text-strong mb-2 flex items-center gap-2">
                  <Sparkles className="w-6 h-6 text-indigo-500" />
                  Gerar Análise de Evolução (IA)
                </h3>
-               <p className="text-slate-600 font-medium mb-6 relative z-10 max-w-2xl">
+               <p className="text-mild font-medium mb-6 relative z-10 max-w-2xl">
                  {statisticsSummary.sections.training.insight} {statisticsSummary.sections.diagnostics.insight}
                </p>
                {!insight && !insightLoading && (sessions.length > 0 || captures.length > 0) && (
-                 <button onClick={generateInsight} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-colors shadow-md my-2 relative z-10">
+                 <button onClick={generateInsight} className="px-6 py-3 bg-accent hover:bg-accent-strong text-white rounded-xl font-bold transition-colors shadow-md my-2 relative z-10">
                    Analisar Meu Progresso
                  </button>
                )}
                {insightLoading && (
-                 <div className="flex items-center gap-4 text-indigo-600 font-bold relative z-10">
-                    <div className="w-6 h-6 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                 <div className="flex items-center gap-4 text-accent font-bold relative z-10">
+                    <div className="w-6 h-6 border-4 border-accent border-t-transparent rounded-full animate-spin"></div>
                     Analisando dados...
                  </div>
                )}
                {insight && (
-                 <div className="mt-4 p-6 bg-white rounded-2xl rounded-tl-none shadow-sm border border-indigo-100 text-slate-700 text-lg leading-relaxed relative z-10">
+                 <div className="mt-4 p-6 bg-surface rounded-2xl rounded-tl-none shadow-sm border border-accent-line text-mild text-lg leading-relaxed relative z-10">
                     {insight}
                  </div>
                )}
-            </div>
+            </Card>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 mb-8">
               {summaryCards.map(({ id, icon: Icon, summary }) => (
@@ -217,11 +219,11 @@ export function DashboardScreen() {
 
             {ocularSeries.length > 0 && (
               <div className="space-y-6 mb-8">
-                <div className="bg-white rounded-3xl p-5 sm:p-8 shadow-sm border border-slate-100 min-w-0">
+                <Card className="p-5 sm:p-8 min-w-0">
                   <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-6">
                     <div>
-                      <h3 className="text-xl font-bold text-slate-800 mb-2">Tendência ocular comparável</h3>
-                      <p className="text-slate-500 font-medium max-w-2xl">
+                      <h3 className="text-xl font-bold text-strong mb-2">Tendência ocular comparável</h3>
+                      <p className="text-mild font-medium max-w-2xl">
                         Cada série mantém orientação, perfil temporal e fonte iguais. Registros fora desse contrato ficam somente na auditoria.
                       </p>
                     </div>
@@ -233,7 +235,7 @@ export function DashboardScreen() {
                             type="button"
                             onClick={() => setSelectedOcularGroupKey(group.key)}
                             aria-pressed={selectedOcularGroup?.key === group.key}
-                            className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors ${selectedOcularGroup?.key === group.key ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                            className={`px-3 py-2 rounded-xl text-xs font-bold transition-colors ${selectedOcularGroup?.key === group.key ? 'bg-accent text-white' : 'bg-app-inset text-mild hover:bg-line-strong'}`}
                           >
                             {group.label}
                           </button>
@@ -243,7 +245,7 @@ export function DashboardScreen() {
                   </div>
 
                   {selectedOcularGroup ? (
-                    <div className="inline-flex max-w-full px-3 py-1.5 mb-2 rounded-full bg-indigo-50 text-indigo-700 text-xs font-bold">
+                    <div className="inline-flex max-w-full px-3 py-1.5 mb-2 rounded-full bg-accent-soft text-accent-strong text-xs font-bold">
                       {selectedOcularGroup.label} · {selectedOcularGroup.points.length} {selectedOcularGroup.points.length === 1 ? 'registro' : 'registros'}
                     </div>
                   ) : (
@@ -251,13 +253,13 @@ export function DashboardScreen() {
                       Ainda não há registros comparáveis. Os dados exploratórios e inválidos continuam visíveis abaixo para auditoria.
                     </div>
                   )}
-                </div>
+                </Card>
 
                 {selectedOcularGroup && (
                   <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 min-w-0">
-                  <h3 className="text-xl font-bold text-slate-800 mb-2">Sacadas e regressões pelo olhar</h3>
-                  <p className="text-slate-500 font-medium mb-6">
+                <Card className="p-8 min-w-0">
+                  <h3 className="text-xl font-bold text-strong mb-2">Sacadas e regressões pelo olhar</h3>
+                  <p className="text-mild font-medium mb-6">
                     Contagem estimada por sinal ocular. Regressões são sacadas contra a direção esperada de leitura; retornos de linha (a volta ampla para começar a próxima linha) ficam fora da contagem de regressões.
                   </p>
                   <div className="h-72 w-full min-w-0">
@@ -274,11 +276,11 @@ export function DashboardScreen() {
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
-                </div>
+                </Card>
 
-                <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 min-w-0">
-                  <h3 className="text-xl font-bold text-slate-800 mb-2">Fixação média pelo olhar</h3>
-                  <p className="text-slate-500 font-medium mb-6">
+                <Card className="p-8 min-w-0">
+                  <h3 className="text-xl font-bold text-strong mb-2">Fixação média pelo olhar</h3>
+                  <p className="text-mild font-medium mb-6">
                     Duração média entre sacadas, estimada pelo detector ocular. Valores maiores sugerem pausas visuais mais longas.
                   </p>
                   <div className="h-72 w-full min-w-0">
@@ -293,13 +295,13 @@ export function DashboardScreen() {
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
-                </div>
+                </Card>
                   </div>
                 )}
 
-                <div className="bg-white rounded-3xl p-5 sm:p-8 shadow-sm border border-slate-100">
-                  <h3 className="text-xl font-bold text-slate-800 mb-2">Registros para auditoria</h3>
-                  <p className="text-slate-500 font-medium mb-5">
+                <Card className="p-5 sm:p-8">
+                  <h3 className="text-xl font-bold text-strong mb-2">Registros para auditoria</h3>
+                  <p className="text-mild font-medium mb-5">
                     Exploratórios, inválidos, legados ou sem geometria completa permanecem consultáveis, mas não entram nos gráficos de tendência.
                   </p>
                   {ocularPartition.audit.length > 0 ? (
@@ -308,17 +310,17 @@ export function DashboardScreen() {
                         const presentation = describeCaptureValidity(point.validity);
                         const missingComparisonContext = point.validity.grade === 'comparable' && point.comparisonKey === null;
                         return (
-                          <article key={`${point.sourceKind}-${point.id}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 min-w-0">
+                          <article key={`${point.sourceKind}-${point.id}`} className="rounded-2xl border border-line-strong bg-surface-sunken p-4 min-w-0">
                             <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                               <div className="min-w-0">
-                                <div className="font-bold text-slate-800 truncate">{point.sourceLabel} · {point.label}</div>
-                                <div className="text-xs text-slate-500 mt-1">
+                                <div className="font-bold text-strong truncate">{point.sourceLabel} · {point.label}</div>
+                                <div className="text-xs text-mild mt-1">
                                   {missingComparisonContext ? 'Orientação ou contexto insuficiente para formar uma série comparável' : presentation.primary}
                                 </div>
                               </div>
-                              <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${presentation.tone === 'rose' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
+                              <Badge tone={presentation.tone === 'rose' ? 'alert' : 'caution'}>
                                 {presentation.label}
-                              </span>
+                              </Badge>
                             </div>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                               <AuditFact label="Taxa" value={formatSampleRateHz(point.validity.sampleRateHz, 'não medida')} />
@@ -326,7 +328,7 @@ export function DashboardScreen() {
                               <AuditFact label="Orientação" value={orientationLabel(point.orientation)} />
                               <AuditFact label="Persistência" value={point.saveProvenance === 'saved-capture' ? 'Captura salva' : 'Sessão salva'} />
                             </div>
-                            <p className="text-xs text-slate-500 mt-3 break-words">
+                            <p className="text-xs text-mild mt-3 break-words">
                               Motivos: {missingComparisonContext
                                 ? 'contexto de comparação incompleto'
                                 : presentation.reasons.length > 0
@@ -342,14 +344,14 @@ export function DashboardScreen() {
                       Nenhum registro pendente de auditoria neste histórico.
                     </p>
                   )}
-                </div>
+                </Card>
               </div>
             )}
 
             {(facil.length > 0 || dificil.length > 0) && (
-              <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 mb-8 min-w-0">
-                <h3 className="text-xl font-bold text-slate-800 mb-2">Avanço manual da leitura</h3>
-                <p className="text-slate-500 font-medium mb-6">
+              <Card className="p-8 mb-8 min-w-0">
+                <h3 className="text-xl font-bold text-strong mb-2">Avanço manual da leitura</h3>
+                <p className="text-mild font-medium mb-6">
                   Toques mostram apenas quando o usuário avançou o trecho. Sacadas e fixações vêm do olhar e aparecem no resumo ocular acima.
                 </p>
                 <div className="h-80 w-full min-w-0">
@@ -366,16 +368,16 @@ export function DashboardScreen() {
                     </ScatterChart>
                   </ResponsiveContainer>
                 </div>
-              </div>
+              </Card>
             )}
 
             {captures.length > 0 && (
-              <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 mb-8">
-                <h3 className="text-xl font-bold text-slate-800 mb-2 flex items-center gap-2">
+              <Card className="p-8 mb-8">
+                <h3 className="text-xl font-bold text-strong mb-2 flex items-center gap-2">
                   <BarChart3 className="w-5 h-5 text-indigo-500" />
                   Capturas diagnósticas
                 </h3>
-                <p className="text-slate-500 font-medium mb-6">{statisticsSummary.sections.diagnostics.insight}</p>
+                <p className="text-mild font-medium mb-6">{statisticsSummary.sections.diagnostics.insight}</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {captures.slice(0, 6).map(c => {
                     const dt = new Date(c.timestamp);
@@ -385,17 +387,17 @@ export function DashboardScreen() {
                       validity: c.validity,
                     });
                     return (
-                      <div key={c.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+                      <div key={c.id} className="rounded-2xl border border-line bg-surface-sunken p-5">
                         <div className="flex items-start justify-between gap-3 mb-4">
                           <div>
-                            <div className="text-sm font-bold text-slate-700">{dt.toLocaleDateString('pt-BR')} às {dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
-                            <div className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">{lightingLabel(c.conditions.lighting)} · {postureLabel(c.conditions.posture)} · {c.conditions.distanceCm} cm</div>
+                            <div className="text-sm font-bold text-mild">{dt.toLocaleDateString('pt-BR')} às {dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
+                            <div className="text-xs text-faint font-bold uppercase tracking-wider mt-1">{lightingLabel(c.conditions.lighting)} · {postureLabel(c.conditions.posture)} · {c.conditions.distanceCm} cm</div>
                           </div>
                           <div className="flex flex-col gap-1 items-end">
-                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${quality.tone === 'emerald' ? 'bg-emerald-100 text-emerald-700' : quality.tone === 'rose' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
+                            <Badge tone={quality.tone === 'emerald' ? 'positive' : quality.tone === 'rose' ? 'alert' : 'caution'}>
                               {quality.label}
-                            </span>
-                            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-white text-slate-600 border border-slate-200">
+                            </Badge>
+                            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-surface text-mild border border-line-strong">
                               {quality.sourceLabel}
                             </span>
                           </div>
@@ -413,7 +415,7 @@ export function DashboardScreen() {
                     );
                   })}
                 </div>
-              </div>
+              </Card>
             )}
 
             {sessions.map(s => {
@@ -424,34 +426,34 @@ export function DashboardScreen() {
                const feelingAfter = s.contextAfter?.feeling ?? null;
                const legacySymptomBefore = s.symptomsBefore ? Math.max(...(Object.values(s.symptomsBefore) as number[])) : null;
                return (
-                 <div key={s.id} className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                 <Card key={s.id} className="p-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
                     <div>
-                      <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                        {dt.toLocaleDateString('pt-BR')} <span className="text-sm font-medium text-slate-400 bg-slate-100 px-3 py-1 rounded-full">{dt.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</span>
+                      <h3 className="text-xl font-bold text-strong flex items-center gap-2">
+                        {dt.toLocaleDateString('pt-BR')} <span className="text-sm font-medium text-faint bg-app-inset px-3 py-1 rounded-full">{dt.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</span>
                       </h3>
-                      <div className="flex gap-6 mt-4 text-slate-600 font-medium">
+                      <div className="flex gap-6 mt-4 text-mild font-medium">
                          <div className="flex items-center gap-2"><Clock className="w-5 h-5 text-blue-500"/> {Math.round(s.durationSec / 60)} min</div>
                          <div className="flex items-center gap-2"><Activity className="w-5 h-5 text-emerald-500"/> {s.exercises.length} ex.</div>
                       </div>
-                      <p className="text-sm text-slate-500 font-medium mt-3 max-w-xl">
+                      <p className="text-sm text-mild font-medium mt-3 max-w-xl">
                         {sessionInsight(s.exercises, avgStillness, wellbeingChangeText(s))}
                       </p>
                     </div>
                     
-                    <div className="flex items-center gap-8 bg-slate-50 py-4 px-6 rounded-2xl border border-slate-100">
+                    <div className="flex items-center gap-8 bg-surface-sunken py-4 px-6 rounded-2xl border border-line">
                       <div>
-                        <p className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-1">Estabilidade</p>
-                        <p className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                        <p className="text-xs text-faint uppercase tracking-widest font-bold mb-1">Estabilidade</p>
+                        <p className="text-2xl font-bold text-strong flex items-center gap-2">
                           <Eye className="w-5 h-5 text-indigo-500" />
                           {avgStillness !== null ? `${Math.round(avgStillness)}%` : 'N/D'}
                         </p>
                       </div>
-                      <div className="w-px h-12 bg-slate-200"></div>
+                      <div className="w-px h-12 bg-line-strong"></div>
                       <div>
-                         <p className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-1">
+                         <p className="text-xs text-faint uppercase tracking-widest font-bold mb-1">
                            {feelingBefore != null ? 'Sensação (pré→pós)' : 'Pior Sintoma (Inicial)'}
                          </p>
-                         <p className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                         <p className="text-2xl font-bold text-strong flex items-center gap-2">
                            {feelingBefore != null
                              ? <Smile className="w-5 h-5 text-emerald-500" />
                              : <AlertTriangle className="w-5 h-5 text-amber-500" />}
@@ -459,7 +461,7 @@ export function DashboardScreen() {
                          </p>
                       </div>
                     </div>
-                 </div>
+                 </Card>
                )
             })}
           </div>
@@ -471,16 +473,16 @@ export function DashboardScreen() {
 function SummaryBubble({ summary, icon }: { key?: React.Key; summary: StatisticSectionSummary; icon: React.ReactNode }) {
   const styles = toneStyles[summary.tone];
   return (
-    <div className={`bg-white rounded-2xl p-5 shadow-sm border ${styles.border}`}>
+    <div className={`bg-surface rounded-2xl p-5 shadow-sm border ${styles.border}`}>
       <div className="flex items-center justify-between gap-3 mb-4">
         <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${styles.icon}`}>
           {icon}
         </div>
         <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${styles.badge}`}>{summary.label}</span>
       </div>
-      <div className="text-3xl font-bold text-slate-800">{summary.value}</div>
-      <div className="text-xs text-slate-400 uppercase tracking-widest font-bold mt-1 mb-3">{summary.detail}</div>
-      <p className="text-sm text-slate-600 font-medium leading-relaxed">{summary.insight}</p>
+      <div className="text-3xl font-bold text-strong">{summary.value}</div>
+      <div className="text-xs text-faint uppercase tracking-widest font-bold mt-1 mb-3">{summary.detail}</div>
+      <p className="text-sm text-mild font-medium leading-relaxed">{summary.insight}</p>
     </div>
   );
 }
@@ -488,8 +490,8 @@ function SummaryBubble({ summary, icon }: { key?: React.Key; summary: StatisticS
 function CapStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-lg font-bold text-slate-800">{value}</div>
-      <div className="text-[11px] text-slate-400 font-bold uppercase tracking-wide mt-1">{label}</div>
+      <div className="text-lg font-bold text-strong">{value}</div>
+      <div className="text-[11px] text-faint font-bold uppercase tracking-wide mt-1">{label}</div>
     </div>
   );
 }
@@ -497,8 +499,8 @@ function CapStat({ label, value }: { label: string; value: string }) {
 function AuditFact({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <div className="font-bold text-slate-700 break-words">{value}</div>
-      <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wide mt-0.5">{label}</div>
+      <div className="font-bold text-mild break-words">{value}</div>
+      <div className="text-[10px] text-faint font-bold uppercase tracking-wide mt-0.5">{label}</div>
     </div>
   );
 }
@@ -516,18 +518,18 @@ function OcularTooltip({ active, payload }: { active?: boolean; payload?: any[] 
   const point = payload[0]?.payload;
   if (!point) return null;
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm text-sm">
-      <div className="font-bold text-slate-800 mb-1">{point.sourceLabel}</div>
-      <div className="text-xs text-slate-500 font-medium mb-2">
+    <div className="rounded-xl border border-line-strong bg-surface p-3 shadow-sm text-sm">
+      <div className="font-bold text-strong mb-1">{point.sourceLabel}</div>
+      <div className="text-xs text-mild font-medium mb-2">
         {point.signalQuality?.label ?? 'Exploratório'} · {point.signalSourceLabel ?? 'Fonte não marcada'} · {formatSampleRateHz(point.sampleRateHz, 'taxa não medida')}
       </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">
-        <span>Sacadas</span><strong className="text-right text-slate-800">{point.saccades}</strong>
-        <span>Regressões</span><strong className="text-right text-slate-800">{point.regressions}</strong>
-        <span>Retornos linha</span><strong className="text-right text-slate-800">{point.lineReturns ?? 'N/D'}</strong>
-        <span>Fixação</span><strong className="text-right text-slate-800">{formatEstimatedMilliseconds(point.meanFixationMs)}</strong>
-        <span>Amostras</span><strong className="text-right text-slate-800">{point.samplesValid}</strong>
-        <span>Cobertura</span><strong className="text-right text-slate-800">{point.coverage != null ? `${point.coverage}%` : 'N/D'}</strong>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-mild">
+        <span>Sacadas</span><strong className="text-right text-strong">{point.saccades}</strong>
+        <span>Regressões</span><strong className="text-right text-strong">{point.regressions}</strong>
+        <span>Retornos linha</span><strong className="text-right text-strong">{point.lineReturns ?? 'N/D'}</strong>
+        <span>Fixação</span><strong className="text-right text-strong">{formatEstimatedMilliseconds(point.meanFixationMs)}</strong>
+        <span>Amostras</span><strong className="text-right text-strong">{point.samplesValid}</strong>
+        <span>Cobertura</span><strong className="text-right text-strong">{point.coverage != null ? `${point.coverage}%` : 'N/D'}</strong>
       </div>
     </div>
   );
@@ -581,9 +583,9 @@ function postureLabel(value: ValidationCapture['conditions']['posture']): string
 
 const toneStyles: Record<StatisticSectionSummary['tone'], { border: string; icon: string; badge: string }> = {
   slate: {
-    border: 'border-slate-100',
-    icon: 'bg-slate-100 text-slate-600',
-    badge: 'bg-slate-100 text-slate-600',
+    border: 'border-line',
+    icon: 'bg-app-inset text-mild',
+    badge: 'bg-app-inset text-mild',
   },
   emerald: {
     border: 'border-emerald-100',
@@ -596,9 +598,9 @@ const toneStyles: Record<StatisticSectionSummary['tone'], { border: string; icon
     badge: 'bg-amber-100 text-amber-700',
   },
   indigo: {
-    border: 'border-indigo-100',
-    icon: 'bg-indigo-100 text-indigo-700',
-    badge: 'bg-indigo-100 text-indigo-700',
+    border: 'border-accent-line',
+    icon: 'bg-accent-line text-accent-strong',
+    badge: 'bg-accent-line text-accent-strong',
   },
   rose: {
     border: 'border-rose-100',
