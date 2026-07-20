@@ -39,19 +39,19 @@ type Tone = 'light' | 'dark';
 const toneClasses = (tone: Tone) => ({
   card: tone === 'dark'
     ? 'bg-slate-800 border border-white/10 text-white'
-    : 'bg-white border border-slate-100 text-slate-800 shadow-sm',
-  label: tone === 'dark' ? 'text-slate-300' : 'text-slate-700',
-  hint: tone === 'dark' ? 'text-slate-400' : 'text-slate-500',
+    : 'bg-surface border border-line text-strong shadow-sm',
+  label: tone === 'dark' ? 'text-slate-300' : 'text-mild',
+  hint: tone === 'dark' ? 'text-slate-400' : 'text-mild',
   idleButton: tone === 'dark'
     ? 'bg-white/10 hover:bg-white/20 text-slate-200'
-    : 'bg-slate-100 hover:bg-slate-200 text-slate-700',
+    : 'bg-app-inset hover:bg-line-strong text-mild',
   activeButton: 'bg-blue-600 text-white shadow-lg',
   input: tone === 'dark'
     ? 'bg-white/10 text-slate-100 focus:bg-white/15'
-    : 'bg-slate-100 text-slate-800 focus:bg-slate-200',
+    : 'bg-app-inset text-strong focus:bg-line-strong',
   submit: tone === 'dark'
     ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
-    : 'bg-slate-900 hover:opacity-90 text-white',
+    : 'bg-ink hover:opacity-90 text-ink-foreground',
 });
 
 function EmojiScale({ label, options, value, onChange, tone }: {

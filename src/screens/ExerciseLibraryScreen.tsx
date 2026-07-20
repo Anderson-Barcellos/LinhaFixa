@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { registry } from '@/exercises/implementations';
 import { AppShell } from '@/components/app/AppShell';
 import { signalCameraIntent } from '@/services/adaptivePreload';
+import { Card } from '@/components/ui/card';
 
 const EXERCISE_DESCRIPTIONS: Record<string, { title: string; description: string }> = {
   fixation: {
@@ -37,20 +38,20 @@ export function ExerciseLibraryScreen() {
         {Object.keys(registry).map(k => {
           const meta = EXERCISE_DESCRIPTIONS[k];
           return (
-            <div key={k} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col justify-between">
+            <Card key={k} className="flex flex-col justify-between">
               <div>
-                <h3 className="text-xl font-bold text-slate-800 mb-2">{meta?.title ?? k.replace('_', ' ')}</h3>
-                <p className="text-slate-500 font-medium line-clamp-3">{meta?.description ?? 'Módulo de treino visual interativo.'}</p>
+                <h3 className="text-xl font-bold text-strong mb-2">{meta?.title ?? k.replace('_', ' ')}</h3>
+                <p className="text-mild font-medium line-clamp-3">{meta?.description ?? 'Módulo de treino visual interativo.'}</p>
               </div>
               <button
                 onPointerDown={warmCamera}
                 onFocus={warmCamera}
                 onClick={() => navigate('/player', { state: { singleExercise: k } })}
-                className="mt-6 w-full py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+                className="mt-6 w-full py-3 bg-accent-soft hover:bg-accent-line text-accent-strong font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
               >
                 Praticar Agora
               </button>
-            </div>
+            </Card>
           );
         })}
       </div>
