@@ -10,6 +10,16 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Linha Fixa" />
     <link rel="manifest" href="%BASE_URL%manifest.json" />
+    <!-- Anti-flash: aplica .dark antes do bundle carregar. A chave duplica a
+         THEME_STORAGE_KEY de src/services/theme.ts de propósito — este script
+         roda antes de qualquer módulo existir. -->
+    <script>
+      try {
+        var t = localStorage.getItem('linhafixa_theme');
+        var dark = t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>
