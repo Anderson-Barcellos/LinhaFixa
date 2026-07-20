@@ -7,6 +7,7 @@ import { LIVE_ASSESSMENT_WORKSPACE_ROUTE } from '@/services/assessmentAdapter';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { isCalibrated, getAccuracyDeg } from '@/services/gazeCalibration';
 import { clampViewingDistanceCm, normalizeViewingDistanceInput, viewingDistanceInputValue } from '@/services/viewingDistance';
+import { getTheme, setTheme, type Theme } from '@/services/theme';
 import { requestMotionPermissionFromGesture, startMotionSensor } from '@/services/motionSensor';
 import { Save, Eye, ScanEye } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -16,6 +17,8 @@ export function SettingsScreen() {
   const location = useLocation();
   const { profile, setProfile } = useAppStore();
   const [showCalibration, setShowCalibration] = useState(false);
+  // Preferência de dispositivo (localStorage), aplicada na hora — não vive no perfil.
+  const [appTheme, setAppTheme] = useState<Theme>(() => getTheme());
   // Bump to refresh the calibration status label after calibrating.
   const [, setCalTick] = useState(0);
 
@@ -112,6 +115,22 @@ export function SettingsScreen() {
               >
                 <option value="light">Claro (Fundo Branco)</option>
                 <option value="dark">Escuro (Alto Contraste)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold text-mild uppercase tracking-widest mb-2">Tema do Aplicativo</label>
+              <select
+                value={appTheme}
+                onChange={e => {
+                  const next = e.target.value as Theme;
+                  setAppTheme(next);
+                  setTheme(next);
+                }}
+                className="w-full text-lg p-4 bg-surface-sunken rounded-xl border border-line-strong text-strong focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="light">Claro</option>
+                <option value="dark">Escuro</option>
               </select>
             </div>
 
