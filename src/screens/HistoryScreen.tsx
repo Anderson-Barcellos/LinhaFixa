@@ -113,7 +113,7 @@ export function HistoryScreen(): JSX.Element {
     >
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(280px,0.9fr)]">
         <section className="space-y-6">
-          <div className="rounded-[2rem] bg-slate-900 p-6 text-white shadow-lg md:p-8">
+          <div className="rounded-[2rem] bg-ink p-6 text-ink-foreground shadow-lg md:p-8">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div className="max-w-2xl">
                 <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-200">
@@ -142,38 +142,38 @@ export function HistoryScreen(): JSX.Element {
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
-            <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <article className="rounded-3xl border border-line-strong bg-surface p-5 shadow-sm">
               <div className="flex items-center gap-3">
-                <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">
+                <div className="rounded-2xl bg-app-inset p-3 text-mild">
                   <Camera className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">Capturas</p>
-                  <p className="text-sm text-slate-500">{captures.length} registradas</p>
+                  <p className="text-sm font-semibold text-strong">Capturas</p>
+                  <p className="text-sm text-mild">{captures.length} registradas</p>
                 </div>
               </div>
             </article>
 
-            <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <article className="rounded-3xl border border-line-strong bg-surface p-5 shadow-sm">
               <div className="flex items-center gap-3">
-                <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">
+                <div className="rounded-2xl bg-app-inset p-3 text-mild">
                   <BookOpenText className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">Recalls</p>
-                  <p className="text-sm text-slate-500">{recalls.length} testes salvos</p>
+                  <p className="text-sm font-semibold text-strong">Recalls</p>
+                  <p className="text-sm text-mild">{recalls.length} testes salvos</p>
                 </div>
               </div>
             </article>
 
-            <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <article className="rounded-3xl border border-line-strong bg-surface p-5 shadow-sm">
               <div className="flex items-center gap-3">
-                <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">
+                <div className="rounded-2xl bg-app-inset p-3 text-mild">
                   <Clock3 className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">Ultimo registro</p>
-                  <p className="text-sm text-slate-500">
+                  <p className="text-sm font-semibold text-strong">Ultimo registro</p>
+                  <p className="text-sm text-mild">
                     {latestEntry ? formatTimestamp(latestEntry.timestamp) : 'Sem dados ainda'}
                   </p>
                 </div>
@@ -181,11 +181,11 @@ export function HistoryScreen(): JSX.Element {
             </article>
           </div>
 
-          <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <section className="rounded-[2rem] border border-line-strong bg-surface p-6 shadow-sm">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h3 className="text-xl font-bold text-slate-900">Linha do tempo</h3>
-                <p className="mt-2 text-sm font-medium leading-6 text-slate-500">
+                <h3 className="text-xl font-bold text-strong">Linha do tempo</h3>
+                <p className="mt-2 text-sm font-medium leading-6 text-mild">
                   Capturas e recalls aparecem juntos para facilitar auditoria
                   rapida da sequencia real de avaliacao.
                 </p>
@@ -193,11 +193,11 @@ export function HistoryScreen(): JSX.Element {
             </div>
 
             {loading ? (
-              <div className="mt-6 rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm font-medium text-slate-500">
+              <div className="mt-6 rounded-3xl border border-dashed border-line-strong bg-surface-sunken p-6 text-sm font-medium text-mild">
                 Carregando historico local...
               </div>
             ) : entries.length === 0 ? (
-              <div className="mt-6 rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm font-medium text-slate-500">
+              <div className="mt-6 rounded-3xl border border-dashed border-line-strong bg-surface-sunken p-6 text-sm font-medium text-mild">
                 Nenhuma captura ou recall salvo neste dispositivo ainda.
               </div>
             ) : (
@@ -205,21 +205,21 @@ export function HistoryScreen(): JSX.Element {
                 {entries.map((entry) => (
                   <article
                     key={entry.id}
-                    className="rounded-3xl border border-slate-200 bg-slate-50 p-5"
+                    className="rounded-3xl border border-line-strong bg-surface-sunken p-5"
                   >
                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                       <div>
-                        <div className="inline-flex rounded-full bg-white px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
+                        <div className="inline-flex rounded-full bg-surface px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-mild">
                           {entry.badge}
                         </div>
-                        <h4 className="mt-3 text-lg font-semibold text-slate-900">
+                        <h4 className="mt-3 text-lg font-semibold text-strong">
                           {entry.title}
                         </h4>
-                        <p className="mt-2 text-sm leading-6 text-slate-500">
+                        <p className="mt-2 text-sm leading-6 text-mild">
                           {entry.detail}
                         </p>
                       </div>
-                      <span className="text-sm font-medium text-slate-500">
+                      <span className="text-sm font-medium text-mild">
                         {formatTimestamp(entry.timestamp)}
                       </span>
                     </div>
@@ -231,23 +231,23 @@ export function HistoryScreen(): JSX.Element {
         </section>
 
         <aside className="space-y-6">
-          <article className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+          <article className="rounded-[2rem] border border-line-strong bg-surface p-6 shadow-sm">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mild">
               Perfil ativo
             </p>
-            <h3 className="mt-3 text-2xl font-bold text-slate-900">
+            <h3 className="mt-3 text-2xl font-bold text-strong">
               {profile?.name ? profile.name : 'Perfil sem nome salvo'}
             </h3>
-            <p className="mt-3 text-sm leading-6 text-slate-500">
+            <p className="mt-3 text-sm leading-6 text-mild">
               Distancia de leitura registrada: {profile?.viewingDistanceCm ?? 40} cm.
             </p>
           </article>
 
-          <article className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+          <article className="rounded-[2rem] border border-line-strong bg-surface p-6 shadow-sm">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mild">
               Diferenca de papel
             </p>
-            <p className="mt-4 text-sm leading-6 text-slate-500">
+            <p className="mt-4 text-sm leading-6 text-mild">
               Historico mostra eventos salvos e sua ordem. Progresso continua
               sendo o lugar para sumarizacao clinica, series comparaveis e
               exportacao ampla.

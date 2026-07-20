@@ -10,14 +10,14 @@ export function AssessmentSetupPanel({
   onWarmSession?: () => void;
 }) {
   return (
-    <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
-      <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
+    <section className="rounded-[2rem] border border-line-strong bg-surface p-6 shadow-sm">
+      <p className="text-sm font-semibold uppercase tracking-[0.2em] text-faint">
         Preparacao
       </p>
-      <h2 className="mt-3 text-2xl font-bold text-slate-900">
+      <h2 className="mt-3 text-2xl font-bold text-strong">
         Escolha como esta sessao vai acontecer
       </h2>
-      <p className="mt-2 text-sm font-medium text-slate-500">
+      <p className="mt-2 text-sm font-medium text-mild">
         {latestSessionLabel ?? 'Sem capturas recentes salvas.'}
       </p>
       <div className="mt-6 flex flex-col gap-3 sm:flex-row">
@@ -26,7 +26,7 @@ export function AssessmentSetupPanel({
           onPointerDown={onWarmSession}
           onFocus={onWarmSession}
           onClick={onStartCapture}
-          className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-800"
+          className="rounded-2xl bg-ink px-5 py-3 text-sm font-bold text-ink-foreground transition hover:bg-slate-800"
         >
           Captura simples
         </button>
@@ -35,7 +35,7 @@ export function AssessmentSetupPanel({
           onPointerDown={onWarmSession}
           onFocus={onWarmSession}
           onClick={onStartRecall}
-          className="rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-indigo-500"
+          className="rounded-2xl bg-accent px-5 py-3 text-sm font-bold text-white transition hover:bg-indigo-500"
         >
           Ler e responder
         </button>

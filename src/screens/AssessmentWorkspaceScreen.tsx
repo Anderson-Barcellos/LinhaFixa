@@ -118,7 +118,7 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
 
   if (liveWorkspace) {
     return (
-      <div className="overflow-hidden bg-slate-100 text-slate-900">
+      <div className="overflow-hidden bg-app-inset text-strong">
         <div className="mx-auto h-[100dvh] max-w-7xl min-h-0">
           <Suspense fallback={<div className="h-full min-h-[100dvh] bg-slate-950" />}>
             <EyeTrackingTestScreen
@@ -147,7 +147,7 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
               onWarmSession={signalCameraIntent}
             />
 
-            <section className="rounded-3xl bg-slate-900 p-5 text-white shadow-lg md:rounded-[2rem] md:p-8">
+            <section className="rounded-3xl bg-ink p-5 text-ink-foreground shadow-lg md:rounded-[2rem] md:p-8">
               <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
                 <div className="max-w-2xl">
                   <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-200">
@@ -231,46 +231,46 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
 
           <aside className="space-y-4 md:space-y-6">
             {snapshot.resultSummary ? (
-              <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:rounded-[2rem] md:p-6">
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+              <article className="rounded-3xl border border-line-strong bg-surface p-5 shadow-sm md:rounded-[2rem] md:p-6">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mild">
                   Ultimo resultado
                 </p>
-                <h2 className="mt-3 text-xl font-bold text-slate-900 md:text-2xl">
+                <h2 className="mt-3 text-xl font-bold text-strong md:text-2xl">
                   {snapshot.resultSummary.title}
                 </h2>
-                <p className="mt-3 inline-flex rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
+                <p className="mt-3 inline-flex rounded-full bg-app-inset px-3 py-1 text-sm font-semibold text-mild">
                   {snapshot.resultSummary.badge}
                 </p>
-                <p className="mt-4 text-sm leading-6 text-slate-500">
+                <p className="mt-4 text-sm leading-6 text-mild">
                   O histórico recente continua vindo do adapter já existente, sem alterar a
                   persistência local das capturas e dos recalls.
                 </p>
               </article>
             ) : (
-              <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:rounded-[2rem] md:p-6">
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+              <article className="rounded-3xl border border-line-strong bg-surface p-5 shadow-sm md:rounded-[2rem] md:p-6">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mild">
                   Primeira avaliacao
                 </p>
-                <h2 className="mt-3 text-xl font-bold text-slate-900 md:text-2xl">
+                <h2 className="mt-3 text-xl font-bold text-strong md:text-2xl">
                   Tudo pronto para a primeira rodada
                 </h2>
-                <p className="mt-4 text-sm leading-6 text-slate-500">
+                <p className="mt-4 text-sm leading-6 text-mild">
                   A partir daqui o /assessment já é a casa do fluxo inteiro, sem depender
                   de uma tela paralela como dona da experiência real.
                 </p>
               </article>
             )}
 
-            <article className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+            <article className="rounded-[2rem] border border-line-strong bg-surface p-6 shadow-sm">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mild">
                 Compatibilidade
               </p>
-              <p className="mt-4 text-sm leading-6 text-slate-500">
+              <p className="mt-4 text-sm leading-6 text-mild">
                 <code>/eye-tracking-test</code> segue vivo apenas como atalho legado e
                 redireciona para a variante ativa desta mesma workspace.
               </p>
               {!loading ? (
-                <p className="mt-4 text-sm leading-6 text-slate-500">
+                <p className="mt-4 text-sm leading-6 text-mild">
                   Modo sugerido agora: <strong>{latestRecord.mode === 'recall' ? 'Ler e responder' : 'Captura simples'}</strong>.
                 </p>
               ) : null}
