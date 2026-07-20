@@ -8,6 +8,7 @@ import { checkContextSafety } from '@/services/safety';
 import { saveSession, getTodayPreContext } from '@/services/storage';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { CalibrationReusePrompt } from '@/components/CalibrationReusePrompt';
+import { Card } from '@/components/ui/card';
 import { getCalibrationAssessment } from '@/services/gazeCalibration';
 import {
   discardFrontCameraRequest,
@@ -250,10 +251,10 @@ export function ExercisePlayerScreen() {
 
   if (stage === 'BLOCKED') {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
-        <h2 className="text-3xl font-bold text-slate-800 mb-4">Treino Suspenso</h2>
-        <p className="text-xl text-slate-600 max-w-xl mb-8">{safetyReason}</p>
-        <button onClick={() => navigate('/')} className="px-8 py-3 bg-slate-900 text-white rounded-xl text-lg font-medium">Voltar ao Início</button>
+      <div className="min-h-screen bg-app flex flex-col items-center justify-center p-6 text-center">
+        <h2 className="text-3xl font-bold text-strong mb-4">Treino Suspenso</h2>
+        <p className="text-xl text-mild max-w-xl mb-8">{safetyReason}</p>
+        <button onClick={() => navigate('/')} className="px-8 py-3 bg-ink text-ink-foreground rounded-xl text-lg font-medium">Voltar ao Início</button>
       </div>
     );
   }
@@ -347,14 +348,14 @@ export function ExercisePlayerScreen() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 py-12 px-6">
+    <div className="min-h-screen bg-app py-12 px-6">
       {stage === 'PRE_CONTEXT' && (
         <PreContextForm value={contextPre} onChange={setContextPre} onSubmit={handlePreContextSubmit} />
       )}
       {stage === 'POST_READING_RATING' && (
-        <div className="max-w-3xl mx-auto bg-white p-10 py-12 rounded-3xl shadow-sm border border-slate-100 text-center animate-in fade-in slide-in-from-bottom-8">
-           <h2 className="text-3xl font-bold text-slate-800 mb-4">Como foi a leitura?</h2>
-           <p className="text-slate-500 font-medium mb-10 text-lg">Selecione uma reação sobre a dificuldade ou conforto com este texto.</p>
+        <Card className="max-w-3xl mx-auto p-10 py-12 text-center animate-in fade-in slide-in-from-bottom-8">
+           <h2 className="text-3xl font-bold text-strong mb-4">Como foi a leitura?</h2>
+           <p className="text-mild font-medium mb-10 text-lg">Selecione uma reação sobre a dificuldade ou conforto com este texto.</p>
            
            <div className="flex justify-center gap-6 mb-12">
               {[
@@ -366,34 +367,34 @@ export function ExercisePlayerScreen() {
                  <button
                    key={s.emoji}
                    onClick={() => setReadingRating(s.label)}
-                   className={`flex flex-col items-center gap-3 p-4 rounded-2xl border transition-all hover:-translate-y-1 active:scale-95 ${readingRating === s.label ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-200' : 'border-transparent hover:bg-slate-50 hover:border-slate-100'}`}
+                   className={`flex flex-col items-center gap-3 p-4 rounded-2xl border transition-all hover:-translate-y-1 active:scale-95 ${readingRating === s.label ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-200' : 'border-transparent hover:bg-surface-sunken hover:border-line'}`}
                  >
                     <span className="text-6xl drop-shadow-sm">{s.emoji}</span>
-                    <span className={`text-sm font-bold uppercase tracking-wide ${readingRating === s.label ? 'text-blue-600' : 'text-slate-500'}`}>{s.label}</span>
+                    <span className={`text-sm font-bold uppercase tracking-wide ${readingRating === s.label ? 'text-blue-600' : 'text-mild'}`}>{s.label}</span>
                  </button>
               ))}
            </div>
 
-           <div className="bg-slate-50 p-8 rounded-2xl text-left border border-slate-100 mb-6">
-              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Cadência de leitura (toques)</h3>
+           <div className="bg-surface-sunken p-8 rounded-2xl text-left border border-line mb-6">
+              <h3 className="text-sm font-bold text-faint uppercase tracking-widest mb-6">Cadência de leitura (toques)</h3>
               <div className="grid grid-cols-2 gap-6">
                  <div>
-                    <div className="text-xl font-bold text-slate-800">
+                    <div className="text-xl font-bold text-strong">
                       {readingExtraData?.intervals?.length ? Math.round(readingExtraData.intervals.reduce((a:number,b:number)=>a+b,0)/readingExtraData.intervals.length) : 0} ms
                     </div>
-                    <div className="text-slate-500 text-sm font-medium mt-1">Tempo médio entre toques</div>
+                    <div className="text-mild text-sm font-medium mt-1">Tempo médio entre toques</div>
                  </div>
                  <div>
-                    <div className="text-xl font-bold text-slate-800">
+                    <div className="text-xl font-bold text-strong">
                        {readingExtraData?.intervals?.length || 0}
                     </div>
-                    <div className="text-slate-500 text-sm font-medium mt-1">Trechos avançados</div>
+                    <div className="text-mild text-sm font-medium mt-1">Trechos avançados</div>
                  </div>
               </div>
            </div>
 
            {readingExtraData?.saccadeMetrics?.trackingAvailable ? (
-              <div className="bg-indigo-50 p-8 rounded-2xl text-left border border-indigo-100 mb-10">
+              <div className="bg-accent-soft p-8 rounded-2xl text-left border border-accent-line mb-10">
                  <h3 className="text-sm font-bold text-indigo-500 uppercase tracking-widest mb-2">Dinâmica ocular de leitura - experimental</h3>
                  <p className="text-xs text-indigo-400 font-medium mb-4">
                    Valores aproximados por webcam. A análise prioriza movimento relativo,
@@ -402,7 +403,7 @@ export function ExercisePlayerScreen() {
                  {(() => {
                    const summary = summarizeReadingDynamics(readingExtraData.saccadeMetrics, readingExtraData.signalCoverage ?? null);
                    return (
-                     <div className="bg-white/70 rounded-xl border border-indigo-100 p-4 mb-6">
+                     <div className="bg-white/70 rounded-xl border border-accent-line p-4 mb-6">
                        <div className="flex flex-wrap gap-2 mb-2">
                          <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
                            summary.signalQuality.tone === 'emerald'
@@ -428,38 +429,38 @@ export function ExercisePlayerScreen() {
                  })()}
                  <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
                     <div>
-                       <div className="text-xl font-bold text-slate-800">{formatSampleRateHz(readingExtraData.saccadeMetrics.sampleRateHz)}</div>
-                       <div className="text-slate-500 text-sm font-medium mt-1">Taxa efetiva</div>
+                       <div className="text-xl font-bold text-strong">{formatSampleRateHz(readingExtraData.saccadeMetrics.sampleRateHz)}</div>
+                       <div className="text-mild text-sm font-medium mt-1">Taxa efetiva</div>
                     </div>
                     <div>
-                       <div className="text-xl font-bold text-slate-800">{readingExtraData.saccadeMetrics.saccadeCount}</div>
-                       <div className="text-slate-500 text-sm font-medium mt-1">Sacadas</div>
+                       <div className="text-xl font-bold text-strong">{readingExtraData.saccadeMetrics.saccadeCount}</div>
+                       <div className="text-mild text-sm font-medium mt-1">Sacadas</div>
                     </div>
                     <div>
-                       <div className="text-xl font-bold text-slate-800">{readingExtraData.saccadeMetrics.regressionCount}</div>
-                       <div className="text-slate-500 text-sm font-medium mt-1">Regressões</div>
+                       <div className="text-xl font-bold text-strong">{readingExtraData.saccadeMetrics.regressionCount}</div>
+                       <div className="text-mild text-sm font-medium mt-1">Regressões</div>
                     </div>
                     <div>
-                       <div className="text-xl font-bold text-slate-800">
+                       <div className="text-xl font-bold text-strong">
                          {readingExtraData.saccadeMetrics.meanFixationMs != null
                            ? `${Math.round(readingExtraData.saccadeMetrics.meanFixationMs)} ms`
                            : 'não estimável'}
                        </div>
-                       <div className="text-slate-500 text-sm font-medium mt-1">Fixação média</div>
+                       <div className="text-mild text-sm font-medium mt-1">Fixação média</div>
                     </div>
                     <div>
-                       <div className="text-xl font-bold text-slate-800">
+                       <div className="text-xl font-bold text-strong">
                          {readingExtraData.saccadeMetrics.meanSaccadeAmplitude != null
                            ? readingExtraData.saccadeMetrics.meanSaccadeAmplitude.toFixed(2)
                            : 'não estimável'}
                        </div>
-                       <div className="text-slate-500 text-sm font-medium mt-1">Amplitude (aprox.)</div>
+                       <div className="text-mild text-sm font-medium mt-1">Amplitude (aprox.)</div>
                     </div>
                  </div>
               </div>
            ) : (
-              <div className="bg-slate-50 p-6 rounded-2xl text-left border border-slate-100 mb-10">
-                 <p className="text-sm text-slate-500 font-medium">
+              <div className="bg-surface-sunken p-6 rounded-2xl text-left border border-line mb-10">
+                 <p className="text-sm text-mild font-medium">
                    Dinâmica ocular por webcam indisponível nesta sessão (câmera desligada ou rosto não detectado).
                  </p>
               </div>
@@ -474,34 +475,34 @@ export function ExercisePlayerScreen() {
                   setStage('POST_CONTEXT');
                 }
              }}
-             className="px-10 py-4 bg-slate-900 text-white rounded-xl text-lg font-bold w-full hover:bg-slate-800 transition-colors"
+             className="px-10 py-4 bg-ink text-ink-foreground rounded-xl text-lg font-bold w-full hover:bg-slate-800 transition-colors"
            >
              Continuar
            </button>
-        </div>
+        </Card>
       )}
       {stage === 'POST_CONTEXT' && (
         <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
           <div className="max-w-2xl mx-auto mb-8 text-center">
-            <h2 className="text-3xl font-bold text-slate-800">Sessão Concluída!</h2>
-            <p className="text-slate-500 text-lg mt-2 font-medium">Registre como terminaste.</p>
+            <h2 className="text-3xl font-bold text-strong">Sessão Concluída!</h2>
+            <p className="text-mild text-lg mt-2 font-medium">Registre como terminaste.</p>
           </div>
           <PostContextForm value={contextPost} onChange={setContextPost} onSubmit={finalizeSession} />
         </div>
       )}
       {stage === 'SUMMARY' && (
-        <div className="max-w-3xl mx-auto bg-white p-10 md:p-14 rounded-3xl shadow-sm border border-slate-100 text-center">
-           <h2 className="text-3xl font-bold text-slate-800 mb-6">Excelente trabalho!</h2>
-           <p className="text-slate-600 text-xl font-medium mb-12">Seu histórico foi salvo com sucesso.</p>
+        <Card className="max-w-3xl mx-auto p-10 md:p-14 text-center">
+           <h2 className="text-3xl font-bold text-strong mb-6">Excelente trabalho!</h2>
+           <p className="text-mild text-xl font-medium mb-12">Seu histórico foi salvo com sucesso.</p>
            
            <div className="grid grid-cols-2 gap-4 mb-12 text-left">
-             <div className="bg-slate-50 p-6 rounded-2xl">
-               <div className="text-sm text-slate-500 font-bold uppercase tracking-wider mb-2">Exercícios</div>
-               <div className="text-3xl font-semibold text-slate-800">{results.length}</div>
+             <div className="bg-surface-sunken p-6 rounded-2xl">
+               <div className="text-sm text-mild font-bold uppercase tracking-wider mb-2">Exercícios</div>
+               <div className="text-3xl font-semibold text-strong">{results.length}</div>
              </div>
-             <div className="bg-slate-50 p-6 rounded-2xl">
-               <div className="text-sm text-slate-500 font-bold uppercase tracking-wider mb-2">Estabilidade Média</div>
-               <div className="text-3xl font-semibold text-slate-800">
+             <div className="bg-surface-sunken p-6 rounded-2xl">
+               <div className="text-sm text-mild font-bold uppercase tracking-wider mb-2">Estabilidade Média</div>
+               <div className="text-3xl font-semibold text-strong">
                  {(() => {
                     const scores = results.map(r => r.headStillnessScore).filter((s): s is number => s !== null);
                     return scores.length ? `${Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)}%` : 'N/D';
@@ -519,7 +520,7 @@ export function ExercisePlayerScreen() {
               if (ocular.length === 0) return null;
               const name = (id: string) => id === 'fixation' ? 'Fixação' : id === 'saccades' ? 'Sacadas' : id === 'smooth_pursuit' ? 'Perseguição' : id;
               return (
-                <div className="bg-indigo-50 p-8 rounded-2xl text-left border border-indigo-100 mb-12">
+                <div className="bg-accent-soft p-8 rounded-2xl text-left border border-accent-line mb-12">
                    <h3 className="text-sm font-bold text-indigo-500 uppercase tracking-widest mb-2">Métricas oculares — experimental (webcam)</h3>
                    <p className="text-xs text-indigo-400 font-medium mb-6">
                      Valores aproximados a partir da câmera calibrada, com taxa dependente
@@ -535,13 +536,13 @@ export function ExercisePlayerScreen() {
                          const dv = r.extraData?.detectorValidation;
                          const stat = (label: string, value: string) => (
                             <div key={label}>
-                               <div className="text-lg font-bold text-slate-800">{value}</div>
-                               <div className="text-slate-500 text-xs font-medium mt-1">{label}</div>
+                               <div className="text-lg font-bold text-strong">{value}</div>
+                               <div className="text-mild text-xs font-medium mt-1">{label}</div>
                             </div>
                          );
                          return (
-                            <div key={i} className="bg-white rounded-xl p-5 border border-indigo-100">
-                               <div className="text-sm font-bold text-slate-700 mb-3">{name(r.exerciseId)}</div>
+                            <div key={i} className="bg-surface rounded-xl p-5 border border-accent-line">
+                               <div className="text-sm font-bold text-mild mb-3">{name(r.exerciseId)}</div>
                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                                   {fx?.trackingAvailable && [
                                      stat('Tempo na mira', `${Math.round(fx.percentWithinThreshold)}%`),
@@ -560,7 +561,7 @@ export function ExercisePlayerScreen() {
                                   ]}
                                </div>
                                {dv?.trackingAvailable && (
-                                  <div className="mt-4 pt-4 border-t border-indigo-100">
+                                  <div className="mt-4 pt-4 border-t border-accent-line">
                                      <div className="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3">
                                         Validação interna do detector (instrumento, não usuário)
                                      </div>
@@ -633,8 +634,8 @@ export function ExercisePlayerScreen() {
               );
            })()}
 
-           <button onClick={() => navigate('/')} className="px-10 py-4 bg-slate-900 text-white rounded-xl text-lg font-bold w-full hover:bg-slate-800 transition-colors">Voltar ao Início</button>
-        </div>
+           <button onClick={() => navigate('/')} className="px-10 py-4 bg-ink text-ink-foreground rounded-xl text-lg font-bold w-full hover:bg-slate-800 transition-colors">Voltar ao Início</button>
+        </Card>
       )}
     </div>
   );
