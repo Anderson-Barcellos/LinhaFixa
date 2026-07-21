@@ -150,6 +150,9 @@ Ajuste da revisao fisica de 2026-07-21 (iPhone landscape):
   106283/180000 bytes gzip e `npm run smoke` com notebook 63/63, layout 165/165,
   phone-portrait 14/14, validade 72/72,
   assessment 9/9 e loading 43/43. `real-tab-hidden` segue BLOCKED no headless.
+- correcao commitada em `5c4e3f2` e publicada no `linhafixa.service`; localhost e
+  `https://ultrassom.ai/gaze/` responderam 200, e o smoke phone-portrait publico
+  passou 14/14 (iPhone sem scroll + retomada; iPad landscape preservado).
 
 Gate manual remanescente: Anders confirmar no Safari fisico que o aviso ocupa a
 tela sem rolagem em landscape e que a sessao reaparece ao retornar a portrait.
