@@ -267,12 +267,20 @@ export type AssessmentMode = 'capture' | 'recall';
 
 export type AssessmentStage =
   | 'setup'
+  | 'checking-readiness'
+  | 'calibrating'
+  | 'validating'
+  | 'ready'
   | 'loading-text'
   | 'text-ready'
   | 'capturing'
   | 'generating-quiz'
+  | 'generating-recall'
   | 'quiz'
-  | 'result';
+  | 'result'
+  | 'interrupted'
+  | 'saving'
+  | 'save-failed';
 
 export interface AssessmentResultSummary {
   title: string;

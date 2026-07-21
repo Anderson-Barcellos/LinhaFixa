@@ -46,7 +46,7 @@ export type AssessmentSessionEvent =
   | { type: 'SAVE_FAILED' }
   | { type: 'RETRY_SAVE' }
   | { type: 'INTERRUPTED'; reason: CaptureInterruptionReason }
-  | { type: 'RESET' };
+  | { type: 'RESET'; mode?: AssessmentMode };
 
 export function initialAssessmentSessionState(mode: AssessmentMode): AssessmentSessionState {
   return {
@@ -88,7 +88,7 @@ export function transitionAssessmentSession(
   state: AssessmentSessionState,
   event: AssessmentSessionEvent,
 ): AssessmentSessionState {
-  if (event.type === 'RESET') return initialAssessmentSessionState(state.mode);
+  if (event.type === 'RESET') return initialAssessmentSessionState(event.mode ?? state.mode);
   if (event.type === 'INTERRUPTED' && state.phase !== 'setup' && state.phase !== 'result') {
     return {
       ...state,

@@ -4,12 +4,20 @@ import type { AssessmentStage } from '@/types';
 
 export const SESSION_TITLES: Record<AssessmentStage, string> = {
   setup: 'Sessao pronta para iniciar',
+  'checking-readiness': 'Verificando prontidão',
+  calibrating: 'Calibração necessária',
+  validating: 'Validando sinal e contexto',
+  ready: 'Sessão pronta',
   'loading-text': 'Preparando leitura',
   'text-ready': 'Leitura guiada',
   capturing: 'Captura em andamento',
   'generating-quiz': 'Gerando questionario',
+  'generating-recall': 'Gerando questionário de recall',
   quiz: 'Questionario de recall',
   result: 'Resultado da sessao',
+  interrupted: 'Captura interrompida',
+  saving: 'Salvando resultado',
+  'save-failed': 'Resultado ainda não salvo',
 };
 
 export function AssessmentSessionSurface({

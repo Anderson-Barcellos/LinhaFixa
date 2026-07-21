@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -12,6 +12,7 @@ import {
   LIVE_ASSESSMENT_WORKSPACE_ROUTE,
 } from '@/services/assessmentAdapter';
 import { buildExperimentNotebookProjection } from '@/services/experimentNotebookProjection';
+import { resolveDeviceClass } from '@/services/deviceClass';
 import { loadRouteModule } from '@/services/routeChunkRecovery';
 import { loadEyeTrackingTestModule } from '@/services/routeModules';
 import {
@@ -25,6 +26,7 @@ import type {
   SessionResult,
   ValidationCapture,
 } from '@/types';
+import { useAppStore } from '@/store/useAppStore';
 
 // A superfície ocular é o módulo mais pesado do app (MediaPipe, análise, canvas);
 // carrega sob demanda ao entrar no workspace live, aquecida antes por idle/intent.
@@ -51,21 +53,23 @@ function assessmentModeFromSearch(search: string): AssessmentMode {
   return mode === 'recall' ? 'recall' : 'capture';
 }
 
-function liveAssessmentRoute(mode: AssessmentMode): string {
-  return mode === 'recall'
-    ? `${LIVE_ASSESSMENT_WORKSPACE_ROUTE}&mode=recall`
-    : LIVE_ASSESSMENT_WORKSPACE_ROUTE;
+function liveAssessmentRoute(mode: AssessmentMode, exploratory: boolean): string {
+  const modeParam = mode === 'recall' ? '&mode=recall' : '';
+  const qualityParam = exploratory ? '&quality=exploratory' : '&quality=comparable';
+  return `${LIVE_ASSESSMENT_WORKSPACE_ROUTE}${modeParam}${qualityParam}`;
 }
 
 export function AssessmentWorkspaceScreen(): JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
+  const { profile } = useAppStore();
   const [loading, setLoading] = useState(true);
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [todayTimestamp] = useState(() => Date.now());
   const [sessions, setSessions] = useState<SessionResult[]>([]);
   const [captures, setCaptures] = useState<ValidationCapture[]>([]);
   const [recalls, setRecalls] = useState<RecallTestResult[]>([]);
+  const [sessionViewportHeight, setSessionViewportHeight] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,6 +98,16 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
     () => assessmentModeFromSearch(location.search),
     [location.search],
   );
+  const initialExploratory = useMemo(
+    () => new URLSearchParams(location.search).get('quality') === 'exploratory',
+    [location.search],
+  );
+  const deviceDecision = useMemo(() => resolveDeviceClass(profile, {
+    width: window.innerWidth,
+    height: window.innerHeight,
+    maxTouchPoints: navigator.maxTouchPoints ?? 0,
+    coarsePointer: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+  }), [profile]);
   const latestRecord = useMemo(
     () => deriveAssessmentWorkspaceLatestRecord(captures, recalls),
     [captures, recalls],
@@ -106,9 +120,17 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
     [sessions, captures, recalls],
   );
 
-  const openSession = (mode: AssessmentMode) => {
+  useLayoutEffect(() => {
+    if (!liveWorkspace) {
+      setSessionViewportHeight(null);
+      return;
+    }
+    setSessionViewportHeight(window.visualViewport?.height ?? window.innerHeight);
+  }, [liveWorkspace]);
+
+  const openSession = (mode: AssessmentMode, exploratory = false) => {
     setLauncherOpen(false);
-    navigate(liveAssessmentRoute(mode));
+    navigate(liveAssessmentRoute(mode, exploratory));
   };
 
   const closeSession = () => {
@@ -117,12 +139,17 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
 
   if (liveWorkspace) {
     return (
-      <div className="overflow-hidden bg-app-inset text-strong">
-        <div className="mx-auto h-[100dvh] min-h-0 max-w-7xl">
-          <Suspense fallback={<div className="h-full min-h-[100dvh] bg-slate-950" />}>
+      <div
+        data-testid="measurement-viewport"
+        className="overflow-hidden bg-slate-950 text-white"
+        style={{ height: sessionViewportHeight ? `${sessionViewportHeight}px` : '100svh' }}
+      >
+        <div className="mx-auto h-full min-h-0 max-w-7xl">
+          <Suspense fallback={<div className="h-full bg-slate-950" />}>
             <EyeTrackingTestScreen
               embedded
               initialMode={requestedMode}
+              initialExploratory={initialExploratory}
               onExit={closeSession}
             />
           </Suspense>
@@ -145,8 +172,18 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
       {launcherOpen ? (
         <AssessmentSetupPanel
           latestSessionLabel={latestSessionLabel}
-          onStartCapture={() => openSession('capture')}
-          onStartRecall={() => openSession('recall')}
+          deviceClassConfirmed={deviceDecision.deviceClassSource === 'confirmed'}
+          suggestedDeviceLabel={
+            deviceDecision.deviceClass === 'phone'
+              ? 'Celular'
+              : deviceDecision.deviceClass === 'tablet'
+                ? 'Tablet'
+                : 'Desktop'
+          }
+          onStartCapture={() => openSession('capture', false)}
+          onStartRecall={() => openSession('recall', false)}
+          onStartExploratory={mode => openSession(mode, true)}
+          onOpenSettings={() => navigate('/settings')}
           onWarmSession={signalCameraIntent}
           onClose={() => setLauncherOpen(false)}
         />

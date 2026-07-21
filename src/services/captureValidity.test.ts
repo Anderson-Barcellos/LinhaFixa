@@ -203,6 +203,19 @@ test('explicit camera stop during capture is canonical, invalid and described ce
   assert.deepEqual(describeCaptureValidity(snapshot).reasons, ['A câmera foi parada durante a captura']);
 });
 
+test('geometry and orientation changes are canonical invalid interruptions', () => {
+  const expected = [
+    ['geometry-changed-during-capture', 'A geometria da superfície mudou durante a captura'],
+    ['orientation-changed-during-capture', 'A orientação mudou durante a captura'],
+  ] as const;
+  for (const [interruption, description] of expected) {
+    const snapshot = assessCaptureValidity(validInput({ interruption }));
+    assert.equal(snapshot.grade, 'invalid');
+    assert.deepEqual(snapshot.reasonCodes, [interruption]);
+    assert.deepEqual(describeCaptureValidity(snapshot).reasons, [description]);
+  }
+});
+
 test('pageInterruptionReason only interrupts visibility changes away from visible and always interrupts pagehide', () => {
   assert.equal(pageInterruptionReason('visibilitychange', 'visible'), null);
   assert.equal(pageInterruptionReason('visibilitychange', 'hidden'), 'page-hidden-during-capture');
@@ -331,6 +344,8 @@ test('describeCaptureValidity owns the canonical text for every reason code', ()
     ['pagehide-during-capture', 'A página foi descarregada durante a captura'],
     ['navigation-during-capture', 'A tela de captura foi encerrada durante a medição'],
     ['camera-stopped-during-capture', 'A câmera foi parada durante a captura'],
+    ['geometry-changed-during-capture', 'A geometria da superfície mudou durante a captura'],
+    ['orientation-changed-during-capture', 'A orientação mudou durante a captura'],
     ['legacy-unassessed', 'Captura legada sem avaliação de validade'],
   ]);
 

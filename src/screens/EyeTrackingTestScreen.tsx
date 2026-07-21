@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useReducer, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Camera, Check, Play, RotateCcw, Crosshair, Trash2, Database } from 'lucide-react';
 import { AssessmentResultPanel } from '@/components/assessment/AssessmentResultPanel';
@@ -54,6 +54,15 @@ import { buildAssessmentWorkspaceSnapshot } from '@/services/assessmentAdapter';
 import { resolveDeviceClass } from '@/services/deviceClass';
 import { backendFailureMessage, networkBackendFailure } from '@/services/apiFailure';
 import { hasUnsavedAssessmentResult } from '@/services/assessmentSessionController';
+import {
+  assessmentSessionStatus,
+  initialAssessmentSessionState,
+  transitionAssessmentSession,
+} from '@/services/assessmentSessionController';
+import {
+  sessionGeometryInterruption,
+  type SessionGeometry,
+} from '@/services/sessionGeometry';
 
 // Standalone diagnostics screen: shows reading text, runs the front camera and
 // overlays a live gaze dot + detection status so we can validate that the eyes are
@@ -103,12 +112,14 @@ const EMPTY_VISUAL_SIGNAL = summarizeFunctionalVisualSignal([]);
 interface EyeTrackingTestScreenProps {
   embedded?: boolean;
   initialMode?: 'capture' | 'recall';
+  initialExploratory?: boolean;
   onExit?: () => void;
 }
 
 export function EyeTrackingTestScreen({
   embedded = false,
   initialMode = 'capture',
+  initialExploratory = false,
   onExit,
 }: EyeTrackingTestScreenProps) {
   const navigate = useNavigate();
@@ -117,6 +128,7 @@ export function EyeTrackingTestScreen({
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const activeSessionGeometryRef = useRef<SessionGeometry | null>(null);
   const mountedRef = useRef(true);
   const { ref: surfaceHostRef, surface: measuredHost } = useMeasuredSurface<HTMLDivElement>();
 
@@ -136,6 +148,26 @@ export function EyeTrackingTestScreen({
   const [readingTextState, setReadingTextState] = useState<ReadingTextState>('loading');
   const [readingFailure, setReadingFailure] = useState<string | null>(null);
   const [showUnsavedExit, setShowUnsavedExit] = useState(false);
+  const [sessionState, dispatchSession] = useReducer(
+    transitionAssessmentSession,
+    initialMode,
+    initialAssessmentSessionState,
+  );
+  const sessionStatus = assessmentSessionStatus(sessionState);
+
+  useEffect(() => {
+    dispatchSession({ type: 'BEGIN' });
+    if (initialExploratory) {
+      dispatchSession({
+        type: 'READINESS_FAILED',
+        reason: 'Sessão iniciada como baseline exploratório.',
+        canRunExploratory: true,
+      });
+      dispatchSession({ type: 'RUN_EXPLORATORY' });
+    }
+  // Route entry owns the initial transition; the live screen remounts for a new run.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [motionQuality, setMotionQuality] = useState<MotionQuality>(() => getMotionQuality());
   const [liveSignal, setLiveSignal] = useState<FunctionalVisualSignalSummary>(EMPTY_VISUAL_SIGNAL);
   const [conditions, setConditions] = useState<ValidationConditions>({
@@ -219,9 +251,17 @@ export function EyeTrackingTestScreen({
     videoRef,
     getDetectionFps: () => liveRef.current.fps,
     // Unfreeze the capture-locked reading font as soon as the capture lock releases.
-    onCaptureRelease: () => { frozenFontPxRef.current = null; },
+    onCaptureRelease: () => {
+      frozenFontPxRef.current = null;
+      activeSessionGeometryRef.current = null;
+    },
     // Recall mode reaction (capture link + quiz generation) lives in useRecallFlow.
-    onCaptureFinished: noteCaptureFinished,
+    onCaptureFinished: info => {
+      noteCaptureFinished(info);
+      dispatchSession(info.interruption
+        ? { type: 'INTERRUPTED', reason: info.interruption }
+        : { type: 'CAPTURE_FINISHED', withRecall: testMode === 'recall' });
+    },
     onCapturePersisted: capture => {
       setCaptures(previous => (
         previous.some(item => item.id === capture.id) ? previous : [capture, ...previous]
@@ -237,6 +277,16 @@ export function EyeTrackingTestScreen({
     clearCaptureResult();
     clearRecallOutcome();
     setShowUnsavedExit(false);
+    dispatchSession({ type: 'RESET', mode: testMode });
+    dispatchSession({ type: 'BEGIN' });
+    if (initialExploratory) {
+      dispatchSession({
+        type: 'READINESS_FAILED',
+        reason: 'Sessão iniciada como baseline exploratório.',
+        canRunExploratory: true,
+      });
+      dispatchSession({ type: 'RUN_EXPLORATORY' });
+    }
   };
   const requestResultClose = () => {
     if (hasUnsavedResult) {
@@ -582,6 +632,105 @@ export function EyeTrackingTestScreen({
     onTeardown: handlePipelineTeardown,
   });
 
+  useEffect(() => {
+    if (initialExploratory) return;
+    if (sessionState.phase === 'checking-readiness') {
+      if (readingTextState === 'error') {
+        dispatchSession({
+          type: 'READINESS_FAILED',
+          reason: readingFailure ?? recallFailure ?? 'Texto de leitura indisponível.',
+          canRunExploratory: false,
+        });
+        return;
+      }
+      if (readingTextState !== 'ready') return;
+      const device = resolveDeviceClass(profile, {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        maxTouchPoints: navigator.maxTouchPoints ?? 0,
+        coarsePointer: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+      });
+      if (device.deviceClassSource !== 'confirmed') {
+        dispatchSession({
+          type: 'READINESS_FAILED',
+          reason: 'Classe de dispositivo não confirmada.',
+          canRunExploratory: true,
+        });
+        return;
+      }
+      dispatchSession({ type: 'READINESS_PASSED', needsCalibration: !isCalibrated() });
+      return;
+    }
+    if (sessionState.phase === 'validating') {
+      if (cameraState === 'running') {
+        dispatchSession({ type: 'VALIDATION_PASSED' });
+      } else if (cameraState === 'unavailable') {
+        dispatchSession({
+          type: 'VALIDATION_FAILED',
+          reason: 'Câmera indisponível para validar o sinal.',
+          canRunExploratory: true,
+        });
+      }
+    }
+  }, [
+    cameraState,
+    initialExploratory,
+    profile,
+    readingFailure,
+    readingTextState,
+    recallFailure,
+    sessionState.phase,
+  ]);
+
+  useEffect(() => {
+    if (sessionState.persistence !== 'saving' || !captureResult) return;
+    if (captureResult.persistence === 'saved') dispatchSession({ type: 'SAVE_SUCCEEDED' });
+    if (captureResult.persistence === 'failed') dispatchSession({ type: 'SAVE_FAILED' });
+  }, [captureResult, sessionState.persistence]);
+
+  useEffect(() => {
+    if (sessionState.phase !== 'generating-recall') return;
+    if (recallQuiz) dispatchSession({ type: 'RECALL_READY' });
+    else if (recallGenState === 'error') {
+      dispatchSession({
+        type: 'RECALL_FAILED',
+        reason: recallFailure ?? 'Não foi possível gerar o questionário de recall.',
+      });
+    }
+  }, [recallFailure, recallGenState, recallQuiz, sessionState.phase]);
+
+  useEffect(() => {
+    if (sessionState.transitionError && import.meta.env.DEV) {
+      console.error(`Transição de avaliação rejeitada: ${sessionState.transitionError}`);
+    }
+  }, [sessionState.transitionError]);
+
+  useEffect(() => {
+    if (!capturing) return;
+    const canvas = canvasRef.current;
+    const frozen = activeSessionGeometryRef.current;
+    if (!canvas || !frozen) return;
+
+    const checkGeometry = () => {
+      if (!capturingRef.current || !activeSessionGeometryRef.current || !canvasRef.current) return;
+      const interruption = sessionGeometryInterruption(activeSessionGeometryRef.current, {
+        orientation: currentOrientation(window.innerWidth, window.innerHeight),
+        surfaceRect: rectFromElement(canvasRef.current),
+      });
+      if (interruption) finishCapture(interruption);
+    };
+
+    const observer = new ResizeObserver(checkGeometry);
+    observer.observe(canvas);
+    window.addEventListener('resize', checkGeometry);
+    window.addEventListener('orientationchange', checkGeometry);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', checkGeometry);
+      window.removeEventListener('orientationchange', checkGeometry);
+    };
+  }, [capturing, capturingRef, finishCapture]);
+
   const stopCamera = (interruption: CaptureInterruptionReason | null = null) => {
     if (capturingRef.current) finishCapture(interruption);
     stopCameraPipeline();
@@ -597,12 +746,17 @@ export function EyeTrackingTestScreen({
 
   const startCapture = () => {
     setDrawerExpanded(false);
-    if (readingTextState !== 'ready') return;
+    if (readingTextState !== 'ready' || sessionStatus !== 'ready') return;
     // First capture of the session: collect the quick context before recording.
     if (shouldOpenContextForm()) return;
     const startSnapshot = buildCaptureStartSnapshot();
     if (!startSnapshot) return;
     if (!startCaptureLifecycle(startSnapshot)) return;
+    activeSessionGeometryRef.current = {
+      orientation: startSnapshot.environment.viewport.orientation,
+      surfaceRect: startSnapshot.environment.surfaceRect,
+    };
+    dispatchSession({ type: 'CAPTURE_STARTED' });
     // Freeze the stimulus geometry for the whole measurement window (the hook owns
     // the provenance snapshot; the font lock is the screen's stimulus concern).
     frozenFontPxRef.current = Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
@@ -750,8 +904,18 @@ export function EyeTrackingTestScreen({
     return (
       <CalibrationOverlay
         viewingDistanceCm={profile?.viewingDistanceCm || 40}
-        onComplete={() => setShowCalibration(false)}
-        onSkip={() => setShowCalibration(false)}
+        onComplete={() => {
+          setShowCalibration(false);
+          if (sessionState.phase === 'calibrating') {
+            dispatchSession({ type: 'CALIBRATION_ACCEPTED' });
+          }
+        }}
+        onSkip={() => {
+          setShowCalibration(false);
+          if (sessionState.phase === 'calibrating') {
+            dispatchSession({ type: 'CALIBRATION_SKIPPED' });
+          }
+        }}
         keepCameraOnClose
         surfaceRect={calibrationSurfaceRect ?? undefined}
         compactChrome={!isDesktopDiagnosticsLayout}
@@ -761,19 +925,27 @@ export function EyeTrackingTestScreen({
 
   const calibrated = isCalibrated();
   const accuracyDeg = getAccuracyDeg();
-  const canStartCapture = cameraState === 'running' && readingTextState === 'ready';
+  const canStartCapture = cameraState === 'running'
+    && readingTextState === 'ready'
+    && sessionStatus === 'ready';
   const captureBlockReason = readingTextState === 'loading'
     ? 'Aguardando texto de leitura por IA.'
     : readingTextState === 'error'
       ? (testMode === 'recall' ? recallFailure : readingFailure)
         ?? 'Texto de leitura indisponível; capture depois que a IA responder.'
-      : null;
+      : sessionState.blockReason
+        ?? (sessionStatus === 'calibrating'
+          ? 'Conclua ou pule a calibração para continuar.'
+          : sessionStatus === 'validating'
+            ? 'Inicie a câmera para validar o sinal.'
+            : null);
   const reportedCapture = captureResult?.capture ?? null;
   const captureSummary = reportedCapture
     ? summarizeReadingDynamics(reportedCapture.metrics, reportedCapture.coverage)
     : null;
   const workspaceSnapshot = buildAssessmentWorkspaceSnapshot({
     mode: testMode,
+    controllerStatus: sessionStatus,
     readingTextState,
     capturing,
     recallGenerating: recallGenState === 'generating',
@@ -955,15 +1127,30 @@ export function EyeTrackingTestScreen({
     { id: 'interpret', title: 'Como interpretar', content: <div className="text-xs text-slate-400 px-1">{interpretBody}</div> },
   ];
 
+  const switchSessionMode = (mode: 'capture' | 'recall') => {
+    if (mode === testMode || capturing) return;
+    switchMode(mode);
+    dispatchSession({ type: 'RESET', mode });
+    dispatchSession({ type: 'BEGIN' });
+    if (initialExploratory) {
+      dispatchSession({
+        type: 'READINESS_FAILED',
+        reason: 'Sessão iniciada como baseline exploratório.',
+        canRunExploratory: true,
+      });
+      dispatchSession({ type: 'RUN_EXPLORATORY' });
+    }
+  };
+
   const modeSwitch = (
     <div className="grid grid-cols-2 gap-1 bg-white/5 rounded-xl p-1">
       <button
-        onClick={() => switchMode('capture')}
+        onClick={() => switchSessionMode('capture')}
         disabled={capturing}
         className={`px-2 py-2 rounded-lg text-xs font-bold transition-colors ${testMode === 'capture' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-white/10'}`}
       >Captura simples</button>
       <button
-        onClick={() => switchMode('recall')}
+        onClick={() => switchSessionMode('recall')}
         disabled={capturing}
         className={`px-2 py-2 rounded-lg text-xs font-bold transition-colors ${testMode === 'recall' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-white/10'}`}
       >Leitura + Recall</button>
@@ -995,10 +1182,19 @@ export function EyeTrackingTestScreen({
     </div>
   );
 
+  const retryReadingContent = () => {
+    if (!initialExploratory) {
+      dispatchSession({ type: 'RESET', mode: testMode });
+      dispatchSession({ type: 'BEGIN' });
+    }
+    if (testMode === 'recall') retryRecallText();
+    else loadShortReadingContent();
+  };
+
   const readingRetryButton = readingTextState === 'error' ? (
     <button
       type="button"
-      onClick={testMode === 'recall' ? retryRecallText : loadShortReadingContent}
+      onClick={retryReadingContent}
       className="rounded-lg bg-amber-400/15 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-400/25"
     >
       Tentar gerar texto novamente
@@ -1267,7 +1463,13 @@ export function EyeTrackingTestScreen({
             {recallFailure ?? 'A captura ocular permanece preservada; só o questionário falhou.'}
           </p>
           <div className="flex flex-wrap justify-center gap-3">
-            <button onClick={retryRecallQuestions} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold">
+            <button
+              onClick={() => {
+                dispatchSession({ type: 'RETRY_RECALL' });
+                retryRecallQuestions();
+              }}
+              className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold"
+            >
               Tentar gerar questões novamente
             </button>
             <button onClick={dismissRecallError} className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold">Fechar</button>
@@ -1277,7 +1479,14 @@ export function EyeTrackingTestScreen({
       {recallQuiz && recallContent && (
         <div ref={recallQuizDialogRef} role="dialog" aria-modal="true" aria-labelledby="recall-quiz-title" tabIndex={-1} className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/95 p-4 overflow-y-auto">
           <h2 id="recall-quiz-title" className="sr-only">Questionário de recall</h2>
-          <RecallQuiz topic={recallContent.topic} questions={recallQuiz} onDone={handleQuizDone} />
+          <RecallQuiz
+            topic={recallContent.topic}
+            questions={recallQuiz}
+            onDone={(answers, score) => {
+              handleQuizDone(answers, score);
+              dispatchSession({ type: 'QUIZ_FINISHED' });
+            }}
+          />
         </div>
       )}
 
@@ -1292,7 +1501,10 @@ export function EyeTrackingTestScreen({
               recallOutcome={recallOutcome}
               recallPersistence={recallPersistence}
               captureSummary={captureSummary}
-              onRetrySave={retryCapturePersistence}
+              onRetrySave={() => {
+                dispatchSession({ type: 'RETRY_SAVE' });
+                retryCapturePersistence();
+              }}
               onRetryRecallSave={retryRecallPersistence}
               onClose={requestResultClose}
               onRestart={() => {
@@ -1301,7 +1513,6 @@ export function EyeTrackingTestScreen({
                   return;
                 }
                 closeResult();
-                startCapture();
               }}
             />
           </div>

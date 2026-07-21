@@ -6,7 +6,9 @@ export type CaptureInterruptionReason =
   | 'page-hidden-during-capture'
   | 'pagehide-during-capture'
   | 'navigation-during-capture'
-  | 'camera-stopped-during-capture';
+  | 'camera-stopped-during-capture'
+  | 'geometry-changed-during-capture'
+  | 'orientation-changed-during-capture';
 export type CaptureValidityReasonCode =
   | 'capture-duration-too-short'
   | 'capture-coverage-below-threshold'
@@ -218,6 +220,8 @@ const REASON_TEXT: Record<CaptureValidityReasonCode, string> = {
   'pagehide-during-capture': 'A página foi descarregada durante a captura',
   'navigation-during-capture': 'A tela de captura foi encerrada durante a medição',
   'camera-stopped-during-capture': 'A câmera foi parada durante a captura',
+  'geometry-changed-during-capture': 'A geometria da superfície mudou durante a captura',
+  'orientation-changed-during-capture': 'A orientação mudou durante a captura',
   'legacy-unassessed': 'Captura legada sem avaliação de validade',
 };
 
@@ -364,5 +368,7 @@ function isCaptureInterruptionReason(value: unknown): value is CaptureInterrupti
   return value === 'page-hidden-during-capture'
     || value === 'pagehide-during-capture'
     || value === 'navigation-during-capture'
-    || value === 'camera-stopped-during-capture';
+    || value === 'camera-stopped-during-capture'
+    || value === 'geometry-changed-during-capture'
+    || value === 'orientation-changed-during-capture';
 }
