@@ -18,8 +18,9 @@ test('isBlinking honors a custom threshold', () => {
   assert.equal(isBlinking(0.4, 0.8), false);
 });
 
-test('blink rejection gate is disabled by default for direct gaze fallback', () => {
-  assert.equal(shouldDropGazeForBlink(0.95), false);
-  assert.equal(shouldDropGazeForBlink(0.95, true), true);
-  assert.equal(shouldDropGazeForBlink(null, true), false);
+test('blink rejection gate drops blink-contaminated gaze by default', () => {
+  assert.equal(shouldDropGazeForBlink(0.95), true);
+  assert.equal(shouldDropGazeForBlink(BLINK_REJECT_THRESHOLD), false);
+  assert.equal(shouldDropGazeForBlink(null), false);
+  assert.equal(shouldDropGazeForBlink(0.95, false), false);
 });

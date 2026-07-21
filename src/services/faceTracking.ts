@@ -194,7 +194,7 @@ export function estimateGaze(videoElement: HTMLVideoElement, timestamp: number, 
 // gaze sample is dropped. Tuned for the MediaPipe eyeBlink* blendshapes, which run
 // ~0 when the eye is open and approach 1 during a full blink.
 export const BLINK_REJECT_THRESHOLD = 0.5;
-export const BLINK_REJECT_GATE_ENABLED = false;
+export const BLINK_REJECT_GATE_ENABLED = true;
 
 // Max of the left/right eyeBlink blendshapes for the most recent frame, or null when
 // no blendshapes are available. During a blink the iris drops/disappears and would
@@ -212,10 +212,10 @@ export function isBlinking(score: number | null, threshold: number = BLINK_REJEC
   return score != null && score > threshold;
 }
 
-// Emergency-safe gate for dropping gaze samples because of blink score. We keep the
-// blink measurement available, but the hard rejection is disabled by default until it
-// is tuned on real iPhone/Safari data; otherwise a high eyeBlink baseline can make the
-// live blue dot and reading metrics look dead even though gaze is flowing.
+// Shared gate for dropping gaze samples because of blink score. The gate is active by
+// default so blink-corrupted iris/features never feed calibration, capture or exercise
+// metrics. A null score remains fail-open, and callers/tests can explicitly disable the
+// gate if a future device-specific diagnostic requires it.
 export function shouldDropGazeForBlink(score: number | null, enabled: boolean = BLINK_REJECT_GATE_ENABLED): boolean {
   return enabled && isBlinking(score);
 }

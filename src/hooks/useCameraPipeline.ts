@@ -142,8 +142,8 @@ export function useCameraPipeline(options: UseCameraPipelineOptions): CameraPipe
     const gaze = estimateGaze(video, ts, ts);
     const faceFound = pose !== null;
     const eyesFound = gaze !== null;
-    // Blink score is measured, but hard rejection is disabled by default until tuned
-    // on real iPhone/Safari data. Coverage still counts the face either way.
+    // Blink-corrupted gaze is rejected, while coverage still counts the detected face.
+    // Missing blendshape data remains fail-open so detection does not look dead.
     const blinkScore = getBlinkScore();
     const blinking = shouldDropGazeForBlink(blinkScore);
 

@@ -273,9 +273,9 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           // During a blink the iris drops/disappears: both the gaze features and the
           // iris-based IPD are corrupted, so the frame must not feed the ridge fit,
           // the validation error, or the distance anchor. Head pose (mesh-wide) stays.
-          // Rejection sits behind the shared BLINK_REJECT_GATE_ENABLED kill-switch
-          // (off until tuned on real data): with a high eyeBlink baseline a hard
-          // gate would collect zero samples and hang the calibration on point 1.
+          // The shared gate rejects blink-corrupted samples before fit/validation;
+          // the point timeout turns an abnormally high eyeBlink baseline into an
+          // explicit rejected attempt instead of silently training a distorted model.
           const blinking = shouldDropGazeForBlink(getBlinkScore());
           if (feat && !blinking) {
             // detect() just ran inside extractGazeFeatures, so the landmarks are fresh.

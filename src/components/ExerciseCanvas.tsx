@@ -249,9 +249,8 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
              setStimulusDrift(stimulusSnap.inDrift);
            }
            const distanceOk = distanceWithinAnchorTolerance(dEst, anchor?.distanceCm ?? null);
-           // Blink score is measured, but hard rejection sits behind the shared
-           // BLINK_REJECT_GATE_ENABLED kill-switch (off until tuned on real data —
-           // a high eyeBlink baseline would otherwise kill a flowing signal).
+           // Reject blink-corrupted gaze before exercise capture/projection. Missing
+           // blendshape data remains fail-open through the shared gate helper.
            const blinking = shouldDropGazeForBlink(getBlinkScore());
            // Capture gaze for exercises that consume it (e.g. assisted reading).
            exContext.latestGaze = blinking ? null : estimateGaze(videoRef.current, detectTs, exContext.timeMs);
