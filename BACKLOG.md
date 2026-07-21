@@ -116,6 +116,7 @@ Evidencia fresca da arvore integrada e do runtime:
 - `real-tab-hidden` segue bloqueado pelo Chromium headless; o check independente
   de `pagehide` passou e invalidou a captura sem retomada/concatenacao.
 - `linhafixa.service`: ativo; localhost:3060 e publico `/gaze/`: 200 `text/html`.
+- smoke do Caderno no endpoint publico: 63/63, sem erro de runtime ou overflow.
 
 Ledger visual referencia + render:
 
