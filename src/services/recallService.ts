@@ -1,5 +1,10 @@
 import { apiUrl } from './apiBase';
 import { RecallQuestion } from '@/types';
+import {
+  BackendRequestError,
+  backendFailureFromResponse,
+  networkBackendFailure,
+} from './apiFailure';
 
 export interface RecallContent {
   topic: string;
@@ -45,31 +50,37 @@ export function shuffleQuestionOptions(
 }
 
 export async function getRecallText(): Promise<RecallContent> {
-  const response = await fetch(apiUrl('/api/generateRecallText'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({})
-  });
-  if (response.ok) {
-    const data = await response.json();
+  try {
+    const response = await fetch(apiUrl('/api/generateRecallText'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) throw await backendFailureFromResponse(response);
+    const data = await response.json().catch(() => null);
     if (typeof data?.text === 'string' && data.text.trim()) {
       return { topic: typeof data.topic === 'string' ? data.topic : 'Leitura', text: data.text.trim() };
     }
+    throw new BackendRequestError('invalid-payload', response.status);
+  } catch (error) {
+    throw networkBackendFailure(error);
   }
-  throw new Error('Não foi possível gerar o texto de recall por IA.');
 }
 
 export async function getRecallQuestions(text: string): Promise<RecallQuestion[]> {
-  const response = await fetch(apiUrl('/api/generateRecallQuestions'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text })
-  });
-  if (response.ok) {
-    const data = await response.json();
+  try {
+    const response = await fetch(apiUrl('/api/generateRecallQuestions'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) throw await backendFailureFromResponse(response);
+    const data = await response.json().catch(() => null);
     if (isValidRecallQuestions(data)) {
       return shuffleQuestionOptions(data.questions);
     }
+    throw new BackendRequestError('invalid-payload', response.status);
+  } catch (error) {
+    throw networkBackendFailure(error);
   }
-  throw new Error('Não foi possível gerar as questões de recall por IA.');
 }

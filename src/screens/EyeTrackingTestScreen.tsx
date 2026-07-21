@@ -52,6 +52,8 @@ import {
 } from '@/services/ocularSignalContract';
 import { buildAssessmentWorkspaceSnapshot } from '@/services/assessmentAdapter';
 import { resolveDeviceClass } from '@/services/deviceClass';
+import { backendFailureMessage, networkBackendFailure } from '@/services/apiFailure';
+import { hasUnsavedAssessmentResult } from '@/services/assessmentSessionController';
 
 // Standalone diagnostics screen: shows reading text, runs the front camera and
 // overlays a live gaze dot + detection status so we can validate that the eyes are
@@ -132,6 +134,8 @@ export function EyeTrackingTestScreen({
   const [live, setLive] = useState<LiveSnapshot>(EMPTY_LIVE);
   const [text, setText] = useState('Carregando texto de leitura…');
   const [readingTextState, setReadingTextState] = useState<ReadingTextState>('loading');
+  const [readingFailure, setReadingFailure] = useState<string | null>(null);
+  const [showUnsavedExit, setShowUnsavedExit] = useState(false);
   const [motionQuality, setMotionQuality] = useState<MotionQuality>(() => getMotionQuality());
   const [liveSignal, setLiveSignal] = useState<FunctionalVisualSignalSummary>(EMPTY_VISUAL_SIGNAL);
   const [conditions, setConditions] = useState<ValidationConditions>({
@@ -172,11 +176,17 @@ export function EyeTrackingTestScreen({
     recallContent,
     recallQuiz,
     recallGenState,
+    recallFailure,
     recallOutcome,
+    recallPersistence,
+    pendingRecallResult,
     switchMode,
     registerShortText,
     noteCaptureFinished,
     handleQuizDone,
+    retryRecallText,
+    retryRecallQuestions,
+    retryRecallPersistence,
     dismissRecallError,
     clearRecallOutcome,
   } = useRecallFlow({
@@ -219,6 +229,23 @@ export function EyeTrackingTestScreen({
     },
   });
 
+  const hasUnsavedResult = hasUnsavedAssessmentResult(
+    captureResult?.persistence ?? null,
+    recallPersistence,
+  );
+  const closeResult = () => {
+    clearCaptureResult();
+    clearRecallOutcome();
+    setShowUnsavedExit(false);
+  };
+  const requestResultClose = () => {
+    if (hasUnsavedResult) {
+      setShowUnsavedExit(true);
+      return;
+    }
+    closeResult();
+  };
+
   const [calibrationSurfaceRect, setCalibrationSurfaceRect] = useState<SurfaceRect | null>(null);
   const contextDialogRef = useModalDialog({
     open: contextFormOpen,
@@ -233,7 +260,11 @@ export function EyeTrackingTestScreen({
   });
   const captureReportDialogRef = useModalDialog({
     open: captureResult !== null && recallQuiz === null && recallGenState === 'idle',
-    onEscape: () => { clearCaptureResult(); clearRecallOutcome(); },
+    onEscape: requestResultClose,
+  });
+  const unsavedExitDialogRef = useModalDialog({
+    open: showUnsavedExit,
+    onEscape: () => setShowUnsavedExit(false),
   });
   const capturesDialogRef = useModalDialog({
     open: showCaptures,
@@ -259,6 +290,15 @@ export function EyeTrackingTestScreen({
   useEffect(() => { textRef.current = text; layoutRef.current = null; }, [text]);
 
   useEffect(() => {
+    if (!hasUnsavedResult) return;
+    const preventUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener('beforeunload', preventUnload);
+    return () => window.removeEventListener('beforeunload', preventUnload);
+  }, [hasUnsavedResult]);
+
+  useEffect(() => {
     const updateViewport = () => {
       setViewportWidth(window.innerWidth);
       setViewportHeight(window.innerHeight);
@@ -274,19 +314,23 @@ export function EyeTrackingTestScreen({
     };
   }, []);
 
+  const loadShortReadingContent = () => {
+    setReadingTextState('loading');
+    setReadingFailure(null);
+    void getReadingContent('facil', READING_TARGET_DURATION_SEC)
+      .then(generatedText => registerShortText(generatedText.trim()))
+      .catch(error => {
+        const message = backendFailureMessage(networkBackendFailure(error));
+        setReadingTextState('error');
+        setReadingFailure(message);
+        setText(message);
+      });
+  };
+
   // Load reading content once. The generated short text is registered with the
   // recall flow, which restores it as the displayed text while in 'capture' mode.
   useEffect(() => {
-    getReadingContent('facil', READING_TARGET_DURATION_SEC)
-      .then(generatedText => {
-        const cleanText = generatedText.trim();
-        if (!cleanText) throw new Error('empty generated reading text');
-        registerShortText(cleanText);
-      })
-      .catch(() => {
-        setText('Não foi possível gerar o texto de leitura por IA.');
-        setReadingTextState('error');
-      });
+    loadShortReadingContent();
   // registerShortText is intentionally not a dependency; this load runs once on mount.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -597,6 +641,20 @@ export function EyeTrackingTestScreen({
     }
   };
 
+  const exportUnsavedResult = () => {
+    const json = JSON.stringify({
+      capture: captureResult?.capture ?? null,
+      recall: pendingRecallResult,
+    }, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `linhafixa-resultado-local-${Date.now()}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   const diagnosticsLayout = diagnosticsLayoutMode({ viewportWidth, hasTouch: IS_MOBILE });
   const isDesktopDiagnosticsLayout = diagnosticsLayout === 'desktop';
   const drawerVariant: DrawerVariant = isLandscape ? 'side' : 'sheet';
@@ -707,7 +765,8 @@ export function EyeTrackingTestScreen({
   const captureBlockReason = readingTextState === 'loading'
     ? 'Aguardando texto de leitura por IA.'
     : readingTextState === 'error'
-      ? 'Texto de leitura indisponível; capture depois que a IA responder.'
+      ? (testMode === 'recall' ? recallFailure : readingFailure)
+        ?? 'Texto de leitura indisponível; capture depois que a IA responder.'
       : null;
   const reportedCapture = captureResult?.capture ?? null;
   const captureSummary = reportedCapture
@@ -936,6 +995,16 @@ export function EyeTrackingTestScreen({
     </div>
   );
 
+  const readingRetryButton = readingTextState === 'error' ? (
+    <button
+      type="button"
+      onClick={testMode === 'recall' ? retryRecallText : loadShortReadingContent}
+      className="rounded-lg bg-amber-400/15 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-400/25"
+    >
+      Tentar gerar texto novamente
+    </button>
+  ) : null;
+
   // Ações primárias na faixa colapsada: um toque sem abrir a gaveta. Versão
   // compacta (ícone) dos botões grandes que o desktop mantém no <aside>.
   const drawerActions = (
@@ -1127,6 +1196,7 @@ export function EyeTrackingTestScreen({
                   {captureBlockReason && (
                     <p className="text-xs text-amber-300 font-medium text-center px-2">{captureBlockReason}</p>
                   )}
+                  {readingRetryButton}
 
                   {capturesButton}
 
@@ -1146,6 +1216,7 @@ export function EyeTrackingTestScreen({
                 {captureBlockReason && (
                   <p className="text-xs text-amber-300 font-medium text-center px-2">{captureBlockReason}</p>
                 )}
+                {readingRetryButton}
                 {capturesButton}
                 {stopCameraButton}
               </DiagnosticsDrawer>
@@ -1192,8 +1263,15 @@ export function EyeTrackingTestScreen({
       {recallGenState === 'error' && (
         <div ref={recallErrorDialogRef} role="dialog" aria-modal="true" aria-labelledby="recall-error-title" tabIndex={-1} className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/90 p-6 text-center">
           <h2 id="recall-error-title" className="text-rose-300 font-bold mb-2">Não foi possível gerar as questões.</h2>
-          <p className="text-slate-400 text-sm mb-6 max-w-md">A captura da leitura foi salva normalmente; só o questionário falhou. Tente outra rodada.</p>
-          <button onClick={dismissRecallError} className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold">Fechar</button>
+          <p className="text-slate-400 text-sm mb-6 max-w-md">
+            {recallFailure ?? 'A captura ocular permanece preservada; só o questionário falhou.'}
+          </p>
+          <div className="flex flex-wrap justify-center gap-3">
+            <button onClick={retryRecallQuestions} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold">
+              Tentar gerar questões novamente
+            </button>
+            <button onClick={dismissRecallError} className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold">Fechar</button>
+          </div>
         </div>
       )}
       {recallQuiz && recallContent && (
@@ -1212,11 +1290,63 @@ export function EyeTrackingTestScreen({
               capture={reportedCapture}
               persistence={captureResult.persistence}
               recallOutcome={recallOutcome}
+              recallPersistence={recallPersistence}
               captureSummary={captureSummary}
               onRetrySave={retryCapturePersistence}
-              onClose={() => { clearCaptureResult(); clearRecallOutcome(); }}
-              onRestart={() => { clearCaptureResult(); clearRecallOutcome(); startCapture(); }}
+              onRetryRecallSave={retryRecallPersistence}
+              onClose={requestResultClose}
+              onRestart={() => {
+                if (hasUnsavedResult) {
+                  setShowUnsavedExit(true);
+                  return;
+                }
+                closeResult();
+                startCapture();
+              }}
             />
+          </div>
+        </div>
+      )}
+
+      {showUnsavedExit && (
+        <div className="absolute inset-0 z-[70] flex items-center justify-center bg-slate-950/90 p-6">
+          <div
+            ref={unsavedExitDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="unsaved-result-title"
+            tabIndex={-1}
+            className="w-full max-w-lg rounded-3xl border border-rose-400/30 bg-slate-800 p-6 shadow-2xl"
+          >
+            <h2 id="unsaved-result-title" className="text-2xl font-bold text-white">
+              Há resultado ainda não salvo
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-slate-300">
+              Tente salvar novamente ou exporte o conteúdo exato que continua em memória antes de sair.
+            </p>
+            <div className="mt-6 grid gap-3">
+              <button
+                type="button"
+                onClick={() => setShowUnsavedExit(false)}
+                className="rounded-xl bg-indigo-600 px-5 py-3 font-bold text-white hover:bg-indigo-500"
+              >
+                Continuar nesta tela
+              </button>
+              <button
+                type="button"
+                onClick={exportUnsavedResult}
+                className="rounded-xl bg-white/10 px-5 py-3 font-bold text-white hover:bg-white/20"
+              >
+                Exportar resultado local
+              </button>
+              <button
+                type="button"
+                onClick={closeResult}
+                className="rounded-xl px-5 py-3 font-bold text-rose-200 hover:bg-rose-500/15"
+              >
+                Sair mesmo assim
+              </button>
+            </div>
           </div>
         </div>
       )}

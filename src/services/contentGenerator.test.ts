@@ -4,28 +4,46 @@ import { getReadingContent } from './contentGenerator';
 
 const originalFetch = globalThis.fetch;
 
-test('getReadingContent returns text from the API', async () => {
-  globalThis.fetch = async () => ({
-    ok: true,
-    json: async () => ({ text: 'Texto novo gerado por IA.' }),
-  } as Response);
+test('getReadingContent sends the exact generation contract and returns text', async () => {
+  let capturedUrl = '';
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = async (url, init) => {
+    capturedUrl = String(url);
+    capturedInit = init;
+    return new Response(JSON.stringify({ text: 'Texto novo gerado por IA.' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
 
   try {
-    assert.equal(await getReadingContent('facil'), 'Texto novo gerado por IA.');
+    assert.equal(await getReadingContent('dificil', 37), 'Texto novo gerado por IA.');
+    assert.equal(new URL(capturedUrl, 'https://gaze.local').pathname.endsWith('/api/generateReadingContent'), true);
+    assert.deepEqual(JSON.parse(String(capturedInit?.body)), {
+      complexity: 'dificil',
+      targetDurationSec: 37,
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
 test('getReadingContent rejects instead of returning repeated fallback text when API fails', async () => {
-  globalThis.fetch = async () => ({
-    ok: false,
-    status: 503,
-    json: async () => ({ error: 'OPENAI_API_KEY_MISSING' }),
-  } as Response);
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ error: 'OPENAI_API_KEY_MISSING' }),
+    { status: 503, headers: { 'content-type': 'application/json' } },
+  );
 
   try {
-    await assert.rejects(() => getReadingContent('facil'), /Não foi possível gerar o texto/);
+    await assert.rejects(
+      () => getReadingContent('facil'),
+      (error: unknown) => (
+        typeof error === 'object'
+        && error !== null
+        && 'kind' in error
+        && error.kind === 'configuration'
+      ),
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

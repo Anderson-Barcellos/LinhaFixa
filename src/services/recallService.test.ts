@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isValidRecallQuestions, shuffleQuestionOptions } from './recallService';
+import {
+  getRecallQuestions,
+  getRecallText,
+  isValidRecallQuestions,
+  shuffleQuestionOptions,
+} from './recallService';
 import { RecallQuestion } from '@/types';
 
 const makeQuestion = (i: number): RecallQuestion => ({
@@ -11,6 +16,55 @@ const makeQuestion = (i: number): RecallQuestion => ({
 });
 
 const validPayload = { questions: Array.from({ length: 6 }, (_, i) => makeQuestion(i)) };
+const originalFetch = globalThis.fetch;
+
+test('recall requests preserve the exact backend payloads', async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url: String(url), init });
+    if (String(url).includes('generateRecallText')) {
+      return new Response(JSON.stringify({ topic: 'Tema', text: 'Texto realmente lido.' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify(validPayload), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  try {
+    await getRecallText();
+    await getRecallQuestions('Texto realmente lido.');
+    assert.deepEqual(JSON.parse(String(requests[0].init?.body)), {});
+    assert.deepEqual(JSON.parse(String(requests[1].init?.body)), {
+      text: 'Texto realmente lido.',
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('recall rejects a successful malformed question payload as invalid-payload', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ questions: [] }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+  try {
+    await assert.rejects(
+      () => getRecallQuestions('Texto.'),
+      (error: unknown) => (
+        typeof error === 'object'
+        && error !== null
+        && 'kind' in error
+        && error.kind === 'invalid-payload'
+      ),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test('isValidRecallQuestions accepts exactly 6 questions with 5 options each', () => {
   assert.equal(isValidRecallQuestions(validPayload), true);

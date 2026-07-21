@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { getRecallText, getRecallQuestions, type RecallContent } from '@/services/recallService';
 import { saveRecallTest } from '@/services/storage';
+import { backendFailureMessage, networkBackendFailure } from '@/services/apiFailure';
 import type { CaptureInterruptionReason } from '@/services/captureValidity';
 import type { CaptureFinishedInfo } from './useCaptureLifecycle';
 import type { PreTestContext, RecallQuestion, RecallTestResult } from '@/types';
@@ -82,6 +83,18 @@ export function buildRecallTestResult(input: {
   };
 }
 
+export async function persistRecallResult(
+  result: RecallTestResult,
+  save: (record: RecallTestResult) => Promise<void> = saveRecallTest,
+): Promise<'saved' | 'failed'> {
+  try {
+    await save(result);
+    return 'saved';
+  } catch {
+    return 'failed';
+  }
+}
+
 export interface UseRecallFlowOptions {
   initialMode?: RecallTestMode;
   // Lazily read so callers can wire a ref that is declared after this hook
@@ -99,7 +112,10 @@ export interface RecallFlowHandle {
   recallContent: RecallContent | null;
   recallQuiz: RecallQuestion[] | null;
   recallGenState: RecallGenState;
+  recallFailure: string | null;
   recallOutcome: RecallOutcome | null;
+  recallPersistence: 'idle' | 'saving' | 'saved' | 'failed';
+  pendingRecallResult: RecallTestResult | null;
   switchMode: (mode: RecallTestMode) => void;
   // Store the short capture-mode passage; restores it as the displayed text when
   // (and only when) the current mode is 'capture'.
@@ -108,6 +124,9 @@ export interface RecallFlowHandle {
   // clean recall capture, generates the quiz over the text that was on screen.
   noteCaptureFinished: (info: CaptureFinishedInfo) => void;
   handleQuizDone: (answers: number[], score: number) => void;
+  retryRecallText: () => void;
+  retryRecallQuestions: () => void;
+  retryRecallPersistence: () => void;
   dismissRecallError: () => void;
   clearRecallOutcome: () => void;
 }
@@ -124,8 +143,15 @@ export function useRecallFlow(options: UseRecallFlowOptions): RecallFlowHandle {
   const shortTextRef = useRef<string | null>(null);
   const [recallQuiz, setRecallQuiz] = useState<RecallQuestion[] | null>(null);
   const [recallGenState, setRecallGenState] = useState<RecallGenState>('idle');
+  const [recallFailure, setRecallFailure] = useState<string | null>(null);
   const [recallOutcome, setRecallOutcome] = useState<RecallOutcome | null>(null);
+  const [recallPersistence, setRecallPersistence] = useState<
+    RecallFlowHandle['recallPersistence']
+  >('idle');
+  const [pendingRecallResult, setPendingRecallResult] = useState<RecallTestResult | null>(null);
   const lastRecallCaptureRef = useRef<RecallCaptureLink | null>(null);
+  const lastRecallQuestionTextRef = useRef<string | null>(null);
+  const pendingRecallResultRef = useRef<RecallTestResult | null>(null);
 
   // Latest committed callbacks: async continuations and capture-finish reactions
   // read these refs instead of a render-frozen closure.
@@ -140,6 +166,7 @@ export function useRecallFlow(options: UseRecallFlowOptions): RecallFlowHandle {
 
   const loadRecallText = () => {
     onReadingTextChangeRef.current('Gerando texto de leitura para recall…', 'loading');
+    setRecallFailure(null);
     setRecallContent(null);
     recallContentRef.current = null;
     getRecallText()
@@ -148,9 +175,33 @@ export function useRecallFlow(options: UseRecallFlowOptions): RecallFlowHandle {
         recallContentRef.current = content;
         onReadingTextChangeRef.current(content.text, 'ready');
       })
-      .catch(() => {
-        onReadingTextChangeRef.current('Não foi possível gerar o texto de recall por IA.', 'error');
+      .catch(error => {
+        const message = backendFailureMessage(networkBackendFailure(error));
+        setRecallFailure(message);
+        onReadingTextChangeRef.current(message, 'error');
       });
+  };
+
+  const loadRecallQuestions = (text: string) => {
+    lastRecallQuestionTextRef.current = text;
+    setRecallFailure(null);
+    setRecallGenState('generating');
+    getRecallQuestions(text)
+      .then(questions => {
+        setRecallQuiz(questions);
+        setRecallGenState('idle');
+      })
+      .catch(error => {
+        setRecallFailure(backendFailureMessage(networkBackendFailure(error)));
+        setRecallGenState('error');
+      });
+  };
+
+  const runRecallPersistence = (result: RecallTestResult) => {
+    pendingRecallResultRef.current = result;
+    setPendingRecallResult(result);
+    setRecallPersistence('saving');
+    void persistRecallResult(result).then(setRecallPersistence);
   };
 
   const switchMode = (mode: RecallTestMode) => {
@@ -167,9 +218,9 @@ export function useRecallFlow(options: UseRecallFlowOptions): RecallFlowHandle {
 
   useEffect(() => {
     if (initialMode === 'recall') {
-      switchMode('recall');
+      loadRecallText();
     }
-  // switchMode is intentionally not a dependency; this sync is only for the initial mount mode.
+  // loadRecallText is intentionally not a dependency; this sync is only for the initial mount mode.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialMode]);
 
@@ -190,10 +241,7 @@ export function useRecallFlow(options: UseRecallFlowOptions): RecallFlowHandle {
       mode: testModeRef.current,
       hasRecallContent: content !== null,
     })) return;
-    setRecallGenState('generating');
-    getRecallQuestions(content.text)
-      .then(questions => { setRecallQuiz(questions); setRecallGenState('idle'); })
-      .catch(() => setRecallGenState('error'));
+    loadRecallQuestions(content.text);
   };
 
   const handleQuizDone = (answers: number[], score: number) => {
@@ -207,7 +255,7 @@ export function useRecallFlow(options: UseRecallFlowOptions): RecallFlowHandle {
         lastCapture: lastRecallCaptureRef.current,
         context: getPreTestContextRef.current(),
       });
-      saveRecallTest(result).catch(() => {/* keep the on-screen result */});
+      runRecallPersistence(result);
       setRecallOutcome({ score, total: recallQuiz.length, topic: content.topic });
     }
     setRecallQuiz(null);
@@ -220,12 +268,31 @@ export function useRecallFlow(options: UseRecallFlowOptions): RecallFlowHandle {
     recallContent,
     recallQuiz,
     recallGenState,
+    recallFailure,
     recallOutcome,
+    recallPersistence,
+    pendingRecallResult,
     switchMode,
     registerShortText,
     noteCaptureFinished,
     handleQuizDone,
+    retryRecallText: loadRecallText,
+    retryRecallQuestions: () => {
+      if (lastRecallQuestionTextRef.current) {
+        loadRecallQuestions(lastRecallQuestionTextRef.current);
+      }
+    },
+    retryRecallPersistence: () => {
+      if (pendingRecallResultRef.current && recallPersistence === 'failed') {
+        runRecallPersistence(pendingRecallResultRef.current);
+      }
+    },
     dismissRecallError: () => setRecallGenState('idle'),
-    clearRecallOutcome: () => setRecallOutcome(null),
+    clearRecallOutcome: () => {
+      setRecallOutcome(null);
+      setRecallPersistence('idle');
+      setPendingRecallResult(null);
+      pendingRecallResultRef.current = null;
+    },
   };
 }

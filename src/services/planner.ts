@@ -1,21 +1,42 @@
-import { TreatmentPlanResponse, PreTestContext, UserProfile, SessionResult } from '@/types';
-import { checkContextSafety } from './safety';
+import type {
+  PlanOrigin,
+  PreTestContext,
+  SessionResult,
+  TreatmentPlanResponse,
+  UserProfile,
+} from '@/types';
 import { apiUrl } from './apiBase';
+import {
+  BackendRequestError,
+  backendFailureFromResponse,
+  backendFailureMessage,
+  networkBackendFailure,
+  type BackendFailureKind,
+} from './apiFailure';
+import { checkContextSafety } from './safety';
 
-// Deterministic, offline-safe plan used as a fallback whenever the AI planner is
-// unavailable (no API key, network error, or invalid response).
-function buildFallbackPlan(profile: UserProfile): TreatmentPlanResponse {
+export type GeneratedTreatmentPlan = TreatmentPlanResponse & {
+  origin: PlanOrigin;
+  fallbackFailure: BackendFailureKind | null;
+  fallbackMessage: string | null;
+};
+
+function buildFallbackPlan(
+  profile: UserProfile,
+  fallbackFailure: BackendFailureKind,
+  fallbackMessage: string,
+): GeneratedTreatmentPlan {
   return {
-    sessionTitle: "Treino Básico de Mobilidade",
+    sessionTitle: 'Treino Básico de Mobilidade',
     safetyStatus: {
       allowTraining: true,
-      reason: "Sintomas em nível aceitável.",
+      reason: 'Sintomas em nível aceitável.',
       recommendPause: false,
-      recommendProfessionalReview: false
+      recommendProfessionalReview: false,
     },
     exercises: [
       {
-        exerciseId: "fixation",
+        exerciseId: 'fixation',
         durationSec: 20,
         difficulty: 1,
         parameters: {
@@ -24,13 +45,13 @@ function buildFallbackPlan(profile: UserProfile): TreatmentPlanResponse {
           amplitudeDeg: 0,
           lineSpacingMultiplier: 1,
           contrastMode: profile.contrastPreference,
-          durationSec: 20
+          durationSec: 20,
         },
-        rationalePtBR: "Aquecimento: fixe o olhar no ponto central e toque na tela quando ele mudar de cor.",
-        stopRules: ["Excesso de tontura", "Náusea"]
+        rationalePtBR: 'Aquecimento: fixe o olhar no ponto central e toque na tela quando ele mudar de cor.',
+        stopRules: ['Excesso de tontura', 'Náusea'],
       },
       {
-        exerciseId: "saccades",
+        exerciseId: 'saccades',
         durationSec: 30,
         difficulty: 1,
         parameters: {
@@ -39,13 +60,13 @@ function buildFallbackPlan(profile: UserProfile): TreatmentPlanResponse {
           amplitudeDeg: 15,
           lineSpacingMultiplier: 1,
           contrastMode: profile.contrastPreference,
-          durationSec: 30
+          durationSec: 30,
         },
-        rationalePtBR: "Acompanhe o ponto com os olhos enquanto ele pula, sem mover a cabeça.",
-        stopRules: ["Visão dupla nova", "Fadiga extrema"]
+        rationalePtBR: 'Acompanhe o ponto com os olhos enquanto ele pula, sem mover a cabeça.',
+        stopRules: ['Visão dupla nova', 'Fadiga extrema'],
       },
       {
-        exerciseId: "assistedReading",
+        exerciseId: 'assistedReading',
         durationSec: 60,
         difficulty: 1,
         parameters: {
@@ -55,71 +76,80 @@ function buildFallbackPlan(profile: UserProfile): TreatmentPlanResponse {
           lineSpacingMultiplier: 1.5,
           contrastMode: profile.contrastPreference,
           durationSec: 60,
-          textComplexity: "facil"
+          textComplexity: 'facil',
         },
-        rationalePtBR: "Leitura guiada de texto gerado por IA para treinar varredura visual e ritmo.",
-        stopRules: ["Excesso de borramento ocular"]
-      }
+        rationalePtBR: 'Leitura guiada de texto gerado por IA para treinar varredura visual e ritmo.',
+        stopRules: ['Excesso de borramento ocular'],
+      },
     ],
-    patientFeedbackPtBR: "Excelente dedicação até agora. Lembre-se de manter a cabeça parada.",
-    clinicianSummaryPtBR: "Protocolo padrão iniciado devido a histórico adequado ou ausência de histórico crítico."
+    patientFeedbackPtBR: 'Excelente dedicação até agora. Lembre-se de manter a cabeça parada.',
+    clinicianSummaryPtBR: 'Protocolo padrão iniciado devido a histórico adequado ou ausência de histórico crítico.',
+    origin: 'local-fallback',
+    fallbackFailure,
+    fallbackMessage,
   };
 }
 
-function blockedPlan(reason?: string): TreatmentPlanResponse {
+function blockedPlan(reason?: string): GeneratedTreatmentPlan {
   return {
-    sessionTitle: "Sessão Interrompida",
+    sessionTitle: 'Sessão Interrompida',
     safetyStatus: {
       allowTraining: false,
-      reason: reason || "Sensação relatada muito baixa antes do treino.",
+      reason: reason || 'Sensação relatada muito baixa antes do treino.',
       recommendPause: true,
-      recommendProfessionalReview: true
+      recommendProfessionalReview: true,
     },
     exercises: [],
-    patientFeedbackPtBR: "Notamos que você não está se sentindo bem. Por segurança, recomendamos não treinar agora.",
-    clinicianSummaryPtBR: "Usuário relatou sensação subjetiva mínima (1/5) no contexto pré-teste. Treino bloqueado pelo sistema."
+    patientFeedbackPtBR: 'Notamos que você não está se sentindo bem. Por segurança, recomendamos não treinar agora.',
+    clinicianSummaryPtBR: 'Usuário relatou sensação subjetiva mínima (1/5) no contexto pré-teste. Treino bloqueado pelo sistema.',
+    origin: 'safety-block',
+    fallbackFailure: null,
+    fallbackMessage: null,
   };
 }
 
-// Minimal shape validation so a malformed AI response never breaks the player.
-function isValidPlan(p: any): p is TreatmentPlanResponse {
-  return p
-    && typeof p.sessionTitle === 'string'
-    && p.safetyStatus
-    && typeof p.safetyStatus.allowTraining === 'boolean'
-    && Array.isArray(p.exercises)
-    && p.exercises.every((e: any) => e && typeof e.exerciseId === 'string' && e.parameters);
+function isValidPlan(plan: unknown): plan is TreatmentPlanResponse {
+  const candidate = plan as TreatmentPlanResponse | null;
+  return !!candidate
+    && typeof candidate.sessionTitle === 'string'
+    && !!candidate.safetyStatus
+    && typeof candidate.safetyStatus.allowTraining === 'boolean'
+    && Array.isArray(candidate.exercises)
+    && candidate.exercises.every(exercise => (
+      !!exercise
+      && typeof exercise.exerciseId === 'string'
+      && !!exercise.parameters
+    ));
 }
 
 export async function generateTreatmentPlan(
   profile: UserProfile,
   context: PreTestContext,
-  history: SessionResult[]
-): Promise<TreatmentPlanResponse> {
-  // Deterministic safety gate ALWAYS runs first and is never delegated to the AI.
+  history: SessionResult[],
+): Promise<GeneratedTreatmentPlan> {
   const safety = checkContextSafety(context);
-  if (!safety.safe) {
-    return blockedPlan(safety.reason);
-  }
+  if (!safety.safe) return blockedPlan(safety.reason);
 
-  // Try the AI planner (OpenAI, proxied by the server). Falls back deterministically.
   try {
-    const res = await fetch(apiUrl('/api/generatePlan'), {
+    const response = await fetch(apiUrl('/api/generatePlan'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile, context, history })
+      body: JSON.stringify({ profile, context, history }),
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (isValidPlan(data?.plan)) {
-        // Re-assert the safety gate even on AI output.
-        if (!data.plan.safetyStatus.allowTraining) return blockedPlan();
-        return data.plan as TreatmentPlanResponse;
-      }
+    if (!response.ok) throw await backendFailureFromResponse(response);
+    const data = await response.json().catch(() => null) as { plan?: unknown } | null;
+    if (!isValidPlan(data?.plan)) {
+      throw new BackendRequestError('invalid-payload', response.status);
     }
-  } catch (e) {
-    console.warn("Planejador de IA indisponível, usando plano padrão offline.", e);
+    if (!data.plan.safetyStatus.allowTraining) return blockedPlan(data.plan.safetyStatus.reason);
+    return {
+      ...data.plan,
+      origin: 'ai',
+      fallbackFailure: null,
+      fallbackMessage: null,
+    };
+  } catch (error) {
+    const failure = networkBackendFailure(error);
+    return buildFallbackPlan(profile, failure.kind, backendFailureMessage(failure));
   }
-
-  return buildFallbackPlan(profile);
 }

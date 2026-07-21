@@ -4,6 +4,7 @@ import type { CaptureValiditySnapshot } from '@/services/captureValidity';
 
 export type DeviceClass = 'phone' | 'tablet' | 'desktop';
 export type DeviceClassSource = 'confirmed' | 'suggested' | 'legacy-inferred';
+export type PlanOrigin = 'ai' | 'local-fallback' | 'safety-block' | 'library';
 
 export interface UserProfile {
   name: string;

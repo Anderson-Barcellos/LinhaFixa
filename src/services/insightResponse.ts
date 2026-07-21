@@ -1,17 +1,24 @@
-// Turns the /api/generateInsight HTTP outcome into the message shown in the
-// dashboard card. Pure so the 429/erro/sucesso branches stay testable.
+import { apiUrl } from './apiBase';
+import {
+  BackendRequestError,
+  backendFailureFromResponse,
+  networkBackendFailure,
+} from './apiFailure';
 
-const FALLBACK_MESSAGE = 'Não foi possível gerar a análise no momento.';
-const RATE_LIMIT_MESSAGE =
-  'Muitas gerações em sequência — aguarde alguns minutos e tente novamente.';
-
-export function interpretInsightResponse(
-  status: number,
-  body: Record<string, unknown> | null,
-): string {
-  if (status === 429) return RATE_LIMIT_MESSAGE;
-  if (status >= 200 && status < 300 && typeof body?.text === 'string' && body.text.trim()) {
-    return body.text;
+export async function requestGeneratedInsight(sessionSummary: unknown): Promise<string> {
+  try {
+    const response = await fetch(apiUrl('/api/generateInsight'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionSummary }),
+    });
+    if (!response.ok) throw await backendFailureFromResponse(response);
+    const body = await response.json().catch(() => null) as { text?: unknown } | null;
+    if (typeof body?.text !== 'string' || !body.text.trim()) {
+      throw new BackendRequestError('invalid-payload', response.status);
+    }
+    return body.text.trim();
+  } catch (error) {
+    throw networkBackendFailure(error);
   }
-  return FALLBACK_MESSAGE;
 }

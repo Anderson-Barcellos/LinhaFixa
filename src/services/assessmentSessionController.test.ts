@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   assessmentSessionStatus,
+  hasUnsavedAssessmentResult,
   initialAssessmentSessionState,
   transitionAssessmentSession,
   type AssessmentSessionState,
@@ -85,4 +86,13 @@ test('recall generation retry reuses the completed ocular run', () => {
   state = transitionAssessmentSession(state, { type: 'RETRY_RECALL' });
   assert.equal(assessmentSessionStatus(state), 'generating-recall');
   assert.equal(state.persistence, 'saved');
+});
+
+test('unsaved-result guard covers every saving and failed branch', () => {
+  assert.equal(hasUnsavedAssessmentResult('saving', 'idle'), true);
+  assert.equal(hasUnsavedAssessmentResult('failed', 'idle'), true);
+  assert.equal(hasUnsavedAssessmentResult('saved', 'saving'), true);
+  assert.equal(hasUnsavedAssessmentResult('saved', 'failed'), true);
+  assert.equal(hasUnsavedAssessmentResult('saved', 'saved'), false);
+  assert.equal(hasUnsavedAssessmentResult(null, 'idle'), false);
 });

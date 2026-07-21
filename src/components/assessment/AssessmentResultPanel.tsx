@@ -13,16 +13,20 @@ export function AssessmentResultPanel({
   capture,
   persistence,
   recallOutcome,
+  recallPersistence,
   captureSummary,
   onRetrySave,
+  onRetryRecallSave,
   onClose,
   onRestart,
 }: {
   capture: AssessedValidationCapture;
   persistence: 'saving' | 'saved' | 'failed';
   recallOutcome: { score: number; total: number; topic: string } | null;
+  recallPersistence: 'idle' | 'saving' | 'saved' | 'failed';
   captureSummary: ReadingDynamicsSummary | null;
   onRetrySave: () => void;
+  onRetryRecallSave: () => void;
   onClose: () => void;
   onRestart: () => void;
 }) {
@@ -66,16 +70,36 @@ export function AssessmentResultPanel({
       </div>
 
       {recallOutcome ? (
-        <div className="rounded-2xl bg-indigo-500/15 border border-indigo-400/30 p-4 mb-4 flex items-center justify-between gap-3">
-          <div>
-            <div className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-1">
-              Recall · {recallOutcome.topic}
+        <div className="mb-4 rounded-2xl border border-indigo-400/30 bg-indigo-500/15 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="mb-1 text-xs font-bold uppercase tracking-widest text-indigo-300">
+                Recall · {recallOutcome.topic}
+              </div>
+              <div className="text-2xl font-bold text-white">
+                {recallOutcome.score}/{recallOutcome.total} corretas
+              </div>
             </div>
-            <div className="text-2xl font-bold text-white">
-              {recallOutcome.score}/{recallOutcome.total} corretas
-            </div>
+            <BookOpen className="h-8 w-8 shrink-0 text-indigo-300" />
           </div>
-          <BookOpen className="w-8 h-8 text-indigo-300 shrink-0" />
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <p className={recallPersistence === 'failed' ? 'text-rose-300' : 'text-slate-400'}>
+              {recallPersistence === 'saved'
+                ? 'Recall salvo'
+                : recallPersistence === 'failed'
+                  ? 'Recall não salvo — a captura ocular permanece preservada'
+                  : 'Salvando recall…'}
+            </p>
+            {recallPersistence === 'failed' ? (
+              <button
+                type="button"
+                onClick={onRetryRecallSave}
+                className="rounded-lg bg-rose-500/15 px-3 py-1.5 font-bold text-rose-200 hover:bg-rose-500/25"
+              >
+                Tentar salvar recall novamente
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
 

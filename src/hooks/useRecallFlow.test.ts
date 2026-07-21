@@ -3,10 +3,11 @@ import { test } from 'node:test';
 import {
   buildRecallTestResult,
   canSwitchRecallMode,
+  persistRecallResult,
   recallCaptureLink,
   shouldGenerateRecallQuiz,
 } from './useRecallFlow';
-import type { RecallQuestion } from '@/types';
+import type { RecallQuestion, RecallTestResult } from '@/types';
 
 const QUESTIONS: RecallQuestion[] = [
   {
@@ -87,4 +88,25 @@ test('buildRecallTestResult without a capture link falls back to duration 0 and 
   assert.equal(result.readingDurationMs, 0);
   assert.equal(result.captureId, undefined);
   assert.equal(result.context, undefined);
+});
+
+test('recall retry persists the exact same immutable record', async () => {
+  const record = buildRecallTestResult({
+    content: { topic: 'Leitura', text: 'Texto.' },
+    questions: QUESTIONS,
+    answers: [0],
+    score: 0,
+    lastCapture: { captureId: 'cap-1', readingDurationMs: 1200 },
+    context: null,
+    now: 42,
+  });
+  const attempts: RecallTestResult[] = [];
+  const save = async (candidate: RecallTestResult) => {
+    attempts.push(candidate);
+    if (attempts.length === 1) throw new Error('offline');
+  };
+  assert.equal(await persistRecallResult(record, save), 'failed');
+  assert.equal(await persistRecallResult(record, save), 'saved');
+  assert.equal(attempts[0], record);
+  assert.equal(attempts[1], record);
 });

@@ -67,6 +67,16 @@ export function assessmentSessionStatus(state: AssessmentSessionState): Assessme
   return state.phase;
 }
 
+export function hasUnsavedAssessmentResult(
+  capture: 'saving' | 'saved' | 'failed' | null,
+  recall: 'idle' | 'saving' | 'saved' | 'failed',
+): boolean {
+  return capture === 'saving'
+    || capture === 'failed'
+    || recall === 'saving'
+    || recall === 'failed';
+}
+
 function reject(
   state: AssessmentSessionState,
   event: AssessmentSessionEvent,

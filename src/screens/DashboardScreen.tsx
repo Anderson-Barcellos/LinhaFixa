@@ -4,8 +4,8 @@ import { AppShell } from '@/components/app/AppShell';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { getSessions, getValidationCaptures, getRecallTests } from '@/services/storage';
-import { apiUrl } from '@/services/apiBase';
-import { interpretInsightResponse } from '@/services/insightResponse';
+import { requestGeneratedInsight } from '@/services/insightResponse';
+import { backendFailureMessage, networkBackendFailure } from '@/services/apiFailure';
 import {
   buildDiagnosticInsightPayload,
   buildSessionInsightSummary,
@@ -120,29 +120,20 @@ export function DashboardScreen() {
     setInsightLoading(true);
     try {
       const summaryPayload = buildSessionInsightSummary(sessions);
-
-      const res = await fetch(apiUrl('/api/generateInsight'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionSummary: {
-            overview: statisticsSummary.overview,
-            sections: (Object.values(statisticsSummary.sections) as StatisticSectionSummary[]).map(s => ({
-              label: s.label,
-              value: s.value,
-              detail: s.detail,
-              insight: s.insight,
-            })),
-            sessions: summaryPayload,
-            ...buildDiagnosticInsightPayload(ocularPartition, captures),
-          }
-        })
-      });
-      const data = await res.json().catch(() => null);
-      setInsight(interpretInsightResponse(res.status, data));
-    } catch(e) {
-      console.error(e);
-      setInsight("Não foi possível gerar a análise no momento.");
+      const sessionSummary = {
+        overview: statisticsSummary.overview,
+        sections: (Object.values(statisticsSummary.sections) as StatisticSectionSummary[]).map(s => ({
+          label: s.label,
+          value: s.value,
+          detail: s.detail,
+          insight: s.insight,
+        })),
+        sessions: summaryPayload,
+        ...buildDiagnosticInsightPayload(ocularPartition, captures),
+      };
+      setInsight(await requestGeneratedInsight(sessionSummary));
+    } catch (error) {
+      setInsight(backendFailureMessage(networkBackendFailure(error)));
     } finally {
       setInsightLoading(false);
     }

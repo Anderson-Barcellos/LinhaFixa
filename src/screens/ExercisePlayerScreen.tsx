@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { PreContextForm, PostContextForm } from '@/components/QuickContextForm';
 import { ExerciseCanvas } from '@/components/ExerciseCanvas';
 import { useAppStore } from '@/store/useAppStore';
-import { generateTreatmentPlan } from '@/services/planner';
+import { generateTreatmentPlan, type GeneratedTreatmentPlan } from '@/services/planner';
 import { checkContextSafety } from '@/services/safety';
 import { saveSession, getTodayPreContext } from '@/services/storage';
 import { CalibrationOverlay } from '@/components/CalibrationOverlay';
@@ -20,7 +20,7 @@ import { calibrationReuseDecision, currentOrientation, fullViewportRect } from '
 import { requestMotionPermissionFromGesture, startMotionSensor, stopMotionSensor } from '@/services/motionSensor';
 import { resetPosturalBaseline } from '@/exercises/posturalStability';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
-import { PreTestContext, PostTestContext, TreatmentPlanResponse, SessionResult, ExerciseResult } from '@/types';
+import { PreTestContext, PostTestContext, SessionResult, ExerciseResult, type UserProfile } from '@/types';
 import { formatSampleRateHz } from '@/services/sampleRatePresentation';
 import { createAsyncOperationGate, guardedAwait } from '@/services/asyncOperation';
 import { resolveDeviceClass, type DeviceClassDecision } from '@/services/deviceClass';
@@ -41,7 +41,7 @@ export function ExercisePlayerScreen() {
     feeling: 3, fatigue: 3, mood: 3
   });
   
-  const [plan, setPlan] = useState<TreatmentPlanResponse | null>(null);
+  const [plan, setPlan] = useState<GeneratedTreatmentPlan | null>(null);
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   const [results, setResults] = useState<ExerciseResult[]>([]);
   const [safetyReason, setSafetyReason] = useState("");
@@ -179,14 +179,24 @@ export function ExercisePlayerScreen() {
           stopRules: ["Desconforto excessivo"]
         }],
         patientFeedbackPtBR: "Sessão avulsa concluída com sucesso.",
-        clinicianSummaryPtBR: "Prática avulsa."
+        clinicianSummaryPtBR: "Prática avulsa.",
+        origin: 'library',
+        fallbackFailure: null,
+        fallbackMessage: null,
       });
       setStage('PRE_EXERCISE_INFO');
       return;
     }
 
-    // Mock call since we'll use fallback for reliability without keys
-    const generatedPlan = await generateTreatmentPlan(profile || { contrastPreference: 'light' } as any, contextPre, []);
+    const planningProfile: UserProfile = profile ?? {
+      name: '',
+      isAdult: true,
+      fontSizePreference: 'normal',
+      contrastPreference: 'light',
+      cameraEnabled: false,
+      viewingDistanceCm: 40,
+    };
+    const generatedPlan = await generateTreatmentPlan(planningProfile, contextPre, []);
     setPlan(generatedPlan);
     
     if (generatedPlan.safetyStatus.allowTraining) {
@@ -288,6 +298,15 @@ export function ExercisePlayerScreen() {
     const ex = plan.exercises[currentExerciseIndex];
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-center text-white">
+        <p className="mb-4 rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-slate-300">
+          {plan.origin === 'ai'
+            ? 'Plano adaptativo gerado pelo backend'
+            : plan.origin === 'local-fallback'
+              ? `Plano padrão local — ${plan.fallbackMessage ?? 'backend indisponível'}`
+              : plan.origin === 'library'
+                ? 'Exercício avulso da Biblioteca'
+                : 'Sessão bloqueada pelo safety gate'}
+        </p>
         <h2 className="text-4xl font-bold text-white mb-6">Próximo: {ex.exerciseId === 'fixation' ? 'Fixação' : ex.exerciseId === 'saccades' ? 'Sacadas' : 'Treino Visual'}</h2>
         <p className="text-2xl text-slate-300 max-w-2xl mb-12">{ex.rationalePtBR}</p>
         <p className="text-lg text-amber-300 mb-12 flex flex-col gap-2">
