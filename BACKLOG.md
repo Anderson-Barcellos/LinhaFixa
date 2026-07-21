@@ -154,8 +154,29 @@ Ajuste da revisao fisica de 2026-07-21 (iPhone landscape):
   `https://ultrassom.ai/gaze/` responderam 200, e o smoke phone-portrait publico
   passou 14/14 (iPhone sem scroll + retomada; iPad landscape preservado).
 
+Ajuste da revisao fisica de 2026-07-21 (filtro de palpebra e fit):
+
+- causa confirmada no source e por teste vermelho: `BLINK_REJECT_GATE_ENABLED`
+  estava `false`, portanto score alto de piscada era exibido na telemetria mas nao
+  descartava a amostra em calibracao, validacao, captura ou exercicios;
+- comparacao historica mostrou que o engine mais solido de `0f524c1` rejeitava a
+  piscada antes do ridge fit. A regressao matematica atual (z-score, ridge, modelo
+  pendente e ativacao por evidencia) foi preservada; somente a limpeza de entrada
+  foi restaurada em `d7ea5e1`;
+- o gate voltou a ser ativo por padrao com threshold estrito `> 0.5`. Ausencia de
+  blendshape continua fail-open; baseline anormalmente alto produz rejeicao finita
+  da calibracao, em vez de treinar silenciosamente um modelo contaminado;
+- evidencia fresca: teste de regressao falhou antes da mudanca e passou depois;
+  `npm test` 395/395, `npm run lint`, build prefixado 106285/180000 bytes gzip e
+  smokes notebook 63/63, layout 165/165, phone-portrait 14/14, validade 72/72,
+  assessment 9/9 e loading 43/43. `real-tab-hidden` segue BLOCKED no headless;
+- `linhafixa.service` reiniciado e ativo; localhost `/gaze/` e `/gaze/healthz`,
+  alem do endpoint publico, responderam 200. O HTML publico entrega o bundle novo
+  `index-vZzk2Bbj.js`, e o smoke phone-portrait publico passou 14/14.
+
 Gate manual remanescente: Anders confirmar no Safari fisico que o aviso ocupa a
-tela sem rolagem em landscape e que a sessao reaparece ao retornar a portrait.
+tela sem rolagem em landscape, que a sessao reaparece ao retornar a portrait e
+que o indicador/tracado deixa de aceitar amostras durante o fechamento palpebral.
 
 ### Limites atuais
 
