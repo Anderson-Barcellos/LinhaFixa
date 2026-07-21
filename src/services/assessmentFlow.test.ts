@@ -88,6 +88,17 @@ test('deriveAssessmentStage prioritizes capture and quiz states over passive rea
   );
 });
 
+test('deriveAssessmentStage prefers an explicit compatible controller status', () => {
+  assert.equal(
+    deriveAssessmentStage({
+      ...baseInput,
+      readingTextState: 'idle',
+      controllerStatus: 'capturing',
+    }),
+    'capturing',
+  );
+});
+
 test('canStartAssessment blocks when reading text is unavailable', () => {
   assert.deepEqual(
     canStartAssessment({ ...baseInput, readingTextState: 'error' }),

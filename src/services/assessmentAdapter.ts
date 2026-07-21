@@ -95,6 +95,7 @@ export function buildAssessmentWorkspaceSnapshot(
 ): AssessmentWorkspaceSnapshot {
   const stageInput: AssessmentStageInput = {
     mode: input.mode,
+    controllerStatus: input.controllerStatus,
     readingTextState: input.readingTextState,
     capturing: input.capturing,
     recallGenerating: input.recallGenerating,

@@ -4,9 +4,11 @@ import type {
   AssessmentStage,
   RecallTestResult,
 } from '@/types';
+import type { AssessmentSessionStatus } from './assessmentSessionController';
 
 export interface AssessmentStageInput {
   mode: AssessmentMode;
+  controllerStatus?: Extract<AssessmentSessionStatus, AssessmentStage>;
   readingTextState: 'idle' | 'loading' | 'ready' | 'error';
   capturing: boolean;
   recallGenerating: boolean;
@@ -21,6 +23,7 @@ export interface AssessmentResultInput {
 }
 
 export function deriveAssessmentStage(input: AssessmentStageInput): AssessmentStage {
+  if (input.controllerStatus) return input.controllerStatus;
   if (input.capturing) return 'capturing';
   if (input.recallGenerating) return 'generating-quiz';
   if (input.recallQuizOpen) return 'quiz';

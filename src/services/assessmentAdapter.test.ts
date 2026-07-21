@@ -140,6 +140,24 @@ test('buildAssessmentWorkspaceSnapshot derives the shell state from primitive re
   assert.equal(snapshot.resultSummary, null);
 });
 
+test('buildAssessmentWorkspaceSnapshot lets the controller override stale passive booleans', () => {
+  const snapshot = buildAssessmentWorkspaceSnapshot({
+    mode: 'capture',
+    readingTextState: 'ready',
+    capturing: false,
+    recallGenerating: false,
+    recallQuizOpen: false,
+    hasCaptureResult: false,
+    controllerStatus: 'capturing',
+    captureCount: 0,
+    latestSessionLabel: null,
+    captureTitle: null,
+    recallResult: null,
+  });
+
+  assert.equal(snapshot.stage, 'capturing');
+});
+
 test('buildAssessmentWorkspaceSnapshot surfaces the derived block reason while text is still loading', () => {
   const snapshot = buildAssessmentWorkspaceSnapshot({
     mode: 'capture',
