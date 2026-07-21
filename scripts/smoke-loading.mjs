@@ -35,16 +35,16 @@ const mediaPipeChunk = `/${mediaPipeRecord.file}`;
 const modelPath = `/${MEDIAPIPE_PUBLIC_ROOT}/face_landmarker.task`;
 const wasmRoot = `/${MEDIAPIPE_PUBLIC_ROOT}/wasm/`;
 const LAZY_ROUTE_CASES = [
-  { path: '/dashboard', label: 'Dashboard', heading: 'Estatísticas', chunk: dashboardChunk },
+  { path: '/dashboard', label: 'Dashboard', heading: 'Progresso', chunk: dashboardChunk },
   // O alias legado redireciona para /assessment?workspace=live, que carrega a
   // superfície ocular lazy dentro da shell de avaliação.
   // O header único do workspace mostra o título do estágio da sessão (regex:
   // o estágio inicial pode variar entre setup e leitura conforme o preload).
-  { path: '/eye-tracking-test', label: 'Workspace live (alias legado)', heading: /sessao pronta para iniciar|preparando leitura|leitura guiada/i, chunk: diagnosticChunk },
+  { path: '/eye-tracking-test', label: 'Workspace live (alias legado)', heading: /sessao pronta para iniciar|verificando prontidão|calibração necessária|validando sinal|sessão pronta|preparando leitura|leitura guiada/i, chunk: diagnosticChunk },
   { path: '/player', label: 'Player', heading: 'Contexto de hoje', chunk: playerChunk },
   { path: '/library', label: 'Biblioteca', heading: 'Biblioteca', chunk: libraryChunk },
   { path: '/settings', label: 'Ajustes', heading: 'Ajustes & Perfil', chunk: settingsChunk },
-  { path: '/history', label: 'Historico', heading: 'Historico', chunk: historyChunk },
+  { path: '/history', label: 'Sessões', heading: 'Sessões', chunk: historyChunk },
 ];
 
 let checks = 0;
@@ -79,7 +79,7 @@ async function acceptConsent(page) {
   await page.getByRole('checkbox').click();
   await page.getByRole('button', { name: 'Começar' }).click();
   await page.waitForURL(url => url.pathname.replace(/\/$/, '').endsWith('/assessment'));
-  await page.getByRole('heading', { name: 'Avaliacao', exact: true }).waitFor({ state: 'visible' });
+  await page.getByTestId('experiment-notebook').waitFor({ state: 'visible' });
 }
 
 async function cameraRequests(page) {
@@ -245,7 +245,10 @@ try {
     check('after-idle', 'WASM continua adiado', !hasWasm(localPaths));
     check('after-idle', 'preload não pede permissão de câmera', await cameraRequests(page) === 0);
 
-    const diagnosticButton = page.getByRole('button', { name: 'Captura simples' });
+    await page.getByRole('button', { name: 'Nova sessão' }).click();
+    const launcher = page.getByRole('dialog', { name: 'Preparar nova sessão' });
+    await launcher.waitFor();
+    const diagnosticButton = launcher.getByRole('button', { name: 'Captura simples' });
     await diagnosticButton.dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0, bubbles: true });
     await waitUntil(
       () => hasPath(localPaths, mediaPipeChunk) && hasPath(localPaths, modelPath) && hasWasm(localPaths),
@@ -260,7 +263,7 @@ try {
 
     check('dashboard', 'Dashboard continua adiado imediatamente antes de abrir a rota', !hasPath(localPaths, dashboardChunk));
     await page.goto(`${BASE_URL}/dashboard`, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('heading', { name: 'Estatísticas' }).waitFor({ state: 'visible' });
+    await page.getByRole('heading', { name: 'Progresso' }).waitFor({ state: 'visible' });
     check('dashboard', 'Dashboard/Recharts carrega apenas ao abrir a rota', hasPath(localPaths, dashboardChunk));
 
     await assertLazyRouteMatrix(page, appOrigin, localPaths);

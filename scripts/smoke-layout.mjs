@@ -26,9 +26,13 @@ const CHROME = process.env.CHROME_PATH ?? '/usr/bin/google-chrome';
 const MEDIAPIPE_PATH = `/${MEDIAPIPE_PUBLIC_ROOT}`;
 
 const VIEWPORTS = [
-  { name: 'iphone-portrait', width: 390, height: 844, touch: true, expectDesktopPanel: false, drawer: 'sheet', checkCalibration: true },
-  { name: 'iphone-landscape', width: 844, height: 390, touch: true, expectDesktopPanel: false, drawer: 'side', checkCalibration: true },
-  { name: 'desktop', width: 1440, height: 860, touch: false, expectDesktopPanel: true, checkCalibration: true, checkLifecycle: true },
+  { name: 'phone-small', width: 320, height: 568, touch: true, expectDesktopPanel: false, drawer: 'sheet', checkCalibration: false },
+  { name: 'phone', width: 390, height: 844, touch: true, expectDesktopPanel: false, drawer: 'sheet', checkCalibration: true },
+  { name: 'rotated-phone', width: 844, height: 390, touch: true, expectDesktopPanel: false, drawer: 'side', checkCalibration: true },
+  { name: 'tablet', width: 834, height: 1194, touch: true, expectDesktopPanel: false, drawer: 'sheet', checkCalibration: false, expectPortraitSurface: true },
+  { name: 'compact-desktop', width: 1024, height: 768, touch: false, expectDesktopPanel: true, checkCalibration: false },
+  { name: 'desktop', width: 1366, height: 768, touch: false, expectDesktopPanel: true, checkCalibration: false },
+  { name: 'desktop-large', width: 1440, height: 1024, touch: false, expectDesktopPanel: true, checkCalibration: true, checkLifecycle: true },
   // Vertical monitor (Anders' desktop): the reading surface must fill the column
   // instead of collapsing into the landscape 16:9 strip.
   { name: 'desktop-portrait', width: 1077, height: 1436, touch: false, expectDesktopPanel: true, checkCalibration: true, expectPortraitSurface: true },
@@ -63,6 +67,7 @@ async function acceptConsent(page) {
   await page.getByRole('checkbox').click();
   await page.getByRole('button', { name: 'Começar' }).click();
   await page.waitForURL(/\/assessment(?:\?|$)/, { timeout: 10_000 });
+  await page.getByTestId('experiment-notebook').waitFor({ state: 'visible' });
 }
 
 // The panel rows we align-check: direct children of <aside>, with wrappers that
@@ -189,43 +194,61 @@ async function runViewport(browser, profile) {
   try {
     await acceptConsent(page);
 
-    // --- Shell /assessment: chrome mobile compacto (BUNDLE Layout Mobile) ---
-    // md: do Tailwind é 768px; iphone-landscape (844px) usa estilos desktop de shell.
+    // --- Shell /assessment: Caderno Experimental V2 responsivo ---
+    // md: do Tailwind é 768px; abaixo disso a navegação fica no rodapé.
     const mobileShell = profile.width < 768;
+    check(profile.name, 'caderno experimental renderizado', await page.getByTestId('experiment-notebook').isVisible());
     if (mobileShell) {
       // Posição absoluta no documento (boundingBox é viewport-relativo e a página
       // pode chegar rolada do fluxo de consent).
-      const mainH1Y = await page.evaluate(() => {
-        const el = document.querySelector('main h1');
+      const primaryCardY = await page.evaluate(() => {
+        const el = document.querySelector('[data-testid="current-series-card"]');
         return el ? el.getBoundingClientRect().top + window.scrollY : null;
       });
-      check(profile.name, 'conteúdo do /assessment começa no topo (h1 y ≤ 160px)',
-        mainH1Y !== null && mainH1Y <= 160, mainH1Y !== null ? `y=${Math.round(mainH1Y)}` : 'ausente');
-      const explainerVisible = await page.getByText('Avaliacao primeiro').isVisible().catch(() => false);
-      check(profile.name, 'card explicativo da sidebar oculto no mobile', !explainerVisible);
+      check(profile.name, 'conteúdo principal do /assessment começa no topo (card y ≤ 160px)',
+        primaryCardY !== null && primaryCardY <= 160, primaryCardY !== null ? `y=${Math.round(primaryCardY)}` : 'ausente');
+      const sidebarBrandVisible = await page.locator('aside > div').first().isVisible().catch(() => false);
+      check(profile.name, 'marca lateral oculta no chrome de rodapé', !sidebarBrandVisible);
     } else {
-      const explainerVisible = await page.getByText('Avaliacao primeiro').isVisible().catch(() => false);
-      check(profile.name, 'card explicativo da sidebar presente no desktop', explainerVisible);
+      const sidebarBrandVisible = await page.locator('aside > div').first().isVisible().catch(() => false);
+      check(profile.name, 'marca lateral presente no rail/sidebar', sidebarBrandVisible);
     }
     const headlinePx = await page.evaluate(() => {
-      const el = document.querySelector('[data-testid="workspace-headline"]');
+      const el = document.querySelector('[data-testid="current-series-card"] h1');
       return el ? parseFloat(getComputedStyle(el).fontSize) : null;
     });
     if (mobileShell) {
-      check(profile.name, 'headline do card escuro escalada pra mobile (≤ 24px)',
-        headlinePx !== null && headlinePx <= 24, `font-size=${headlinePx}px`);
+      check(profile.name, 'headline do card principal escalada pra mobile (≤ 32px)',
+        headlinePx !== null && headlinePx <= 32, `font-size=${headlinePx}px`);
     } else {
-      check(profile.name, 'headline do card escuro mantém escala desktop (≥ 28px)',
-        headlinePx !== null && headlinePx >= 28, `font-size=${headlinePx}px`);
+      check(profile.name, 'headline do card principal mantém escala ampla (≥ 48px)',
+        headlinePx !== null && headlinePx >= 48, `font-size=${headlinePx}px`);
     }
 
-    await page.goto(`${BASE_URL}/eye-tracking-test`, { waitUntil: 'networkidle' });
+    await page.goto(`${BASE_URL}/assessment?workspace=live&mode=capture&quality=exploratory`, { waitUntil: 'networkidle' });
 
     // --- Layout mode and reading surface ---
     const surfaceChip = page.getByText('Área fixa de leitura e calibração');
     const surfaceReady = await surfaceChip.waitFor({ state: 'visible', timeout: 10_000 })
       .then(() => true, () => false);
     check(profile.name, 'moldura da área de leitura visível', surfaceReady);
+
+    const measurementViewport = page.getByTestId('measurement-viewport');
+    const frozenHeight = await measurementViewport.evaluate(element => element.getBoundingClientRect().height);
+    const originalViewport = page.viewportSize();
+    if (!originalViewport) throw new Error('viewport unavailable');
+    await page.setViewportSize({
+      width: originalViewport.width,
+      height: Math.max(320, originalViewport.height - 80),
+    });
+    const afterChromeResize = await measurementViewport.evaluate(element => element.getBoundingClientRect().height);
+    check(
+      profile.name,
+      'measurement viewport does not reflow with dynamic chrome',
+      Math.abs(frozenHeight - afterChromeResize) <= 1,
+      `${frozenHeight} -> ${afterChromeResize}`,
+    );
+    await page.setViewportSize(originalViewport);
 
     const canvasBox = await page.locator('canvas').first().boundingBox();
     check(profile.name, 'canvas com área não nula', !!canvasBox && canvasBox.width > 100 && canvasBox.height > 100,
@@ -443,8 +466,11 @@ async function runViewport(browser, profile) {
       consoleErrors.slice(0, 3).join(' | '));
     check(profile.name, 'sem falhas HTTP locais ou assets quebrados', resourceIssues.length === 0,
       resourceIssues.slice(0, 3).join(' | '));
-    check(profile.name, 'JS, CSS e MediaPipe locais carregados',
-      Object.values(requiredAssets).every(Boolean),
+    const requiredAssetEntries = Object.entries(requiredAssets).filter(([name]) => (
+      profile.checkCalibration || name === 'script' || name === 'styles'
+    ));
+    check(profile.name, profile.checkCalibration ? 'JS, CSS e MediaPipe locais carregados' : 'JS e CSS locais carregados sem antecipar MediaPipe',
+      requiredAssetEntries.every(([, loaded]) => loaded),
       Object.entries(requiredAssets).map(([name, loaded]) => `${name}=${loaded}`).join(' '));
     if (optionalThirdPartyIssues.length) {
       console.warn(`  ⚠ opcional nominal: ${optionalThirdPartyIssues.slice(0, 2).join(' | ')}`);

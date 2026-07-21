@@ -47,6 +47,7 @@ try {
   });
   console.log(`\nIsolated fresh build ready at ${BASE_URL}`);
   const results = [
+    await run('scripts/smoke-notebook-v2.mjs'),
     await run('scripts/smoke-layout.mjs'),
     await run('scripts/smoke-validity.mjs'),
     await run('scripts/smoke-assessment-workflow.mjs'),

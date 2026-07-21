@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useLayoutEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { RouteLoadBoundary } from '@/components/RouteLoadBoundary';
 import { useAppStore } from '@/store/useAppStore';
 import { loadRouteModule } from '@/services/routeChunkRecovery';
@@ -66,6 +66,7 @@ export default function App() {
 
   return (
     <BrowserRouter basename={basename}>
+      <RouteScrollReset />
       <RouteLoadBoundary>
         <Suspense fallback={<BootScreen />}>
           <Routes>
@@ -95,6 +96,16 @@ export default function App() {
       </RouteLoadBoundary>
     </BrowserRouter>
   );
+}
+
+function RouteScrollReset() {
+  const location = useLocation();
+
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [location.pathname, location.search]);
+
+  return null;
 }
 
 function BootScreen() {

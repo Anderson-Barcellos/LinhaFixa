@@ -50,7 +50,7 @@ export function AssessmentSetupPanel({
         aria-modal="true"
         aria-labelledby="assessment-setup-title"
         tabIndex={-1}
-        className="relative w-full max-w-2xl rounded-t-[2rem] border border-line-strong bg-surface p-6 shadow-2xl md:rounded-[2rem] md:p-8"
+        className="relative max-h-[100svh] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-t-[2rem] border border-line-strong bg-surface p-6 shadow-2xl md:rounded-[2rem] md:p-8"
       >
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-accent">
           Nova sessão
