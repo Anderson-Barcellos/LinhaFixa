@@ -87,6 +87,53 @@ Validacao fresca (2026-07-18):
 - Deploy ja no ar: `linhafixa.service` restartado; `https://ultrassom.ai/gaze/`
   200 (prod e localhost:3060).
 
+### BUNDLE Caderno Experimental V2 (implementado; revisao de Anders pendente)
+
+Implementado e integrado na `main` em 2026-07-21 pelos commits `a724569`,
+`bce5ab3`, `1b34020`, `ecc8147`, `057910a`, `5c35f28`, `3038635`, `fb892e3`
+e `680b8e5`:
+
+- `/assessment` agora e o Caderno Experimental responsivo, com quatro destinos
+  primarios, launcher para Captura simples e Leitura + Recall, Biblioteca e plano
+  preservados e projecao somente dos registros reais do IndexedDB.
+- classe de dispositivo confirmada participa da chave de comparacao; registros
+  sugeridos ou legados ficam no baseline/auditoria sem promocao silenciosa.
+- controlador explicito governa preflight, calibracao, validacao, captura, recall,
+  salvamento, retry e interrupcao. Falhas dos cinco endpoints aparecem na UI sem
+  remover fallback, exportacao ou exercicios existentes.
+- a superficie de medicao congela altura e geometria; resize ou rotacao acima da
+  tolerancia interrompe a execucao em vez de misturar amostras incompatíveis.
+- entrada SPA volta ao topo e o launcher limita a propria altura, mantendo o
+  controle de fechamento acessivel inclusive em 320 x 568.
+
+Evidencia fresca da arvore integrada e do runtime:
+
+- `npm test`: 393/393; `npm run lint`: passou.
+- `APP_BASE_PATH=/gaze npm run build`: passou; bundle inicial
+  105372/180000 bytes gzip.
+- `npm run smoke`: notebook 63/63, layout 198/198, validade 72/72,
+  assessment 9/9 e loading 43/43 (385/385 no total).
+- `real-tab-hidden` segue bloqueado pelo Chromium headless; o check independente
+  de `pagehide` passou e invalidou a captura sem retomada/concatenacao.
+- `linhafixa.service`: ativo; localhost:3060 e publico `/gaze/`: 200 `text/html`.
+
+Ledger visual referencia + render:
+
+- copia e ordem acima da dobra coincidem; somente a data usa o locale real do
+  navegador (`21 de jul. de 2026`).
+- celular empilha serie e sessoes com barra inferior; tablet usa rail e pilha;
+  desktop usa sidebar e duas colunas, conforme os tres conceitos aprovados.
+- gradiente violeta, CTA branco dominante, tipografia direta, bordas e raios
+  mantem a hierarquia da referencia com tokens semanticos do tema existente.
+- o estado vazio permanece real e explicito; nenhum registro demonstrativo foi
+  criado apenas para reproduzir as imagens-conceito.
+- 320 x 568 e equivalentes de zoom 200%/400% ficaram sem overflow horizontal,
+  erros de console ou controle obrigatorio inacessivel.
+
+Gate manual ainda aberto para a revisao de Anders: Safari real em iPhone e iPad
+com permissao de camera, rotacao durante captura, variacao de `VisualViewport` e
+safe areas. O BUNDLE nao deve ser marcado como fechado antes dessa revisao.
+
 ### Limites atuais
 
 - Persistencia continua local em IndexedDB v3; SQLite, outbox, sync, Basic Auth e
