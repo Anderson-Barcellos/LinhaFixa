@@ -1,36 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import {
-  BookOpenText,
-  Camera,
-  Clock3,
-  History,
-  ScanSearch,
-} from 'lucide-react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Activity, BookOpenText, Camera, Clock3 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 
 import { AppShell } from '@/components/app/AppShell';
-import { getRecallTests, getValidationCaptures } from '@/services/storage';
-import { useAppStore } from '@/store/useAppStore';
-import type { RecallTestResult, ValidationCapture } from '@/types';
-
-type HistoryEntry =
-  | {
-      id: string;
-      kind: 'capture';
-      timestamp: number;
-      title: string;
-      badge: string;
-      detail: string;
-    }
-  | {
-      id: string;
-      kind: 'recall';
-      timestamp: number;
-      title: string;
-      badge: string;
-      detail: string;
-    };
+import { NotebookRecordRow } from '@/components/notebook/NotebookRecordRow';
+import {
+  buildExperimentNotebookProjection,
+  type NotebookRecord,
+} from '@/services/experimentNotebookProjection';
+import {
+  getRecallTests,
+  getSessions,
+  getValidationCaptures,
+} from '@/services/storage';
+import type { RecallTestResult, SessionResult, ValidationCapture } from '@/types';
 
 function formatTimestamp(timestamp: number): string {
   return new Intl.DateTimeFormat('pt-BR', {
@@ -39,54 +23,26 @@ function formatTimestamp(timestamp: number): string {
   }).format(timestamp);
 }
 
-function formatReadingDuration(readingDurationMs: number): string {
-  const totalMinutes = Math.max(1, Math.round(readingDurationMs / 60000));
-  return `${totalMinutes} min de leitura`;
-}
-
-function buildCaptureEntry(capture: ValidationCapture): HistoryEntry {
-  return {
-    id: `capture-${capture.id}`,
-    kind: 'capture',
-    timestamp: capture.timestamp,
-    title: 'Captura ocular registrada',
-    badge: 'Captura',
-    detail: `${capture.conditions.posture} · ${capture.conditions.lighting} · cobertura ${Math.round(capture.coverage)}%`,
-  };
-}
-
-function buildRecallEntry(recall: RecallTestResult): HistoryEntry {
-  return {
-    id: `recall-${recall.id}`,
-    kind: 'recall',
-    timestamp: recall.timestamp,
-    title: `Recall: ${recall.topic}`,
-    badge: 'Recall',
-    detail: `${recall.score}/${recall.questions.length} acertos · ${formatReadingDuration(recall.readingDurationMs)}`,
-  };
-}
-
 export function HistoryScreen(): JSX.Element {
   const location = useLocation();
-  const navigate = useNavigate();
-  const { profile } = useAppStore();
   const [loading, setLoading] = useState(true);
+  const [sessions, setSessions] = useState<SessionResult[]>([]);
   const [captures, setCaptures] = useState<ValidationCapture[]>([]);
   const [recalls, setRecalls] = useState<RecallTestResult[]>([]);
+  const [selectedRecord, setSelectedRecord] = useState<NotebookRecord | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([getValidationCaptures(), getRecallTests()])
-      .then(([captureRows, recallRows]) => {
+    Promise.all([getSessions(), getValidationCaptures(), getRecallTests()])
+      .then(([sessionRows, captureRows, recallRows]) => {
         if (cancelled) return;
+        setSessions(sessionRows);
         setCaptures(captureRows);
         setRecalls(recallRows);
       })
       .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       });
 
     return () => {
@@ -94,167 +50,141 @@ export function HistoryScreen(): JSX.Element {
     };
   }, []);
 
-  const entries = useMemo(
-    () =>
-      [...captures.map(buildCaptureEntry), ...recalls.map(buildRecallEntry)].sort(
-        (left, right) => right.timestamp - left.timestamp,
-      ),
-    [captures, recalls],
+  const projection = useMemo(
+    () => buildExperimentNotebookProjection({ sessions, captures, recalls }),
+    [sessions, captures, recalls],
   );
-
-  const latestEntry = entries[0] ?? null;
+  const latestRecord = projection.all[0] ?? null;
   const currentPath = `${location.pathname}${location.search}`;
 
   return (
     <AppShell
       currentPath={currentPath}
-      title="Historico"
-      subtitle="Linha do tempo recente das capturas oculares e recalls salvos neste dispositivo."
+      title="Sessões"
+      subtitle="Capturas, recalls e treinos persistidos neste dispositivo."
     >
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(280px,0.9fr)]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.65fr)]">
         <section className="space-y-6">
-          <div className="rounded-[2rem] bg-ink p-6 text-ink-foreground shadow-lg md:p-8">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div className="max-w-2xl">
-                <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-200">
-                  <History className="h-3.5 w-3.5" />
-                  Historico real da shell
-                </div>
-                <h2 className="mt-4 text-3xl font-bold tracking-tight">
-                  Registros recentes sem depender da dashboard analitica.
-                </h2>
-                <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-slate-300">
-                  Aqui a IA da shell mostra a trilha cronologica do que ja foi
-                  salvo. A secao de Progresso continua dedicada a graficos,
-                  comparacoes e analise mais pesada.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => navigate('/dashboard')}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/15 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
-              >
-                Ver progresso analitico
-                <ScanSearch className="h-4 w-4" />
-              </button>
-            </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <SummaryCard
+              icon={<Camera className="h-5 w-5" aria-hidden="true" />}
+              label="Capturas"
+              value={`${captures.length} registradas`}
+            />
+            <SummaryCard
+              icon={<BookOpenText className="h-5 w-5" aria-hidden="true" />}
+              label="Recalls"
+              value={`${recalls.length} salvos`}
+            />
+            <SummaryCard
+              icon={<Activity className="h-5 w-5" aria-hidden="true" />}
+              label="Treinos"
+              value={`${sessions.length} salvos`}
+            />
+            <SummaryCard
+              icon={<Clock3 className="h-5 w-5" aria-hidden="true" />}
+              label="Último registro"
+              value={latestRecord ? formatTimestamp(latestRecord.timestamp) : 'Sem dados ainda'}
+            />
           </div>
 
-          <div className="grid gap-4 md:grid-cols-3">
-            <article className="rounded-3xl border border-line-strong bg-surface p-5 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="rounded-2xl bg-app-inset p-3 text-mild">
-                  <Camera className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-strong">Capturas</p>
-                  <p className="text-sm text-mild">{captures.length} registradas</p>
-                </div>
-              </div>
-            </article>
-
-            <article className="rounded-3xl border border-line-strong bg-surface p-5 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="rounded-2xl bg-app-inset p-3 text-mild">
-                  <BookOpenText className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-strong">Recalls</p>
-                  <p className="text-sm text-mild">{recalls.length} testes salvos</p>
-                </div>
-              </div>
-            </article>
-
-            <article className="rounded-3xl border border-line-strong bg-surface p-5 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="rounded-2xl bg-app-inset p-3 text-mild">
-                  <Clock3 className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-strong">Ultimo registro</p>
-                  <p className="text-sm text-mild">
-                    {latestEntry ? formatTimestamp(latestEntry.timestamp) : 'Sem dados ainda'}
-                  </p>
-                </div>
-              </div>
-            </article>
-          </div>
-
-          <section className="rounded-[2rem] border border-line-strong bg-surface p-6 shadow-sm">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <h3 className="text-xl font-bold text-strong">Linha do tempo</h3>
-                <p className="mt-2 text-sm font-medium leading-6 text-mild">
-                  Capturas e recalls aparecem juntos para facilitar auditoria
-                  rapida da sequencia real de avaliacao.
-                </p>
-              </div>
+          <section className="rounded-[2rem] border border-line-strong bg-surface p-5 shadow-sm md:p-8">
+            <div>
+              <h2 className="text-xl font-bold text-strong">Todos os registros</h2>
+              <p className="mt-2 text-sm font-medium leading-6 text-mild">
+                A mesma classificação usada em Hoje, sem recalcular status nesta tela.
+              </p>
             </div>
 
             {loading ? (
-              <div className="mt-6 rounded-3xl border border-dashed border-line-strong bg-surface-sunken p-6 text-sm font-medium text-mild">
-                Carregando historico local...
-              </div>
-            ) : entries.length === 0 ? (
-              <div className="mt-6 rounded-3xl border border-dashed border-line-strong bg-surface-sunken p-6 text-sm font-medium text-mild">
-                Nenhuma captura ou recall salvo neste dispositivo ainda.
-              </div>
+              <p role="status" className="mt-6 rounded-2xl border border-dashed border-line-strong p-5 text-sm font-medium text-mild">
+                Carregando registros locais…
+              </p>
+            ) : projection.all.length === 0 ? (
+              <p className="mt-6 rounded-2xl border border-dashed border-line-strong p-5 text-sm font-medium text-mild">
+                Nenhuma captura, recall ou treino salvo neste dispositivo ainda.
+              </p>
             ) : (
-              <div className="mt-6 space-y-3">
-                {entries.map((entry) => (
-                  <article
-                    key={entry.id}
-                    className="rounded-3xl border border-line-strong bg-surface-sunken p-5"
-                  >
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <div>
-                        <div className="inline-flex rounded-full bg-surface px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] text-mild">
-                          {entry.badge}
-                        </div>
-                        <h4 className="mt-3 text-lg font-semibold text-strong">
-                          {entry.title}
-                        </h4>
-                        <p className="mt-2 text-sm leading-6 text-mild">
-                          {entry.detail}
-                        </p>
-                      </div>
-                      <span className="text-sm font-medium text-mild">
-                        {formatTimestamp(entry.timestamp)}
-                      </span>
-                    </div>
-                  </article>
+              <div className="mt-5">
+                {projection.all.map(record => (
+                  <NotebookRecordRow
+                    key={record.id}
+                    record={record}
+                    onOpen={setSelectedRecord}
+                  />
                 ))}
               </div>
             )}
           </section>
         </section>
 
-        <aside className="space-y-6">
+        <aside className="xl:sticky xl:top-8 xl:self-start">
           <article className="rounded-[2rem] border border-line-strong bg-surface p-6 shadow-sm">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mild">
-              Perfil ativo
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-mild">
+              Detalhes do registro
             </p>
-            <h3 className="mt-3 text-2xl font-bold text-strong">
-              {profile?.name ? profile.name : 'Perfil sem nome salvo'}
-            </h3>
-            <p className="mt-3 text-sm leading-6 text-mild">
-              Distancia de leitura registrada: {profile?.viewingDistanceCm ?? 40} cm.
-            </p>
-          </article>
-
-          <article className="rounded-[2rem] border border-line-strong bg-surface p-6 shadow-sm">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mild">
-              Diferenca de papel
-            </p>
-            <p className="mt-4 text-sm leading-6 text-mild">
-              Historico mostra eventos salvos e sua ordem. Progresso continua
-              sendo o lugar para sumarizacao clinica, series comparaveis e
-              exportacao ampla.
-            </p>
+            {selectedRecord ? (
+              <div className="mt-4">
+                <span className="inline-flex rounded-full bg-app-inset px-3 py-1 text-xs font-bold text-mild">
+                  {selectedRecord.statusLabel}
+                </span>
+                <h2 className="mt-4 text-2xl font-bold text-strong">
+                  {selectedRecord.title}
+                </h2>
+                <p className="mt-3 text-sm leading-6 text-mild">{selectedRecord.detail}</p>
+                {selectedRecord.recall ? (
+                  <p className="mt-4 rounded-2xl bg-accent-soft p-4 text-sm font-bold text-accent-strong">
+                    Recall {selectedRecord.recall.scoreLabel}
+                  </p>
+                ) : null}
+                <dl className="mt-5 grid gap-3 text-sm">
+                  <DetailTerm label="Dispositivo" value={selectedRecord.deviceLabel} />
+                  <DetailTerm
+                    label="Taxa"
+                    value={selectedRecord.sampleRateLabel ?? 'Não se aplica'}
+                  />
+                  <DetailTerm label="Data" value={formatTimestamp(selectedRecord.timestamp)} />
+                </dl>
+              </div>
+            ) : (
+              <p className="mt-4 text-sm leading-6 text-mild">
+                Selecione um registro para consultar seus detalhes e o recall vinculado.
+              </p>
+            )}
           </article>
         </aside>
       </div>
     </AppShell>
+  );
+}
+
+function SummaryCard({
+  icon,
+  label,
+  value,
+}: {
+  icon: JSX.Element;
+  label: string;
+  value: string;
+}) {
+  return (
+    <article className="rounded-3xl border border-line-strong bg-surface p-5 shadow-sm">
+      <div className="flex items-center gap-3">
+        <span className="rounded-2xl bg-app-inset p-3 text-mild">{icon}</span>
+        <span className="min-w-0">
+          <strong className="block text-sm text-strong">{label}</strong>
+          <span className="mt-1 block truncate text-sm text-mild">{value}</span>
+        </span>
+      </div>
+    </article>
+  );
+}
+
+function DetailTerm({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-4 border-t border-line pt-3">
+      <dt className="font-medium text-mild">{label}</dt>
+      <dd className="text-right font-semibold text-strong">{value}</dd>
+    </div>
   );
 }

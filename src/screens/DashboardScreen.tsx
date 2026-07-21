@@ -164,7 +164,7 @@ export function DashboardScreen() {
   return (
     <AppShell
       currentPath={`${location.pathname}${location.search}`}
-      title="Estatísticas"
+      title="Progresso"
       subtitle="Histórico de treinos, capturas e sintomas deste dispositivo."
     >
       <div className="mb-6 flex justify-end">
@@ -246,7 +246,10 @@ export function DashboardScreen() {
 
                   {selectedOcularGroup ? (
                     <div className="inline-flex max-w-full px-3 py-1.5 mb-2 rounded-full bg-accent-soft text-accent-strong text-xs font-bold">
-                      {selectedOcularGroup.label} · {selectedOcularGroup.points.length} {selectedOcularGroup.points.length === 1 ? 'registro' : 'registros'}
+                      {formatOcularGroupSummary(
+                        selectedOcularGroup.label,
+                        selectedOcularGroup.points.length,
+                      )}
                     </div>
                   ) : (
                     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-900 font-medium">
@@ -511,6 +514,10 @@ function orientationLabel(orientation: 'portrait' | 'landscape' | null): string 
 
 export function formatEstimatedMilliseconds(value: number | null): string {
   return value == null ? 'não estimável' : `${value} ms`;
+}
+
+export function formatOcularGroupSummary(label: string, count: number): string {
+  return `${label} · ${count} ${count === 1 ? 'registro' : 'registros'}`;
 }
 
 function OcularTooltip({ active, payload }: { active?: boolean; payload?: any[] }) {

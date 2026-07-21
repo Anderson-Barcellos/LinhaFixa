@@ -9,8 +9,20 @@ import { isCalibrated, getAccuracyDeg } from '@/services/gazeCalibration';
 import { clampViewingDistanceCm, normalizeViewingDistanceInput, viewingDistanceInputValue } from '@/services/viewingDistance';
 import { getTheme, setTheme, type Theme } from '@/services/theme';
 import { requestMotionPermissionFromGesture, startMotionSensor } from '@/services/motionSensor';
+import { confirmDeviceClass, resolveDeviceClass } from '@/services/deviceClass';
+import type { DeviceClass, UserProfile } from '@/types';
 import { Save, Eye, ScanEye } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+
+interface SettingsFormData {
+  name: string;
+  isAdult: boolean;
+  fontSizePreference: UserProfile['fontSizePreference'];
+  contrastPreference: UserProfile['contrastPreference'];
+  cameraEnabled: boolean;
+  viewingDistanceCm: string;
+  deviceClass: DeviceClass;
+}
 
 export function SettingsScreen() {
   const navigate = useNavigate();
@@ -22,23 +34,32 @@ export function SettingsScreen() {
   // Bump to refresh the calibration status label after calibrating.
   const [, setCalTick] = useState(0);
 
-  const [formData, setFormData] = useState({
-    name: profile?.name || '',
-    isAdult: profile?.isAdult ?? true,
-    fontSizePreference: profile?.fontSizePreference || 'normal',
-    contrastPreference: profile?.contrastPreference || 'light',
-    cameraEnabled: profile?.cameraEnabled ?? true,
-    viewingDistanceCm: viewingDistanceInputValue(profile?.viewingDistanceCm),
+  const [formData, setFormData] = useState<SettingsFormData>(() => {
+    const suggestedDevice = resolveDeviceClass(profile, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      maxTouchPoints: navigator.maxTouchPoints ?? 0,
+      coarsePointer: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+    });
+    return {
+      name: profile?.name ?? '',
+      isAdult: profile?.isAdult ?? true,
+      fontSizePreference: profile?.fontSizePreference ?? 'normal',
+      contrastPreference: profile?.contrastPreference ?? 'light',
+      cameraEnabled: profile?.cameraEnabled ?? true,
+      viewingDistanceCm: viewingDistanceInputValue(profile?.viewingDistanceCm),
+      deviceClass: profile?.deviceClass ?? suggestedDevice.deviceClass,
+    };
   });
 
   const handleSubmit = async () => {
-    // Basic types assertions for MVP
-    const updated = {
-	     ...formData,
-	     fontSizePreference: formData.fontSizePreference as any,
-	     contrastPreference: formData.contrastPreference as any,
-	     viewingDistanceCm: clampViewingDistanceCm(formData.viewingDistanceCm),
-	  };
+    const updated: UserProfile = {
+      ...formData,
+      ...confirmDeviceClass(formData.deviceClass),
+      fontSizePreference: formData.fontSizePreference,
+      contrastPreference: formData.contrastPreference,
+      viewingDistanceCm: clampViewingDistanceCm(formData.viewingDistanceCm),
+    };
     await saveProfile(updated);
     setProfile(updated);
     navigate('/');
@@ -97,12 +118,15 @@ export function SettingsScreen() {
               <label className="block text-sm font-bold text-mild uppercase tracking-widest mb-2">Tamanho da Fonte (Leitura)</label>
               <select 
                 value={formData.fontSizePreference}
-                onChange={e => setFormData({...formData, fontSizePreference: e.target.value as any})}
+                onChange={e => setFormData({
+                  ...formData,
+                  fontSizePreference: e.target.value as UserProfile['fontSizePreference'],
+                })}
                 className="w-full text-lg p-4 bg-surface-sunken rounded-xl border border-line-strong text-strong focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="small">Pequena</option>
                 <option value="normal">Normal</option>
                 <option value="large">Grande</option>
+                <option value="huge">Muito grande</option>
               </select>
             </div>
             
@@ -110,11 +134,15 @@ export function SettingsScreen() {
               <label className="block text-sm font-bold text-mild uppercase tracking-widest mb-2">Tema / Contraste (Leitura)</label>
               <select 
                 value={formData.contrastPreference}
-                onChange={e => setFormData({...formData, contrastPreference: e.target.value as any})}
+                onChange={e => setFormData({
+                  ...formData,
+                  contrastPreference: e.target.value as UserProfile['contrastPreference'],
+                })}
                 className="w-full text-lg p-4 bg-surface-sunken rounded-xl border border-line-strong text-strong focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="light">Claro (Fundo Branco)</option>
                 <option value="dark">Escuro (Alto Contraste)</option>
+                <option value="high-contrast">Contraste máximo</option>
               </select>
             </div>
 
@@ -148,6 +176,42 @@ export function SettingsScreen() {
                />
             </div>
           </div>
+
+          <fieldset>
+            <legend className="mb-3 block text-sm font-bold uppercase tracking-widest text-mild">
+              Classe deste dispositivo
+            </legend>
+            <p className="mb-4 text-sm leading-6 text-mild">
+              Confirme o aparelho atual. Séries longitudinais só comparam sessões da mesma classe.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {(['phone', 'tablet', 'desktop'] as const).map(value => (
+                <label
+                  key={value}
+                  className={`flex min-h-12 items-center gap-3 rounded-2xl border p-4 ${
+                    formData.deviceClass === value
+                      ? 'border-accent bg-accent-soft text-accent-strong'
+                      : 'border-line-strong text-mild'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="deviceClass"
+                    value={value}
+                    checked={formData.deviceClass === value}
+                    onChange={() => setFormData(previous => ({
+                      ...previous,
+                      deviceClass: value,
+                    }))}
+                    className="h-5 w-5 accent-indigo-600"
+                  />
+                  <span className="font-semibold">
+                    {value === 'phone' ? 'Celular' : value === 'tablet' ? 'Tablet' : 'Desktop'}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
           <div>
              <label className="flex items-center gap-4 p-6 bg-surface-sunken rounded-2xl cursor-pointer">

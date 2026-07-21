@@ -17,6 +17,7 @@ import {
 } from '@/services/routeModules';
 import { getProfile, hasConsent } from '@/services/storage';
 import { startAdaptiveCameraCodePreload } from '@/services/adaptivePreload';
+import type { UserProfile } from '@/types';
 
 import { ConsentScreen } from '@/screens/ConsentScreen';
 // A rota de entrada (/assessment) fica no bundle inicial: primeira pintura sem
@@ -44,7 +45,7 @@ export default function App() {
       setConsentAccepted(consent);
       if (!storedProfile && consent) {
          // Create default profile if none exists
-         const p = {
+         const p: UserProfile = {
            name: '', isAdult: true, fontSizePreference: 'normal' as const,
            contrastPreference: 'light' as const, cameraEnabled: true, viewingDistanceCm: 40
          };

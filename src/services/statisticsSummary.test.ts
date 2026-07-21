@@ -588,6 +588,11 @@ test('same signal on phone and tablet never shares a trend group', () => {
   assert.equal(partition.comparableGroups.length, 2);
   assert.match(partition.comparableGroups[0].label, /Celular/);
   assert.match(partition.comparableGroups[1].label, /Tablet/);
+  assert.equal(
+    partition.comparableGroups[0].label.indexOf('Celular')
+      < partition.comparableGroups[0].label.indexOf('Retrato'),
+    true,
+  );
 });
 
 test('suggested and legacy-inferred classes stay outside trends', () => {
