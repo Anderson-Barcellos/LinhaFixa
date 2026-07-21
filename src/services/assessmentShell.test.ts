@@ -3,22 +3,13 @@ import test from 'node:test';
 
 import { APP_SECTIONS } from './appSections.ts';
 
-test('APP_SECTIONS exposes Avaliacao as a first-class shell section', () => {
-  assert.equal(
-    APP_SECTIONS.some(section => section.id === 'assessment' && section.href === '/assessment'),
-    true,
-  );
-});
-
-test('APP_SECTIONS exposes Historico as a real shell route distinct from Progresso', () => {
-  const historySection = APP_SECTIONS.find(section => section.id === 'history');
-  const progressSection = APP_SECTIONS.find(section => section.id === 'progress');
-
-  assert.deepEqual(historySection, {
-    id: 'history',
-    label: 'Historico',
-    href: '/history',
-    available: true,
-  });
-  assert.notEqual(historySection?.href, progressSection?.href);
+test('the shell contract is Today, Sessions, Progress and Settings', () => {
+  assert.deepEqual(APP_SECTIONS, [
+    { id: 'today', label: 'Hoje', href: '/assessment', available: true },
+    { id: 'sessions', label: 'Sessões', href: '/history', available: true },
+    { id: 'progress', label: 'Progresso', href: '/dashboard', available: true },
+    { id: 'settings', label: 'Ajustes', href: '/settings', available: true },
+  ]);
+  assert.equal(APP_SECTIONS.some(section => String(section.href) === '/library'), false);
+  assert.equal(APP_SECTIONS.some(section => String(section.href) === '/player'), false);
 });

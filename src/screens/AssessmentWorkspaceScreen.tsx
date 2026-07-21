@@ -1,43 +1,49 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { BookOpenText, CheckCircle2, Clock3, ScanEye } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { AssessmentSetupPanel } from '@/components/assessment/AssessmentSetupPanel';
 import { AppShell } from '@/components/app/AppShell';
-import { getRecallTests, getValidationCaptures } from '@/services/storage';
+import { ExperimentNotebookScreen } from '@/components/notebook/ExperimentNotebookScreen';
+import { signalCameraIntent } from '@/services/adaptivePreload';
 import {
-  buildAssessmentWorkspaceSnapshot,
   deriveAssessmentWorkspaceLatestRecord,
   isLiveAssessmentWorkspace,
   LIVE_ASSESSMENT_WORKSPACE_ROUTE,
 } from '@/services/assessmentAdapter';
+import { buildExperimentNotebookProjection } from '@/services/experimentNotebookProjection';
 import { loadRouteModule } from '@/services/routeChunkRecovery';
 import { loadEyeTrackingTestModule } from '@/services/routeModules';
-import { signalCameraIntent } from '@/services/adaptivePreload';
-import type { AssessmentMode, RecallTestResult, ValidationCapture } from '@/types';
+import {
+  getRecallTests,
+  getSessions,
+  getValidationCaptures,
+} from '@/services/storage';
+import type {
+  AssessmentMode,
+  RecallTestResult,
+  SessionResult,
+  ValidationCapture,
+} from '@/types';
 
 // A superfície ocular é o módulo mais pesado do app (MediaPipe, análise, canvas);
 // carrega sob demanda ao entrar no workspace live, aquecida antes por idle/intent.
 const EyeTrackingTestScreen = lazy(() =>
-  loadRouteModule(loadEyeTrackingTestModule).then(module => ({ default: module.EyeTrackingTestScreen })),
+  loadRouteModule(loadEyeTrackingTestModule).then(module => ({
+    default: module.EyeTrackingTestScreen,
+  })),
 );
 
 function formatRelativeLabel(timestamp: number): string {
   const diffMs = Date.now() - timestamp;
   const diffMinutes = Math.max(1, Math.round(diffMs / 60000));
 
-  if (diffMinutes < 60) {
-    return `Ultima atividade ha ${diffMinutes} min`;
-  }
+  if (diffMinutes < 60) return `Última atividade há ${diffMinutes} min`;
 
   const diffHours = Math.round(diffMinutes / 60);
-  if (diffHours < 24) {
-    return `Ultima atividade ha ${diffHours} h`;
-  }
+  if (diffHours < 24) return `Última atividade há ${diffHours} h`;
 
-  const diffDays = Math.round(diffHours / 24);
-  return `Ultima atividade ha ${diffDays} dias`;
+  return `Última atividade há ${Math.round(diffHours / 24)} dias`;
 }
 
 function assessmentModeFromSearch(search: string): AssessmentMode {
@@ -55,15 +61,19 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [launcherOpen, setLauncherOpen] = useState(false);
+  const [todayTimestamp] = useState(() => Date.now());
+  const [sessions, setSessions] = useState<SessionResult[]>([]);
   const [captures, setCaptures] = useState<ValidationCapture[]>([]);
   const [recalls, setRecalls] = useState<RecallTestResult[]>([]);
 
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([getValidationCaptures(), getRecallTests()])
-      .then(([captureRows, recallRows]) => {
+    Promise.all([getSessions(), getValidationCaptures(), getRecallTests()])
+      .then(([sessionRows, captureRows, recallRows]) => {
         if (cancelled) return;
+        setSessions(sessionRows);
         setCaptures(captureRows);
         setRecalls(recallRows);
       })
@@ -91,24 +101,13 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
   const latestSessionLabel = latestRecord.timestamp !== null
     ? formatRelativeLabel(latestRecord.timestamp)
     : null;
-  const snapshot = useMemo(
-    () =>
-      buildAssessmentWorkspaceSnapshot({
-        mode: requestedMode,
-        readingTextState: 'ready',
-        capturing: false,
-        recallGenerating: false,
-        recallQuizOpen: false,
-        hasCaptureResult: latestRecord.hasCaptureResult,
-        captureCount: captures.length,
-        latestSessionLabel,
-        captureTitle: latestRecord.captureTitle,
-        recallResult: latestRecord.recallResult,
-      }),
-    [captures.length, latestRecord, latestSessionLabel, requestedMode],
+  const projection = useMemo(
+    () => buildExperimentNotebookProjection({ sessions, captures, recalls }),
+    [sessions, captures, recalls],
   );
 
   const openSession = (mode: AssessmentMode) => {
+    setLauncherOpen(false);
     navigate(liveAssessmentRoute(mode));
   };
 
@@ -119,7 +118,7 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
   if (liveWorkspace) {
     return (
       <div className="overflow-hidden bg-app-inset text-strong">
-        <div className="mx-auto h-[100dvh] max-w-7xl min-h-0">
+        <div className="mx-auto h-[100dvh] min-h-0 max-w-7xl">
           <Suspense fallback={<div className="h-full min-h-[100dvh] bg-slate-950" />}>
             <EyeTrackingTestScreen
               embedded
@@ -133,150 +132,25 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
   }
 
   return (
-    <AppShell
-      currentPath={location.pathname}
-      title={snapshot.heading}
-      subtitle={snapshot.subheading}
-    >
-      <div className="grid gap-4 md:gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,0.9fr)]">
-          <section className="space-y-4 md:space-y-6">
-            <AssessmentSetupPanel
-              latestSessionLabel={latestSessionLabel}
-              onStartCapture={() => openSession('capture')}
-              onStartRecall={() => openSession('recall')}
-              onWarmSession={signalCameraIntent}
-            />
-
-            <section className="rounded-3xl bg-ink p-5 text-ink-foreground shadow-lg md:rounded-[2rem] md:p-8">
-              <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-                <div className="max-w-2xl">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-200">
-                    <ScanEye className="h-3.5 w-3.5" />
-                    Workspace de avaliacao
-                  </div>
-                  <h2 data-testid="workspace-headline" className="mt-4 text-xl font-bold tracking-tight md:text-3xl">
-                    A shell clara agora abre a sessao real no proprio /assessment.
-                  </h2>
-                  <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-slate-300">
-                    A entrada oficial segue leve para preparar a sessão, enquanto a leitura,
-                    a captura ocular e o recall entram numa superfície escura imersiva sob a
-                    mesma família de rota.
-                  </p>
-                </div>
-
-                <div className="flex flex-col items-start gap-3 rounded-3xl border border-white/10 bg-white/10 p-4">
-                  <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">
-                    Estado atual
-                  </span>
-                  <strong className="text-lg md:text-xl">
-                    {liveWorkspace ? 'Sessao em andamento' : 'Pronto para iniciar'}
-                  </strong>
-                  <span className="text-sm text-slate-300">
-                    {snapshot.latestSessionLabel ?? 'Nenhuma atividade registrada ainda.'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-3 md:mt-8 md:gap-4 md:grid-cols-3">
-                <article className="rounded-2xl border border-white/10 bg-white/10 p-4 md:rounded-3xl md:p-5">
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-2xl bg-white/10 p-3 text-slate-100">
-                      <BookOpenText className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-white">
-                        Fluxo visível
-                      </p>
-                      <p className="text-sm text-slate-300">
-                        Setup claro fora, leitura e captura dentro da superfície escura.
-                      </p>
-                    </div>
-                  </div>
-                </article>
-
-                <article className="rounded-2xl border border-white/10 bg-white/10 p-4 md:rounded-3xl md:p-5">
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-2xl bg-white/10 p-3 text-slate-100">
-                      <CheckCircle2 className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-white">
-                        Capturas salvas
-                      </p>
-                      <p className="text-sm text-slate-300">
-                        {snapshot.savedCapturesLabel}
-                      </p>
-                    </div>
-                  </div>
-                </article>
-
-                <article className="rounded-2xl border border-white/10 bg-white/10 p-4 md:rounded-3xl md:p-5">
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-2xl bg-white/10 p-3 text-slate-100">
-                      <Clock3 className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-white">
-                        Ultima sessao
-                      </p>
-                      <p className="text-sm text-slate-300">
-                        {latestSessionLabel ?? 'Sem historico consolidado.'}
-                      </p>
-                    </div>
-                  </div>
-                </article>
-              </div>
-            </section>
-          </section>
-
-          <aside className="space-y-4 md:space-y-6">
-            {snapshot.resultSummary ? (
-              <article className="rounded-3xl border border-line-strong bg-surface p-5 shadow-sm md:rounded-[2rem] md:p-6">
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mild">
-                  Ultimo resultado
-                </p>
-                <h2 className="mt-3 text-xl font-bold text-strong md:text-2xl">
-                  {snapshot.resultSummary.title}
-                </h2>
-                <p className="mt-3 inline-flex rounded-full bg-app-inset px-3 py-1 text-sm font-semibold text-mild">
-                  {snapshot.resultSummary.badge}
-                </p>
-                <p className="mt-4 text-sm leading-6 text-mild">
-                  O histórico recente continua vindo do adapter já existente, sem alterar a
-                  persistência local das capturas e dos recalls.
-                </p>
-              </article>
-            ) : (
-              <article className="rounded-3xl border border-line-strong bg-surface p-5 shadow-sm md:rounded-[2rem] md:p-6">
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mild">
-                  Primeira avaliacao
-                </p>
-                <h2 className="mt-3 text-xl font-bold text-strong md:text-2xl">
-                  Tudo pronto para a primeira rodada
-                </h2>
-                <p className="mt-4 text-sm leading-6 text-mild">
-                  A partir daqui o /assessment já é a casa do fluxo inteiro, sem depender
-                  de uma tela paralela como dona da experiência real.
-                </p>
-              </article>
-            )}
-
-            <article className="rounded-[2rem] border border-line-strong bg-surface p-6 shadow-sm">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-mild">
-                Compatibilidade
-              </p>
-              <p className="mt-4 text-sm leading-6 text-mild">
-                <code>/eye-tracking-test</code> segue vivo apenas como atalho legado e
-                redireciona para a variante ativa desta mesma workspace.
-              </p>
-              {!loading ? (
-                <p className="mt-4 text-sm leading-6 text-mild">
-                  Modo sugerido agora: <strong>{latestRecord.mode === 'recall' ? 'Ler e responder' : 'Captura simples'}</strong>.
-                </p>
-              ) : null}
-            </article>
-          </aside>
-      </div>
+    <AppShell currentPath={location.pathname} title="Hoje" subtitle="" hideHeader>
+      <ExperimentNotebookScreen
+        projection={projection}
+        loading={loading}
+        todayTimestamp={todayTimestamp}
+        onNewSession={() => setLauncherOpen(true)}
+        onOpenRecord={() => navigate('/history')}
+        onOpenTraining={() => navigate('/player')}
+        onOpenLibrary={() => navigate('/library')}
+      />
+      {launcherOpen ? (
+        <AssessmentSetupPanel
+          latestSessionLabel={latestSessionLabel}
+          onStartCapture={() => openSession('capture')}
+          onStartRecall={() => openSession('recall')}
+          onWarmSession={signalCameraIntent}
+          onClose={() => setLauncherOpen(false)}
+        />
+      ) : null}
     </AppShell>
   );
 }
