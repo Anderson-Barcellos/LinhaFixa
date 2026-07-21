@@ -24,6 +24,7 @@ const validityInput = (overrides: Partial<CaptureValidityInput> = {}): CaptureVa
   sampleRateHz: 45,
   calibrationAccepted: true,
   calibrationCompatible: true,
+  deviceClassConfirmed: true,
   gapCount: 0,
   interruption: null,
   ...overrides,

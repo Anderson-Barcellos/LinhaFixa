@@ -24,9 +24,19 @@ const validInput = (overrides: Partial<CaptureValidityInput> = {}): CaptureValid
   sampleRateHz: 45,
   calibrationAccepted: true,
   calibrationCompatible: true,
+  deviceClassConfirmed: true,
   gapCount: 0,
   interruption: null,
   ...overrides,
+});
+
+test('unconfirmed device class keeps usable evidence exploratory', () => {
+  const snapshot = assessCaptureValidity(validInput({ deviceClassConfirmed: false }));
+  assert.equal(snapshot.grade, 'exploratory');
+  assert.deepEqual(snapshot.reasonCodes, ['capture-device-class-unconfirmed']);
+  assert.deepEqual(describeCaptureValidity(snapshot).reasons, [
+    'Classe de dispositivo ainda não confirmada',
+  ]);
 });
 
 test('classifyTemporalTier applies the exact 24 Hz and 45 Hz boundaries', () => {
@@ -312,6 +322,7 @@ test('describeCaptureValidity owns the canonical text for every reason code', ()
     ['capture-source-inconsistent', 'Fonte selecionada presente em menos de 90% das amostras'],
     ['capture-calibration-unavailable', 'Calibração aceita indisponível'],
     ['capture-calibration-incompatible', 'Calibração incompatível com a geometria da captura'],
+    ['capture-device-class-unconfirmed', 'Classe de dispositivo ainda não confirmada'],
     ['capture-coarse-temporal', 'Taxa temporal entre 24 e 44,99 Hz'],
     ['capture-insufficient-temporal', 'Taxa temporal abaixo de 24 Hz ou indisponível'],
     ['capture-source-unavailable', 'Sinal ocular indisponível'],

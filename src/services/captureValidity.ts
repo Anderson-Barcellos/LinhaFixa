@@ -13,6 +13,7 @@ export type CaptureValidityReasonCode =
   | 'capture-source-inconsistent'
   | 'capture-calibration-unavailable'
   | 'capture-calibration-incompatible'
+  | 'capture-device-class-unconfirmed'
   | 'capture-coarse-temporal'
   | 'capture-insufficient-temporal'
   | 'capture-source-unavailable'
@@ -59,6 +60,8 @@ export interface CaptureValidityInput {
   sampleRateHz: number | null | undefined;
   calibrationAccepted: boolean;
   calibrationCompatible: boolean;
+  // Optional only during legacy/caller transition; absence fails closed.
+  deviceClassConfirmed?: boolean;
   gapCount: number;
   interruption: CaptureInterruptionReason | null;
 }
@@ -134,6 +137,10 @@ export function assessCaptureValidity(input: CaptureValidityInput): CaptureValid
     }
   }
 
+  if (input.deviceClassConfirmed !== true) {
+    reasonCodes.push('capture-device-class-unconfirmed');
+  }
+
   const sampleRateHz = finiteAtLeast(input.sampleRateHz, 0);
   const temporalTier = classifyTemporalTier(sampleRateHz);
   if (temporalTier === 'coarse-temporal') {
@@ -202,6 +209,7 @@ const REASON_TEXT: Record<CaptureValidityReasonCode, string> = {
   'capture-source-inconsistent': 'Fonte selecionada presente em menos de 90% das amostras',
   'capture-calibration-unavailable': 'Calibração aceita indisponível',
   'capture-calibration-incompatible': 'Calibração incompatível com a geometria da captura',
+  'capture-device-class-unconfirmed': 'Classe de dispositivo ainda não confirmada',
   'capture-coarse-temporal': 'Taxa temporal entre 24 e 44,99 Hz',
   'capture-insufficient-temporal': 'Taxa temporal abaixo de 24 Hz ou indisponível',
   'capture-source-unavailable': 'Sinal ocular indisponível',

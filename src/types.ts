@@ -2,6 +2,9 @@ import type { PosturalStabilityMetrics } from '@/exercises/posturalStability';
 import type { CalibrationAssessment } from '@/services/calibrationValidity';
 import type { CaptureValiditySnapshot } from '@/services/captureValidity';
 
+export type DeviceClass = 'phone' | 'tablet' | 'desktop';
+export type DeviceClassSource = 'confirmed' | 'suggested' | 'legacy-inferred';
+
 export interface UserProfile {
   name: string;
   isAdult: boolean;
@@ -9,6 +12,9 @@ export interface UserProfile {
   contrastPreference: 'light' | 'dark' | 'high-contrast';
   cameraEnabled: boolean;
   viewingDistanceCm: number;
+  // Optional only for profiles saved before Caderno Experimental V2.
+  deviceClass?: DeviceClass;
+  deviceClassSource?: Extract<DeviceClassSource, 'confirmed' | 'suggested'>;
 }
 
 // Legacy 0-10 symptom questionnaire. Kept only so sessions saved before the quick
@@ -185,6 +191,9 @@ export interface AxisSignalSummary {
 }
 
 export interface CaptureEnvironment {
+  // Optional only when reading captures persisted before Caderno Experimental V2.
+  deviceClass?: DeviceClass;
+  deviceClassSource?: DeviceClassSource;
   layoutMode: 'compact' | 'desktop';
   viewport: {
     width: number;
