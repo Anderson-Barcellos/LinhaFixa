@@ -51,6 +51,7 @@ import {
   type SurfaceRect,
 } from '@/services/ocularSignalContract';
 import { buildAssessmentWorkspaceSnapshot } from '@/services/assessmentAdapter';
+import { resolveDeviceClass } from '@/services/deviceClass';
 
 // Standalone diagnostics screen: shows reading text, runs the front camera and
 // overlays a live gaze dot + detection status so we can validate that the eyes are
@@ -633,7 +634,15 @@ export function EyeTrackingTestScreen({
     const telemetry = readCameraPipelineTelemetry(video);
     const width = window.innerWidth;
     const height = window.innerHeight;
+    const device = resolveDeviceClass(profile, {
+      width,
+      height,
+      maxTouchPoints: navigator.maxTouchPoints ?? 0,
+      coarsePointer: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+    });
     const environment: CaptureEnvironment = {
+      deviceClass: device.deviceClass,
+      deviceClassSource: device.deviceClassSource,
       layoutMode: diagnosticsLayoutMode({ viewportWidth: width, hasTouch: IS_MOBILE }),
       viewport: {
         width,

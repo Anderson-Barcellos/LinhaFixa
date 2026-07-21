@@ -8,7 +8,7 @@ import {
   partitionOcularReadingSeries,
   resolveSelectedOcularGroupKey,
 } from './statisticsSummary';
-import { SessionResult, ValidationCapture } from '@/types';
+import { SessionResult, ValidationCapture, type DeviceClassSource } from '@/types';
 import type { CaptureValiditySnapshot } from './captureValidity';
 
 const baseSymptoms = {
@@ -49,6 +49,8 @@ test('builds dynamic section summaries from sessions and validation captures', (
           extraData: {
             intervals: [900, 1100, 1000],
             orientation: 'portrait',
+            deviceClass: 'phone',
+            deviceClassSource: 'confirmed',
             validity: validity('comparable'),
             saccadeMetrics: {
               trackingAvailable: true,
@@ -105,6 +107,16 @@ test('builds dynamic section summaries from sessions and validation captures', (
       sampleCount: 430,
       samples: [],
       orientation: 'portrait',
+      environment: {
+        deviceClass: 'phone',
+        deviceClassSource: 'confirmed',
+        layoutMode: 'compact',
+        viewport: { width: 390, height: 844, devicePixelRatio: 3, orientation: 'portrait' },
+        surfaceRect: { left: 0, top: 0, width: 390, height: 700 },
+        video: { width: 1280, height: 720 },
+        camera: { frameRate: 60 },
+        rates: { ocularSampleRateHz: 60 },
+      },
       durationMs: 20_000,
       validity: validity('comparable'),
     },
@@ -319,6 +331,16 @@ test('nullable fixation estimates stay null in the series and are ignored by sum
     sampleCount: 300,
     samples: [],
     orientation: 'portrait',
+    environment: {
+      deviceClass: 'phone',
+      deviceClassSource: 'confirmed',
+      layoutMode: 'compact',
+      viewport: { width: 390, height: 844, devicePixelRatio: 3, orientation: 'portrait' },
+      surfaceRect: { left: 0, top: 0, width: 390, height: 700 },
+      video: { width: 1280, height: 720 },
+      camera: { frameRate: 60 },
+      rates: { ocularSampleRateHz: 60 },
+    },
     durationMs: 20_000,
     validity: validity('comparable'),
   } satisfies ValidationCapture;
@@ -371,6 +393,7 @@ function diagnosticCapture(
   snapshot?: CaptureValiditySnapshot,
   orientation: ValidationCapture['orientation'] = 'portrait',
   meanFixationMs: number | null = 400,
+  deviceClassSource: DeviceClassSource | null = 'confirmed',
 ): ValidationCapture {
   return {
     id,
@@ -406,6 +429,18 @@ function diagnosticCapture(
     },
     axis: { hStd: 0.1, hRange: 0.4, vStd: 0.04, vRange: 0.1 },
     orientation,
+    environment: deviceClassSource && orientation
+      ? {
+          deviceClass: 'phone',
+          deviceClassSource,
+          layoutMode: 'compact',
+          viewport: { width: 390, height: 844, devicePixelRatio: 3, orientation },
+          surfaceRect: { left: 0, top: 0, width: 390, height: 700 },
+          video: { width: 1280, height: 720 },
+          camera: { frameRate: 60 },
+          rates: { ocularSampleRateHz: 60 },
+        }
+      : undefined,
     sampleCount: 360,
     samples: [],
     validity: snapshot,
@@ -418,7 +453,7 @@ test('partitions comparable captures by orientation, temporal tier and source wh
   const landscape = diagnosticCapture('landscape', 300, validity('comparable'), 'landscape');
   const coarse = diagnosticCapture('coarse', 400, validity('exploratory'));
   const interrupted = diagnosticCapture('interrupted', 500, validity('invalid'));
-  const legacy = diagnosticCapture('legacy', 600, undefined);
+  const legacy = diagnosticCapture('legacy', 600, undefined, 'portrait', 400, null);
 
   const points = buildOcularReadingSeries([], [portraitA, portraitB, landscape, coarse, interrupted, legacy]);
   const partition = partitionOcularReadingSeries(points);
@@ -443,6 +478,7 @@ test('partitions comparable captures by orientation, temporal tier and source wh
 test('routes comparable captures with missing orientation to audit instead of inventing a key', () => {
   const capture = diagnosticCapture('missing-orientation', 100, validity('comparable'));
   delete capture.orientation;
+  delete capture.environment;
   const point = buildOcularReadingSeries([], [capture])[0];
   const partition = partitionOcularReadingSeries([point]);
 
@@ -455,14 +491,17 @@ test('trend eligibility fails closed for malformed and unsupported runtime snaps
   const cases: Array<{ name: string; capture: ValidationCapture }> = [];
   const missingOrientation = diagnosticCapture('missing-orientation-runtime', 1, validity('comparable'));
   delete missingOrientation.orientation;
+  delete missingOrientation.environment;
   cases.push({ name: 'missing orientation', capture: missingOrientation });
 
   const unknownOrientation = diagnosticCapture('unknown-orientation', 2, validity('comparable'));
   unknownOrientation.orientation = 'square' as ValidationCapture['orientation'];
+  delete unknownOrientation.environment;
   cases.push({ name: 'unknown orientation', capture: unknownOrientation });
 
   const nullOrientation = diagnosticCapture('null-orientation', 3, validity('comparable'));
   nullOrientation.orientation = null as unknown as ValidationCapture['orientation'];
+  delete nullOrientation.environment;
   cases.push({ name: 'null orientation', capture: nullOrientation });
 
   for (const [name, tier] of [
@@ -527,8 +566,37 @@ test('trend eligibility fails closed for malformed and unsupported runtime snaps
 test('trend eligibility requires exact v1 comparable high-temporal calibrated evidence', () => {
   const capture = diagnosticCapture('eligible', 100, validity('comparable'), 'portrait');
   const point = buildOcularReadingSeries([], [capture])[0];
-  assert.equal(point.comparisonKey, 'portrait|high-temporal|calibrated-mediapipe');
+  assert.equal(point.comparisonKey, 'phone|portrait|high-temporal|calibrated-mediapipe');
   assert.equal(point.comparisonExclusionReason, null);
+});
+
+test('same signal on phone and tablet never shares a trend group', () => {
+  const phone = diagnosticCapture('phone', 100, validity('comparable'));
+  const tablet = diagnosticCapture('tablet', 200, validity('comparable'));
+  tablet.environment = {
+    ...tablet.environment!,
+    deviceClass: 'tablet',
+    deviceClassSource: 'confirmed',
+  };
+
+  const points = buildOcularReadingSeries([], [phone, tablet]);
+  const partition = partitionOcularReadingSeries(points);
+
+  assert.equal(points[0].deviceClass, 'phone');
+  assert.equal(points[0].deviceClassSource, 'confirmed');
+  assert.equal(points[0].comparisonKey, 'phone|portrait|high-temporal|calibrated-mediapipe');
+  assert.equal(partition.comparableGroups.length, 2);
+  assert.match(partition.comparableGroups[0].label, /Celular/);
+  assert.match(partition.comparableGroups[1].label, /Tablet/);
+});
+
+test('suggested and legacy-inferred classes stay outside trends', () => {
+  for (const source of ['suggested', 'legacy-inferred'] as const) {
+    const capture = diagnosticCapture(source, 100, validity('comparable'), 'portrait', 400, source);
+    const point = buildOcularReadingSeries([], [capture])[0];
+    assert.equal(point.comparisonKey, null, source);
+    assert.equal(point.comparisonExclusionReason, 'missing-comparison-context', source);
+  }
 });
 
 test('every comparable snapshot contradiction is audited with the canonical derived reason', () => {
@@ -628,6 +696,7 @@ test('builds separated AI diagnostic arrays without a combined trend payload', (
   assert.equal(payload.comparableDiagnosticCaptures[0].validity.temporalTier, 'high-temporal');
   assert.equal(payload.comparableDiagnosticCaptures[0].validity.selectedSourceRatio, 0.96);
   assert.equal(payload.comparableDiagnosticCaptures[0].validity.durationMs, 20_000);
+  assert.equal(payload.comparableDiagnosticCaptures[0].deviceClass, 'phone');
   assert.equal(payload.comparableDiagnosticCaptures[0].posturalLabel, 'Postura estável');
   assert.equal(payload.comparableDiagnosticCaptures[0].cervicalStability, 90);
   assert.equal(payload.comparableDiagnosticCaptures[0].posturalBaselineApplied, true);
@@ -690,6 +759,7 @@ test('limits AI session summary to the eight newest sessions without mutating in
 test('ocular validity counts reconcile grade, trend eligibility and audit exclusion', () => {
   const missingContext = diagnosticCapture('comparable-missing-context', 100, validity('comparable'));
   delete missingContext.orientation;
+  delete missingContext.environment;
   const summary = buildStatisticsSummary([], [missingContext]);
 
   assert.deepEqual(summary.overview.ocularValidity, {

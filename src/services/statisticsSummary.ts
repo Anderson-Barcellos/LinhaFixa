@@ -2,6 +2,8 @@ import {
   SessionResult,
   SymptomRating,
   ValidationCapture,
+  type DeviceClass,
+  type DeviceClassSource,
   type PreTestContext,
   type ValidationConditions,
 } from '@/types';
@@ -36,6 +38,8 @@ export interface OcularReadingPoint {
   comparisonKey: string | null;
   comparisonExclusionReason: TrendExclusionReason | null;
   orientation: 'portrait' | 'landscape' | null;
+  deviceClass: DeviceClass | null;
+  deviceClassSource: DeviceClassSource | null;
   saveProvenance: 'saved-session' | 'saved-capture';
 }
 
@@ -54,6 +58,7 @@ export interface DiagnosticInsightRecord {
   id: string;
   date: string;
   orientation: OcularReadingPoint['orientation'];
+  deviceClass: DeviceClass | null;
   saccades: number;
   regressions: number;
   lineReturns: number | null;
@@ -189,7 +194,14 @@ export function buildOcularReadingSeries(
         if (!metrics) return null;
         const runtimeValidity = captureValidityOrLegacy(exercise.extraData?.validity);
         const orientation = normalizeOrientation(exercise.extraData?.orientation);
-        const eligibility = trendEligibility(runtimeValidity, orientation);
+        const deviceClass = normalizeDeviceClass(exercise.extraData?.deviceClass);
+        const deviceClassSource = normalizeDeviceClassSource(exercise.extraData?.deviceClassSource);
+        const eligibility = trendEligibility(
+          runtimeValidity,
+          orientation,
+          deviceClass,
+          deviceClassSource,
+        );
         const validity = presentationSafeValidity(runtimeValidity);
         const signalQuality = summarizeSaccadeSignalQuality(metrics, {
           coverage: exercise.extraData?.signalCoverage ?? null,
@@ -215,6 +227,8 @@ export function buildOcularReadingSeries(
           comparisonKey: eligibility.key,
           comparisonExclusionReason: eligibility.reason,
           orientation,
+          deviceClass,
+          deviceClassSource,
           saveProvenance: 'saved-session' as const,
         };
       })
@@ -225,7 +239,14 @@ export function buildOcularReadingSeries(
     const orientation = normalizeOrientation(
       capture.orientation ?? capture.environment?.viewport.orientation,
     );
-    const eligibility = trendEligibility(runtimeValidity, orientation);
+    const deviceClass = normalizeDeviceClass(capture.environment?.deviceClass);
+    const deviceClassSource = normalizeDeviceClassSource(capture.environment?.deviceClassSource);
+    const eligibility = trendEligibility(
+      runtimeValidity,
+      orientation,
+      deviceClass,
+      deviceClassSource,
+    );
     const validity = presentationSafeValidity(runtimeValidity);
     const signalQuality = summarizeSaccadeSignalQuality(capture.metrics, {
       coverage: capture.coverage,
@@ -253,6 +274,8 @@ export function buildOcularReadingSeries(
       comparisonKey: eligibility.key,
       comparisonExclusionReason: eligibility.reason,
       orientation,
+      deviceClass,
+      deviceClassSource,
       saveProvenance: 'saved-capture' as const,
     };
   });
@@ -544,14 +567,16 @@ function diagnosticsSummary(
 function trendEligibility(
   validity: CaptureValiditySnapshot,
   orientation: OcularReadingPoint['orientation'],
+  deviceClass: DeviceClass | null,
+  deviceClassSource: DeviceClassSource | null,
 ): { key: string | null; reason: TrendExclusionReason | null } {
   const validation = validatePersistedCaptureValidityForTrend(validity);
   if (!validation.eligible) return { key: null, reason: validation.reason };
-  if (!isOrientation(orientation)) {
+  if (!isOrientation(orientation) || !deviceClass || deviceClassSource !== 'confirmed') {
     return { key: null, reason: 'missing-comparison-context' };
   }
   return {
-    key: `${orientation}|high-temporal|calibrated-mediapipe`,
+    key: `${deviceClass}|${orientation}|${validity.temporalTier}|${validity.signalSource}`,
     reason: null,
   };
 }
@@ -584,11 +609,26 @@ function normalizeOrientation(value: unknown): OcularReadingPoint['orientation']
   return isOrientation(value) ? value : null;
 }
 
+function normalizeDeviceClass(value: unknown): DeviceClass | null {
+  return value === 'phone' || value === 'tablet' || value === 'desktop' ? value : null;
+}
+
+function normalizeDeviceClassSource(value: unknown): DeviceClassSource | null {
+  return value === 'confirmed' || value === 'suggested' || value === 'legacy-inferred'
+    ? value
+    : null;
+}
+
 function isOrientation(value: unknown): value is NonNullable<OcularReadingPoint['orientation']> {
   return value === 'portrait' || value === 'landscape';
 }
 
 function comparisonLabel(point: OcularReadingPoint): string {
+  const device = point.deviceClass === 'phone'
+    ? 'Celular'
+    : point.deviceClass === 'tablet'
+      ? 'Tablet'
+      : 'Desktop';
   const orientation = point.orientation === 'portrait' ? 'Retrato' : 'Paisagem';
   const tier = point.validity.temporalTier === 'high-temporal'
     ? '≥45 Hz'
@@ -600,7 +640,7 @@ function comparisonLabel(point: OcularReadingPoint): string {
     : point.validity.signalSource === 'raw-mediapipe'
       ? 'Bruto'
       : 'Sem fonte';
-  return `${orientation} · ${tier} · ${source}`;
+  return `${device} · ${orientation} · ${tier} · ${source}`;
 }
 
 function diagnosticInsightRecord(
@@ -611,6 +651,7 @@ function diagnosticInsightRecord(
     id: point.id,
     date: new Date(point.timestamp).toISOString(),
     orientation: point.orientation,
+    deviceClass: point.deviceClass,
     saccades: point.saccades,
     regressions: point.regressions,
     lineReturns: point.lineReturns,

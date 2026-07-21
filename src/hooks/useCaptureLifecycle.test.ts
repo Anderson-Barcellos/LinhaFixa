@@ -3,10 +3,18 @@ import { test } from 'node:test';
 import {
   CAPTURE_SAFETY_CAP_MS,
   captureCoveragePct,
+  captureDeviceClassConfirmed,
   captureTickAction,
   medianCaptureDistanceCm,
   routeCaptureSample,
 } from './useCaptureLifecycle';
+
+test('only an explicitly confirmed frozen environment is validity-eligible', () => {
+  assert.equal(captureDeviceClassConfirmed({ deviceClassSource: 'confirmed' }), true);
+  assert.equal(captureDeviceClassConfirmed({ deviceClassSource: 'suggested' }), false);
+  assert.equal(captureDeviceClassConfirmed({ deviceClassSource: 'legacy-inferred' }), false);
+  assert.equal(captureDeviceClassConfirmed({}), false);
+});
 
 test('routeCaptureSample drops blinking frames entirely (no buffer, no extrapolation count)', () => {
   const routing = routeCaptureSample({

@@ -97,6 +97,12 @@ export function captureCoveragePct(faceFrames: number, totalFrames: number): num
   return totalFrames ? (faceFrames / totalFrames) * 100 : 0;
 }
 
+export function captureDeviceClassConfirmed(
+  environment: Pick<CaptureEnvironment, 'deviceClassSource'>,
+): boolean {
+  return environment.deviceClassSource === 'confirmed';
+}
+
 // Geometric provenance: median of the live distance estimates (robust to blinks
 // and brief tracking losses). Even-length input takes the upper middle, matching
 // the original inline Math.floor(length / 2) indexing.
@@ -314,6 +320,7 @@ export function useCaptureLifecycle(options: UseCaptureLifecycleOptions): Captur
       sampleRateHz: metrics.sampleRateHz,
       calibrationAccepted: startSnapshot.calibrationAssessment?.accepted === true,
       calibrationCompatible: startSnapshot.compatibility.reusable,
+      deviceClassConfirmed: captureDeviceClassConfirmed(environment),
       gapCount: countTrackingGaps(samples),
       interruption,
     });

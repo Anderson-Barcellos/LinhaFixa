@@ -23,6 +23,7 @@ import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
 import { PreTestContext, PostTestContext, TreatmentPlanResponse, SessionResult, ExerciseResult } from '@/types';
 import { formatSampleRateHz } from '@/services/sampleRatePresentation';
 import { createAsyncOperationGate, guardedAwait } from '@/services/asyncOperation';
+import { resolveDeviceClass, type DeviceClassDecision } from '@/services/deviceClass';
 
 type PlayerStage = 'PRE_CONTEXT' | 'LOADING_PLAN' | 'BLOCKED' | 'PRE_EXERCISE_INFO' | 'CALIBRATION' | 'RECALIBRATION_PROMPT' | 'EXERCISE' | 'POST_READING_RATING' | 'POST_CONTEXT' | 'SUMMARY';
 
@@ -51,6 +52,7 @@ export function ExercisePlayerScreen() {
   const [calibrationMismatchReasons, setCalibrationMismatchReasons] = useState<string[]>([]);
   const [forceRawSignal, setForceRawSignal] = useState(false);
   const cameraPreflightGateRef = useRef(createAsyncOperationGate());
+  const sessionDeviceRef = useRef<DeviceClassDecision | null>(null);
   // Manual stop: truncate the running exercise via its finishExercise pipeline
   // (partial result saved) instead of discarding the run outright.
   const stopExerciseRef = useRef<(() => void) | null>(null);
@@ -141,6 +143,12 @@ export function ExercisePlayerScreen() {
   };
 
   const handlePreContextSubmit = async () => {
+    sessionDeviceRef.current = resolveDeviceClass(profile, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      maxTouchPoints: navigator.maxTouchPoints ?? 0,
+      coarsePointer: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+    });
     const safety = checkContextSafety(contextPre);
     if (!safety.safe) {
       setSafetyReason(safety.reason!);
@@ -191,7 +199,15 @@ export function ExercisePlayerScreen() {
 
   const handleExerciseFinish = (score: number, stillness: number | null, extraData?: any) => {
     const curParam = plan!.exercises[currentExerciseIndex].parameters;
-    const exerciseCompleted = !extraData?.invalidReason;
+    const device = sessionDeviceRef.current;
+    const persistedExtraData = {
+      ...extraData,
+      ...(device ? {
+        deviceClass: device.deviceClass,
+        deviceClassSource: device.deviceClassSource,
+      } : {}),
+    };
+    const exerciseCompleted = !persistedExtraData.invalidReason;
     const newResult: ExerciseResult = {
       exerciseId: plan!.exercises[currentExerciseIndex].exerciseId,
       completed: exerciseCompleted,
@@ -199,7 +215,7 @@ export function ExercisePlayerScreen() {
       headStillnessScore: stillness,
       parametersUsed: curParam,
       timestamp: Date.now(),
-      extraData
+      extraData: persistedExtraData,
     };
     
     setResults([...results, newResult]);
@@ -212,8 +228,8 @@ export function ExercisePlayerScreen() {
       return;
     }
 
-    if (extraData && !extraData.invalidReason && Array.isArray(extraData.intervals)) {
-       setReadingExtraData(extraData);
+    if (!persistedExtraData.invalidReason && Array.isArray(persistedExtraData.intervals)) {
+       setReadingExtraData(persistedExtraData);
        setStage('POST_READING_RATING');
        return;
     }
