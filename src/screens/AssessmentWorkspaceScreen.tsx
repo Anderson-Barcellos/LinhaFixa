@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -15,6 +15,7 @@ import { buildExperimentNotebookProjection } from '@/services/experimentNotebook
 import { resolveDeviceClass } from '@/services/deviceClass';
 import { loadRouteModule } from '@/services/routeChunkRecovery';
 import { loadEyeTrackingTestModule } from '@/services/routeModules';
+import { measurementViewportSnapshot } from '@/services/measurementViewport';
 import {
   getRecallTests,
   getSessions,
@@ -70,6 +71,7 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
   const [captures, setCaptures] = useState<ValidationCapture[]>([]);
   const [recalls, setRecalls] = useState<RecallTestResult[]>([]);
   const [sessionViewportHeight, setSessionViewportHeight] = useState<number | null>(null);
+  const sessionOrientationRef = useRef<'portrait' | 'landscape' | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,9 +125,55 @@ export function AssessmentWorkspaceScreen(): JSX.Element {
   useLayoutEffect(() => {
     if (!liveWorkspace) {
       setSessionViewportHeight(null);
+      sessionOrientationRef.current = null;
       return;
     }
-    setSessionViewportHeight(window.visualViewport?.height ?? window.innerHeight);
+
+    let settleFrameOne: number | null = null;
+    let settleFrameTwo: number | null = null;
+    let settleTimer: number | null = null;
+
+    const cancelSettling = () => {
+      if (settleFrameOne !== null) window.cancelAnimationFrame(settleFrameOne);
+      if (settleFrameTwo !== null) window.cancelAnimationFrame(settleFrameTwo);
+      if (settleTimer !== null) window.clearTimeout(settleTimer);
+      settleFrameOne = null;
+      settleFrameTwo = null;
+      settleTimer = null;
+    };
+    const readSnapshot = () => measurementViewportSnapshot({
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      visualViewportHeight: window.visualViewport?.height,
+    });
+    const commitSnapshot = () => {
+      const snapshot = readSnapshot();
+      sessionOrientationRef.current = snapshot.orientation;
+      setSessionViewportHeight(snapshot.height);
+    };
+    const settleOrientationChange = () => {
+      cancelSettling();
+      commitSnapshot();
+      settleFrameOne = window.requestAnimationFrame(() => {
+        settleFrameTwo = window.requestAnimationFrame(commitSnapshot);
+      });
+      settleTimer = window.setTimeout(commitSnapshot, 250);
+    };
+    const handleViewportChange = () => {
+      const nextOrientation = readSnapshot().orientation;
+      if (nextOrientation !== sessionOrientationRef.current) settleOrientationChange();
+    };
+
+    commitSnapshot();
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('orientationchange', handleViewportChange);
+    window.visualViewport?.addEventListener('resize', handleViewportChange);
+    return () => {
+      cancelSettling();
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('orientationchange', handleViewportChange);
+      window.visualViewport?.removeEventListener('resize', handleViewportChange);
+    };
   }, [liveWorkspace]);
 
   const openSession = (mode: AssessmentMode, exploratory = false) => {

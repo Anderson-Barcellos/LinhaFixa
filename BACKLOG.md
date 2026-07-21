@@ -2,7 +2,7 @@ Arquivo operacional do Codex neste repositorio. Nao confundir com notas do Claud
 
 # Estado do projeto
 
-Atualizado em 2026-07-18. Este arquivo registra somente a frente ativa, os limites
+Atualizado em 2026-07-21. Este arquivo registra somente a frente ativa, os limites
 atuais e as proximas frentes reais. O historico detalhado permanece no Git.
 
 ## PACK Reconstrucao do App Linha Fixa (active)
@@ -134,6 +134,25 @@ Ledger visual referencia + render:
 Gate manual ainda aberto para a revisao de Anders: Safari real em iPhone e iPad
 com permissao de camera, rotacao durante captura, variacao de `VisualViewport` e
 safe areas. O BUNDLE nao deve ser marcado como fechado antes dessa revisao.
+
+Ajuste da revisao fisica de 2026-07-21 (iPhone landscape):
+
+- causa reproduzida: a altura visual congelada em portrait (844 px no perfil de
+  teste) permanecia apos a rotacao para 390 px, deixando o documento rolavel;
+- a altura continua imune ao abre/fecha da barra do Safari na mesma orientacao,
+  mas agora e recalculada quando portrait/landscape realmente muda;
+- somente o perfil fisico `phone` em landscape troca a engine por um gate curto
+  de rotacao. Ao voltar a portrait, a mesma sessao retoma automaticamente;
+- tablet e desktop nao recebem o gate; o iPad continua com a engine completa em
+  landscape. Nao houve copia nem bifurcacao do motor ocular;
+- TDD: novo smoke falhou em 7/14 antes da correcao e passou 14/14 depois. Gate
+  completo: `npm test` 395/395, `npm run lint`, build prefixado com bundle inicial
+  106283/180000 bytes gzip e `npm run smoke` com notebook 63/63, layout 165/165,
+  phone-portrait 14/14, validade 72/72,
+  assessment 9/9 e loading 43/43. `real-tab-hidden` segue BLOCKED no headless.
+
+Gate manual remanescente: Anders confirmar no Safari fisico que o aviso ocupa a
+tela sem rolagem em landscape e que a sessao reaparece ao retornar a portrait.
 
 ### Limites atuais
 

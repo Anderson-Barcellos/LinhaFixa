@@ -28,7 +28,6 @@ const MEDIAPIPE_PATH = `/${MEDIAPIPE_PUBLIC_ROOT}`;
 const VIEWPORTS = [
   { name: 'phone-small', width: 320, height: 568, touch: true, expectDesktopPanel: false, drawer: 'sheet', checkCalibration: false },
   { name: 'phone', width: 390, height: 844, touch: true, expectDesktopPanel: false, drawer: 'sheet', checkCalibration: true },
-  { name: 'rotated-phone', width: 844, height: 390, touch: true, expectDesktopPanel: false, drawer: 'side', checkCalibration: true },
   { name: 'tablet', width: 834, height: 1194, touch: true, expectDesktopPanel: false, drawer: 'sheet', checkCalibration: false, expectPortraitSurface: true },
   { name: 'compact-desktop', width: 1024, height: 768, touch: false, expectDesktopPanel: true, checkCalibration: false },
   { name: 'desktop', width: 1366, height: 768, touch: false, expectDesktopPanel: true, checkCalibration: false },

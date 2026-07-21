@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Camera, Check, Play, RotateCcw, Crosshair, Trash2, Database } from 'lucide-react';
 import { AssessmentResultPanel } from '@/components/assessment/AssessmentResultPanel';
 import { AssessmentSessionSurface, SESSION_TITLES } from '@/components/assessment/AssessmentSessionSurface';
+import { PhonePortraitGate } from '@/components/assessment/PhonePortraitGate';
 import { useAppStore } from '@/store/useAppStore';
 import { extractGazeFeatures, getLastLandmarks } from '@/services/faceTracking';
 import {
@@ -52,6 +53,7 @@ import {
 } from '@/services/ocularSignalContract';
 import { buildAssessmentWorkspaceSnapshot } from '@/services/assessmentAdapter';
 import { resolveDeviceClass } from '@/services/deviceClass';
+import { requiresPhonePortrait } from '@/services/measurementViewport';
 import { backendFailureMessage, networkBackendFailure } from '@/services/apiFailure';
 import { hasUnsavedAssessmentResult } from '@/services/assessmentSessionController';
 import {
@@ -79,11 +81,9 @@ const POSTURE_OPTIONS: [ValidationPosture, string][] = [['upright', 'Reta'], ['t
 const optionLabel = <T extends string>(options: [T, string][], value: T) =>
   options.find(([v]) => v === value)?.[1] ?? value;
 
-// Phones expose the front camera off-axis in landscape, but we prefer landscape anyway:
-// reading saccades are horizontal, so a wide line gives the webcam a bigger, cleaner
-// signal, and the flow (not the exact gaze position) is what we measure. IS_MOBILE gates
-// the gentle orientation nudge below; touch is our proxy for "rotates camera with orientation".
-const IS_MOBILE = typeof navigator !== 'undefined'
+// Touch capability selects the compact diagnostics shell. Measurement orientation
+// is decided separately so phone portrait does not alter tablet/desktop behavior.
+const HAS_TOUCH_INPUT = typeof navigator !== 'undefined'
   && (navigator.maxTouchPoints > 0 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent));
 
 interface LiveSnapshot {
@@ -809,9 +809,15 @@ export function EyeTrackingTestScreen({
     URL.revokeObjectURL(url);
   };
 
-  const diagnosticsLayout = diagnosticsLayoutMode({ viewportWidth, hasTouch: IS_MOBILE });
+  const diagnosticsLayout = diagnosticsLayoutMode({ viewportWidth, hasTouch: HAS_TOUCH_INPUT });
   const isDesktopDiagnosticsLayout = diagnosticsLayout === 'desktop';
   const drawerVariant: DrawerVariant = isLandscape ? 'side' : 'sheet';
+  const phonePortraitRequired = requiresPhonePortrait({
+    width: viewportWidth,
+    height: viewportHeight,
+    maxTouchPoints: HAS_TOUCH_INPUT ? Math.max(1, navigator.maxTouchPoints ?? 0) : 0,
+    coarsePointer: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+  });
   // Effective display scale (OS scaling × browser zoom). On desktop, ≠100% means the
   // physical size of a CSS px differs from the 96dpi assumption behind the angular
   // stimulus sizes; the value is already persisted per capture via CaptureEnvironment.
@@ -855,7 +861,7 @@ export function EyeTrackingTestScreen({
     const environment: CaptureEnvironment = {
       deviceClass: device.deviceClass,
       deviceClassSource: device.deviceClassSource,
-      layoutMode: diagnosticsLayoutMode({ viewportWidth: width, hasTouch: IS_MOBILE }),
+      layoutMode: diagnosticsLayoutMode({ viewportWidth: width, hasTouch: HAS_TOUCH_INPUT }),
       viewport: {
         width,
         height,
@@ -899,6 +905,19 @@ export function EyeTrackingTestScreen({
       environment,
     };
   };
+
+  const leaveScreen = () => {
+    stopCamera('navigation-during-capture');
+    if (onExit) {
+      onExit();
+      return;
+    }
+    navigate('/');
+  };
+
+  if (phonePortraitRequired) {
+    return <PhonePortraitGate onExit={leaveScreen} />;
+  }
 
   if (showCalibration) {
     return (
@@ -960,15 +979,6 @@ export function EyeTrackingTestScreen({
     testMode === 'recall'
       ? 'Leia o texto, acompanhe a captura ocular e responda ao recall na mesma sessao.'
       : 'Prepare a leitura guiada, valide o enquadramento e capture a dinamica ocular no mesmo fluxo.';
-  const leaveScreen = () => {
-    stopCamera('navigation-during-capture');
-    if (onExit) {
-      onExit();
-      return;
-    }
-    navigate('/');
-  };
-
   const Chip = ({ ok, label, neutral }: { key?: React.Key; ok: boolean; label: string; neutral?: boolean }) => (
     <span className={`px-3 py-1 rounded-full text-sm font-bold ${
       neutral ? 'bg-slate-700 text-slate-200'
@@ -1645,14 +1655,6 @@ export function EyeTrackingTestScreen({
         </div>
       )}
 
-      {/* On phones we nudge toward landscape: reading saccades are horizontal, so a wide
-          line gives the webcam a bigger, cleaner signal. Gentle — portrait still works. */}
-      {cameraState === 'running' && IS_MOBILE && !isLandscape && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-600/90 backdrop-blur text-sm font-semibold shadow-lg pointer-events-none max-w-[90%]">
-          <RotateCcw className="w-4 h-4 shrink-0" />
-          <span>Gire para paisagem — a leitura flui melhor deitada</span>
-        </div>
-      )}
     </div>
   );
 }
