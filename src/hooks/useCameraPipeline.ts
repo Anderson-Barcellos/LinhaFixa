@@ -6,9 +6,9 @@ import {
   getDetectionTelemetry,
   initFaceTracking,
   isFaceTrackingActive,
-  shouldDropGazeForBlink,
   type HeadPose,
 } from '@/services/faceTracking';
+import { createBlinkGateTracker } from '@/services/blinkGate';
 import {
   attachStream,
   discardFrontCameraRequest,
@@ -117,6 +117,7 @@ export function useCameraPipeline(options: UseCameraPipelineOptions): CameraPipe
   // Latest committed callbacks: the frame loop is created once per camera start,
   // so it reads these refs instead of a render-frozen closure.
   const onFrameRef = useRef(options.onFrame);
+  const blinkGateRef = useRef(createBlinkGateTracker());
   const shouldProcessFrameRef = useRef(options.shouldProcessFrame);
   const onLoopStartRef = useRef(options.onLoopStart);
   const onMotionSensorStartedRef = useRef(options.onMotionSensorStarted);
@@ -145,7 +146,7 @@ export function useCameraPipeline(options: UseCameraPipelineOptions): CameraPipe
     // Blink-corrupted gaze is rejected, while coverage still counts the detected face.
     // Missing blendshape data remains fail-open so detection does not look dead.
     const blinkScore = getBlinkScore();
-    const blinking = shouldDropGazeForBlink(blinkScore);
+    const blinking = blinkGateRef.current.update(blinkScore, ts);
 
     const fps = updateFrameWindow(frameTimesRef.current, ts);
     const coverage = updateCoverageWindow(coverageWindowRef.current, ts, faceFound);
@@ -172,6 +173,7 @@ export function useCameraPipeline(options: UseCameraPipelineOptions): CameraPipe
     runningRef.current = true;
     frameTimesRef.current = [];
     coverageWindowRef.current = [];
+    blinkGateRef.current.reset();
     onLoopStartRef.current?.();
     frameLoopRef.current?.stop();
     frameLoopRef.current = startVideoFrameLoop(videoRef.current!, loop);

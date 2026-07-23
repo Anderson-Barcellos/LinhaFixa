@@ -178,6 +178,34 @@ Gate manual remanescente: Anders confirmar no Safari fisico que o aviso ocupa a
 tela sem rolagem em landscape, que a sessao reaparece ao retornar a portrait e
 que o indicador/tracado deixa de aceitar amostras durante o fechamento palpebral.
 
+BUNDLE 60fps-ready (2026-07-22, plano `docs/plans/2026-07-22-60fps-ready.md`):
+
+- contexto: camera passou a entregar 60fps no desktop (constraint `ideal: 60` de
+  `9fda6d0` finalmente honrada) e expos tres defeitos: EMA do trilho ambar ingerindo
+  frames de piscada (`if (gaze)` sem `!blinking` — o dot calibrado anda nesse trilho
+  via renderY), alphas de EMA por-frame dobrando a responsividade a 60fps, e gate de
+  piscada binario (0.5) deixando passar 2x mais frames de borda por segundo;
+- entregue: `emaTiming.ts` (alpha = 1−exp(−dt/τ); τ 1650ms trilho, 200ms distancia —
+  reproduzem os alphas legados a 30fps), `blinkGate.ts` (histerese entra 0.5/sai 0.25,
+  hold temporal 100ms, purge retroativo 80ms da borda de subida), fiacao nos tres
+  loops (useCameraPipeline com reset por sessao, ExerciseCanvas, CalibrationOverlay),
+  `stimulusDistance` com `emaTauMs` opcional (legado preservado), e fonte estavel no
+  EyeTrackingTestScreen (congela via stimulusDistance apos convergir; deteccao ao vivo
+  so alimenta o check de tolerancia — adendo de Anders 22/07: texto "respirando" com a
+  deteccao e inutilizavel);
+- evidencia fresca: TDD red→green nas tasks 1, 2 e 7 (o teste de equivalencia 30/60fps
+  do stimulusDistance precisou de janela de 200ms para discriminar o alpha legado);
+  `npm test` 407/407 (395 previos + 12 novos), lint limpo, build prefixado
+  106290/180000 bytes gzip, smokes layout 165/165, loading 43/43, notebook 63/63,
+  phone-portrait 14/14. `real-tab-hidden` segue BLOCKED no headless (pre-existente);
+- `linhafixa.service` reiniciado e ativo; endpoint publico 200 servindo o bundle novo
+  `index-DqrD3ly7.js`.
+
+Gate manual do BUNDLE: **APROVADO por Anders em 2026-07-22** (teste no desktop
+60fps — "o gate deu certo"). BUNDLE fechado. Commit ainda nao autorizado (repo
+segue ahead do origin); calibracao fisica px/cm segue fora de escopo, PACK futuro
+(a pesquisa `/pesquisa-light` das Frentes estacionadas informa essa decisao).
+
 ### Limites atuais
 
 - Persistencia continua local em IndexedDB v3; SQLite, outbox, sync, Basic Auth e
@@ -198,6 +226,12 @@ plano detalhado dessas frentes fica ativo antes da escolha de Anders.
 - Repetibilidade e Sanidade do Instrumento: analise teste-reteste e painel de
   sanidade aguardam ativacao.
 - Deteccao de Pescoco PN4: thresholds finais dependem de capturas reais do iPhone.
+- Pesquisa frontend oculomotor (2026-07-22): rodar `/pesquisa-light` sobre
+  práticas inegociáveis de apresentação de estímulo em apps webcam sem chinrest
+  (angular vs. absoluto, calibração px/cm sem hardware, normalização por
+  dispositivo, alvo de fixação, distância variável). Pergunta + 5 ângulos
+  anotados na memória `gaze-pesquisa-frontend-oculomotor`; resultado decide o
+  PACK de calibração física px/cm. Relatório destino: `docs/research/`.
 
 ## Fontes de verdade
 

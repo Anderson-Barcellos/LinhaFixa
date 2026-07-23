@@ -133,3 +133,26 @@ test('hysteresis boundaries are strict: exactly 15% does not enter, exactly 12% 
   for (let i = 0; i < 100; i++) { t += 100; snap = exitTracker.update(56, t); }
   assert.equal(snap.inDrift, true);
 });
+
+test('emaTauMs makes the distance EMA frame-rate independent', () => {
+  // Mesmo 1s de amostras a 55cm partindo de 40cm, em passos de 33.3ms vs 16.7ms; o
+  // freeze por timeout expõe o EMA interno para comparação (assert relativo, não absoluto).
+  const mk = () => createStimulusDistanceTracker({
+    profileDistanceCm: 40,
+    emaTauMs: 200,
+    freezeTimeoutMs: 10_000,
+    convergenceWindowMs: 10_000,
+  });
+  const f30 = mk(); const f60 = mk();
+  f30.update(40, 0); f60.update(40, 0);
+  // 200ms (= 1τ): curto o bastante pra alpha fixo por-frame divergir ~3.5cm entre os fps.
+  for (let i = 1; i <= 6; i++) f30.update(55, i * (100 / 3));
+  for (let i = 1; i <= 12; i++) f60.update(55, i * (100 / 6));
+  assert.equal(f30.snapshot().phase, 'stabilizing');
+  assert.equal(f60.snapshot().phase, 'stabilizing');
+  // Congelar com dt mínimo pra não puxar o EMA além de um passo desprezível.
+  const s30 = f30.update(null, 20_000);
+  const s60 = f60.update(null, 20_000);
+  assert.equal(s30.phase, 'frozen');
+  assert.ok(Math.abs(s30.frozenDistanceCm! - s60.frozenDistanceCm!) < 0.5);
+});

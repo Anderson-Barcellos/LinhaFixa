@@ -6,6 +6,9 @@ import { AssessmentSessionSurface, SESSION_TITLES } from '@/components/assessmen
 import { PhonePortraitGate } from '@/components/assessment/PhonePortraitGate';
 import { useAppStore } from '@/store/useAppStore';
 import { extractGazeFeatures, getLastLandmarks } from '@/services/faceTracking';
+import { emaAlpha, RAW_V_EMA_TAU_MS, DISTANCE_EMA_TAU_MS } from '@/services/emaTiming';
+import { createStimulusDistanceTracker } from '@/services/stimulusDistance';
+import { purgeLeadingBlinkSamples } from '@/services/blinkGate';
 import {
   interpupillaryPx, estimateDistanceCm, getDistanceAnchor, readingFontCssPx, readingFontAngleDeg,
   distanceWithinAnchorTolerance,
@@ -326,6 +329,9 @@ export function EyeTrackingTestScreen({
   const lastLivePushRef = useRef(0);
   const visualSignalSamplesRef = useRef<VisualSignalSample[]>([]);
   const rawVEmaRef = useRef<number | null>(null);
+  const lastFrameTsRef = useRef<number | null>(null);
+  const prevBlinkingRef = useRef(false);
+  const screenDistanceTrackerRef = useRef<ReturnType<typeof createStimulusDistanceTracker> | null>(null);
   const textRef = useRef(text);
   const layoutRef = useRef<{ w: number; h: number; font: number; lines: string[] } | null>(null);
   // Reading font is sized by visual angle: target angle (from preference) + the live
@@ -449,6 +455,14 @@ export function EyeTrackingTestScreen({
   const handleFrame = (frame: CameraPipelineFrame) => {
     const { ts, video, pose, gaze, faceFound, eyesFound, blinking } = frame;
     const canvas = canvasRef.current;
+    const dtMs = lastFrameTsRef.current != null ? ts - lastFrameTsRef.current : null;
+    lastFrameTsRef.current = ts;
+    // Borda de subida da piscada: as amostras dos últimos ~80ms já entraram no traçado
+    // com a íris parcialmente coberta (score ainda abaixo do enter threshold) — remover.
+    if (blinking && !prevBlinkingRef.current) {
+      purgeLeadingBlinkSamples(visualSignalSamplesRef.current, ts);
+    }
+    prevBlinkingRef.current = blinking;
 
     if (canvas) {
       // Distance from IPD (detect already ran in the pipeline hook) → font sized by
@@ -457,13 +471,24 @@ export function EyeTrackingTestScreen({
       const anchor = getDistanceAnchor();
       const ipdPx = interpupillaryPx(getLastLandmarks(), video.videoWidth || 1280, video.videoHeight || 720);
       const dEst = estimateDistanceCm(ipdPx, anchor, profileDistanceRef.current);
-      distanceRef.current = distanceRef.current * 0.85 + dEst * 0.15; // EMA smoothing
+      const distAlpha = dtMs == null ? 1 : emaAlpha(dtMs, DISTANCE_EMA_TAU_MS);
+      distanceRef.current = distanceRef.current + (dEst - distanceRef.current) * distAlpha;
       // Calibrated gaze is only trusted while the user stays near the distance the
       // model was calibrated at; outside the tolerance the mapping is extrapolating.
       const distanceOk = distanceWithinAnchorTolerance(distanceRef.current, anchor?.distanceCm ?? null);
+      // Fonte estável: mede a distância, congela após convergir e não segue mais a
+      // detecção — texto que "respira" com o tracking é inutilizável para leitura.
+      // O EMA ao vivo (distanceRef) segue existindo só para o check de tolerância.
+      if (!screenDistanceTrackerRef.current) {
+        screenDistanceTrackerRef.current = createStimulusDistanceTracker({
+          profileDistanceCm: profileDistanceRef.current,
+          emaTauMs: DISTANCE_EMA_TAU_MS,
+        });
+      }
+      const stimulusSnap = screenDistanceTrackerRef.current.update(ipdPx != null && anchor ? dEst : null, ts);
       const fontPx = capturingRef.current && frozenFontPxRef.current != null
         ? frozenFontPxRef.current
-        : Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
+        : Math.round(readingFontCssPx(fontAngleRef.current, stimulusSnap.distanceCm));
 
       const coverage = frame.coverage;
 
@@ -553,12 +578,13 @@ export function EyeTrackingTestScreen({
         }
         drawFunctionalSignalTrace(ctx, visualSignalSamplesRef.current, cssW, cssH, isDark, dotCalibrated);
       }
-      // Slow EMA (~1.5s) of the raw vertical ratio: the amber dot's resting line,
-      // stripped of frame jitter and blink dips.
-      if (gaze) {
-        rawVEmaRef.current = rawVEmaRef.current == null
+      // Slow EMA (~1.5s) of the raw vertical ratio: the amber dot's resting line.
+      // Blink frames must NOT enter the rail — the calibrated dot rides it (renderY),
+      // so an unguarded EMA turns every eyelid dip into vertical dot motion.
+      if (gaze && !blinking) {
+        rawVEmaRef.current = rawVEmaRef.current == null || dtMs == null
           ? gaze.v
-          : rawVEmaRef.current * 0.98 + gaze.v * 0.02;
+          : rawVEmaRef.current + (gaze.v - rawVEmaRef.current) * emaAlpha(dtMs, RAW_V_EMA_TAU_MS);
       }
       if (dot && !blinking) {
         const color = dotCalibrated ? '#2563eb' : '#f59e0b';

@@ -2,7 +2,9 @@ import React, { useRef, useEffect, useState } from 'react';
 import { registry } from '@/exercises/implementations';
 import { measuredSurfaceFromEntry, measuredSurfaceEquals, type MeasuredSurface } from '@/services/measuredSurface';
 import { ExerciseParameters } from '@/types';
-import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive, getBlinkScore, shouldDropGazeForBlink, getLastLandmarks } from '@/services/faceTracking';
+import { estimateHeadPose, estimateGaze, extractGazeFeatures, initFaceTracking, isFaceTrackingActive, getBlinkScore, getLastLandmarks } from '@/services/faceTracking';
+import { createBlinkGateTracker } from '@/services/blinkGate';
+import { DISTANCE_EMA_TAU_MS } from '@/services/emaTiming';
 import { getCalibrationAssessment, isCalibrated, predictNorm } from '@/services/gazeCalibration';
 import { interpupillaryPx, estimateDistanceCm, getDistanceAnchor, distanceWithinAnchorTolerance } from '@/services/viewingGeometry';
 import { attachStream, getFrontCameraStream } from '@/services/cameraStream';
@@ -73,7 +75,8 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
     // Stimulus geometry: freeze the live distance at start, then only observe drift.
     // Absolute distance needs the calibration anchor (IPD→cm is relative to it);
     // without an anchor the sample is null and the tracker falls back to the profile.
-    const stimulusTracker = createStimulusDistanceTracker({ profileDistanceCm: viewingDistanceCm });
+    const stimulusTracker = createStimulusDistanceTracker({ profileDistanceCm: viewingDistanceCm, emaTauMs: DISTANCE_EMA_TAU_MS });
+    const blinkGate = createBlinkGateTracker();
     let stimulusSnap: StimulusDistanceSnapshot = stimulusTracker.snapshot();
 
     const setup = async () => {
@@ -251,7 +254,7 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
            const distanceOk = distanceWithinAnchorTolerance(dEst, anchor?.distanceCm ?? null);
            // Reject blink-corrupted gaze before exercise capture/projection. Missing
            // blendshape data remains fail-open through the shared gate helper.
-           const blinking = shouldDropGazeForBlink(getBlinkScore());
+           const blinking = blinkGate.update(getBlinkScore(), exContext.timeMs);
            // Capture gaze for exercises that consume it (e.g. assisted reading).
            exContext.latestGaze = blinking ? null : estimateGaze(videoRef.current, detectTs, exContext.timeMs);
            // Project the calibrated point of gaze into canvas pixels, if calibrated.

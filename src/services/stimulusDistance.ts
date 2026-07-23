@@ -18,7 +18,10 @@ export interface StimulusDistanceSnapshot {
 
 export interface StimulusDistanceOptions {
   profileDistanceCm: number;
+  /** Legado: alpha fixo por chamada (fps-dependente). Ignorado quando emaTauMs é dado. */
   emaAlpha?: number;
+  /** Constante de tempo do EMA em ms — alpha = 1 − exp(−dt/τ), fps-independente. */
+  emaTauMs?: number;
   convergenceWindowMs?: number;
   convergenceSpanPct?: number;
   freezeTimeoutMs?: number;
@@ -45,6 +48,7 @@ export function createStimulusDistanceTracker(opts: StimulusDistanceOptions) {
   let maxDeviationPct = 0;
   let driftMs = 0;
   let lastT: number | null = null;
+  let lastUpdateT: number | null = null;
 
   const freeze = (value: number, from: 'measured' | 'profile', t: number) => {
     frozen = clampViewingDistanceCm(value);
@@ -69,7 +73,12 @@ export function createStimulusDistanceTracker(opts: StimulusDistanceOptions) {
   const update = (sampleCm: number | null, tMs: number): StimulusDistanceSnapshot => {
     if (startT == null) startT = tMs;
     const validSample = sampleCm != null && Number.isFinite(sampleCm) && sampleCm > 0;
-    if (validSample) ema = ema == null ? sampleCm! : ema * (1 - alpha) + sampleCm! * alpha;
+    const dt = lastUpdateT != null ? tMs - lastUpdateT : null;
+    lastUpdateT = tMs;
+    const alphaNow = opts.emaTauMs != null && dt != null && dt > 0
+      ? 1 - Math.exp(-dt / opts.emaTauMs)
+      : alpha;
+    if (validSample) ema = ema == null ? sampleCm! : ema + (sampleCm! - ema) * alphaNow;
 
     if (frozen == null) {
       // Only a genuinely measured sample may add to the convergence window — a

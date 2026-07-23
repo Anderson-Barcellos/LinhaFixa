@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLandmarks, estimateHeadPose, getBlinkScore, shouldDropGazeForBlink } from '@/services/faceTracking';
+import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLandmarks, estimateHeadPose, getBlinkScore } from '@/services/faceTracking';
+import { createBlinkGateTracker } from '@/services/blinkGate';
 import {
   acceptPendingCalibration,
   addCalibrationSample,
@@ -252,6 +253,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
       }
     };
 
+    const blinkGate = createBlinkGateTracker();
     const loop = () => {
       if (cancelled || !runningRef.current) return;
       const video = videoRef.current;
@@ -276,7 +278,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           // The shared gate rejects blink-corrupted samples before fit/validation;
           // the point timeout turns an abnormally high eyeBlink baseline into an
           // explicit rejected attempt instead of silently training a distorted model.
-          const blinking = shouldDropGazeForBlink(getBlinkScore());
+          const blinking = blinkGate.update(getBlinkScore(), now);
           if (feat && !blinking) {
             // detect() just ran inside extractGazeFeatures, so the landmarks are fresh.
             const ipd = interpupillaryPx(getLastLandmarks(), video.videoWidth || 1280, video.videoHeight || 720);
