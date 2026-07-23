@@ -9,7 +9,7 @@ import { isCalibrated, getAccuracyDeg } from '@/services/gazeCalibration';
 import { clampViewingDistanceCm, normalizeViewingDistanceInput, viewingDistanceInputValue } from '@/services/viewingDistance';
 import { getTheme, setTheme, type Theme } from '@/services/theme';
 import { requestMotionPermissionFromGesture, startMotionSensor } from '@/services/motionSensor';
-import { confirmDeviceClass, resolveDeviceClass } from '@/services/deviceClass';
+import { confirmDeviceClass, defaultViewingDistanceCm, resolveDeviceClass } from '@/services/deviceClass';
 import type { DeviceClass, UserProfile } from '@/types';
 import { Save, Eye, ScanEye } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -47,7 +47,11 @@ export function SettingsScreen() {
       fontSizePreference: profile?.fontSizePreference ?? 'normal',
       contrastPreference: profile?.contrastPreference ?? 'light',
       cameraEnabled: profile?.cameraEnabled ?? true,
-      viewingDistanceCm: viewingDistanceInputValue(profile?.viewingDistanceCm),
+      // Distância salva pelo usuário manda; sem valor salvo, semeia pela classe do
+      // dispositivo (não sobrescreve ajuste manual — só preenche o vazio).
+      viewingDistanceCm: profile?.viewingDistanceCm != null
+        ? viewingDistanceInputValue(profile.viewingDistanceCm)
+        : String(defaultViewingDistanceCm(profile?.deviceClass ?? suggestedDevice.deviceClass)),
       deviceClass: profile?.deviceClass ?? suggestedDevice.deviceClass,
     };
   });
@@ -202,6 +206,9 @@ export function SettingsScreen() {
                     onChange={() => setFormData(previous => ({
                       ...previous,
                       deviceClass: value,
+                      // Seed editável: trocar a classe repõe a distância média do aparelho;
+                      // o campo continua ajustável à mão logo abaixo.
+                      viewingDistanceCm: String(defaultViewingDistanceCm(value)),
                     }))}
                     className="h-5 w-5 accent-indigo-600"
                   />

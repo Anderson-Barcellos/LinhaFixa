@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   confirmDeviceClass,
+  defaultViewingDistanceCm,
   inferLegacyDeviceClass,
   resolveDeviceClass,
   suggestDeviceClass,
@@ -33,6 +34,18 @@ test('an unconfirmed suggestion is explicit and cannot enter trends', () => {
     deviceClass: 'phone',
     deviceClassSource: 'confirmed',
   });
+});
+
+test('each device class seeds its population-mean viewing distance', () => {
+  // Distância assumida ancora a calibração do IPD e o fallback do stimulus-distance:
+  // errar a média por classe enviesa a escala de TODA a medição angular subsequente.
+  assert.equal(defaultViewingDistanceCm('phone'), 33);
+  assert.equal(defaultViewingDistanceCm('tablet'), 45);
+  assert.equal(defaultViewingDistanceCm('desktop'), 60);
+});
+
+test('an unknown device class falls back to the neutral default distance', () => {
+  assert.equal(defaultViewingDistanceCm(undefined), 40);
 });
 
 test('legacy inference is conservative and never claims confirmation', () => {

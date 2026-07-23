@@ -1,4 +1,4 @@
-const DEFAULT_DISTANCE_CM = 40;
+export const DEFAULT_DISTANCE_CM = 40;
 const MIN_DISTANCE_CM = 20;
 const MAX_DISTANCE_CM = 120;
 

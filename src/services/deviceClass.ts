@@ -1,4 +1,21 @@
 import type { DeviceClass, DeviceClassSource, UserProfile } from '@/types';
+import { DEFAULT_DISTANCE_CM } from './viewingDistance';
+
+// Distância de visualização média (cm) por classe de dispositivo. Esse valor ancora
+// a calibração do IPD (CalibrationOverlay) e serve de fallback do stimulus-distance
+// quando a medição ao vivo não converge — logo, é a escala de referência do ângulo
+// visual, não um mero placeholder. Desktop ~60cm é a referência da literatura webcam
+// (50–70cm); phone 33 / tablet 45 vêm da ergonomia geral de leitura por aparelho.
+const DEVICE_CLASS_VIEWING_DISTANCE_CM: Record<DeviceClass, number> = {
+  phone: 33,
+  tablet: 45,
+  desktop: 60,
+};
+
+export function defaultViewingDistanceCm(deviceClass: DeviceClass | undefined | null): number {
+  if (!deviceClass) return DEFAULT_DISTANCE_CM;
+  return DEVICE_CLASS_VIEWING_DISTANCE_CM[deviceClass];
+}
 
 export interface DeviceCapabilities {
   width: number;
