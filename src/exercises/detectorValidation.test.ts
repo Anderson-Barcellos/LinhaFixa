@@ -100,10 +100,13 @@ test('validateSaccadeDetector reports zero detection when gaze never responds', 
 
 test('validateSaccadeDetector counts spurious gaze movement as false positives', () => {
   const samples = buildFollowingRun(6000, 160);
-  // Inject a spurious flick between jumps: gaze darts +100px and back around t=2200,
-  // holding each level for 3 samples so the median filter does not absorb it.
+  // Inject a spurious flick between jumps: gaze darts +100px and back around
+  // t=2200. The detour must last long enough to read as a rest of its own
+  // (>= the 100ms minimum fixation), otherwise it is the eye passing through
+  // rather than landing, and the fixation-first detector correctly ignores it.
+  // At 25Hz that means six samples, not three.
   for (const s of samples) {
-    if (s.gaze && s.t >= 2200 && s.t < 2320) s.gaze = { x: s.gaze.x + 100, y: s.gaze.y };
+    if (s.gaze && s.t >= 2200 && s.t < 2440) s.gaze = { x: s.gaze.x + 100, y: s.gaze.y };
   }
 
   const metrics = validateSaccadeDetector(samples, WIDTH, HEIGHT);

@@ -15,7 +15,8 @@ import {
   loadHistoryModule,
   loadSettingsModule,
 } from '@/services/routeModules';
-import { getProfile, hasConsent } from '@/services/storage';
+import { getProfile, hasConsent, reprocessStoredCaptures } from '@/services/storage';
+import { GAZE_ANALYZER_VERSION } from '@/services/captureReprocess';
 import { startAdaptiveCameraCodePreload } from '@/services/adaptivePreload';
 import type { UserProfile } from '@/types';
 
@@ -54,6 +55,21 @@ export default function App() {
       setHydrated(true);
     });
   }, [setProfile, setConsentAccepted]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    // Lift captures recorded by an older analyser onto the current one so the
+    // series stays comparable end to end. Idempotent and non-destructive (the
+    // original metrics are kept in legacyMetrics), so a failure here must never
+    // block the app — the captures simply stay on their recorded version.
+    reprocessStoredCaptures()
+      .then(summary => {
+        if (summary.reprocessed > 0) {
+          console.info(`[linhafixa] ${summary.reprocessed}/${summary.total} capturas remedidas com o analisador v${GAZE_ANALYZER_VERSION}.`);
+        }
+      })
+      .catch(error => console.warn('[linhafixa] reprocessamento de capturas falhou', error));
+  }, [hydrated]);
 
   useEffect(() => {
     if (!hydrated || !consentAccepted) return;

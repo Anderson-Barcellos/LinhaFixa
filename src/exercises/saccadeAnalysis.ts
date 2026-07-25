@@ -1,19 +1,42 @@
 import { GazeSample, SaccadeMetrics, SaccadeEvent } from '@/types';
+import { detectFixations, dispersion } from './fixationDetection';
+import { saccadesFromFixations, dispersionThresholdFor } from './saccadesFromFixations';
 
 export type { SaccadeEvent };
 
-// Simplified velocity-threshold (I-VT) saccade detector over webcam gaze samples.
+// Fixation-first reading analyser over webcam gaze samples.
 //
-// Honest limitations: webcam gaze is noisy and device/browser frame-rate dependent.
-// This estimates coarse SACCADES and FIXATIONS during reading; it CANNOT detect
-// microsaccades. Amplitudes are in normalized gaze-ratio units, not degrees, and
-// should be read as relative/approximate.
+// This used to be a velocity-threshold (I-VT) detector. It was replaced because
+// I-VT asks the signal a question it cannot answer: a saccade lasts 30-80ms, so at
+// 24-60Hz it spans 1-5 samples and its internal velocity is below Nyquist. Worse,
+// a fixed velocity cut makes the smallest detectable amplitude proportional to dt
+// (0.083 ratio units at 30fps vs 0.042 at 60fps), so the same eye produced
+// different saccade counts on different cameras and a personal baseline stopped
+// being comparable with itself.
+//
+// Fixations last 200-300ms — 6 to 18 samples in the same range — so they ARE
+// resolvable. We detect those and derive each saccade from the transition between
+// consecutive fixations. Every parameter below is a duration or a spatial extent;
+// none is per-frame, so the analysis is invariant to the negotiated frame rate.
+//
+// Honest limitations, unchanged: this estimates coarse reading saccades and
+// fixations; it CANNOT detect microsaccades or a saccade's peak velocity.
+// Amplitudes are in normalized gaze-ratio units, not degrees, and should be read
+// as relative/approximate.
 
-// Horizontal gaze-ratio change per millisecond above which motion counts as a saccade.
-// Time-normalized so the threshold remains interpretable across negotiated FPS.
-const VELOCITY_THRESHOLD = 0.0025; // ratio units / ms
-// Ignore tiny saccades that are likely tracking noise.
+// Version of the analysis this module produces, stamped onto every SaccadeMetrics.
+// 1 (implicit, absent on old records) = velocity-threshold detector, frame-rate
+// dependent. 2 = fixation-first. Values from different versions are NOT
+// comparable; captureReprocess.ts lifts old records onto the current version by
+// re-running this analyser over their persisted raw signal.
+export const GAZE_ANALYZER_VERSION = 2;
+
+// Ignore tiny displacements between neighbouring fixations: centroid wobble, not
+// a jump of the eye.
 const MIN_SACCADE_AMPLITUDE = 0.04; // ratio units
+// Shortest rest accepted as a fixation. Reading fixations run 200-300ms; below
+// 100ms it is more likely the eye passing through than stopping.
+const MIN_FIXATION_MS = 100;
 // Leftward saccades large enough are line-return sweeps (the eye jumping back to
 // start the next line), not re-reading regressions. Counting them as regressions
 // would inflate the clinical regression ratio by ~1 per line read.
@@ -68,6 +91,7 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
       samplesValid: valid.length,
       signalSource: options.signalSource ?? 'unavailable',
       sampleRateHz: sampleRateHz(valid),
+      analyzerVersion: GAZE_ANALYZER_VERSION,
       saccadeCount: 0,
       regressionCount: 0,
       lineReturnCount: 0,
@@ -78,54 +102,26 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
   }
 
   valid.sort((a, b) => a.t - b.t);
+  // The median filter still earns its place: it removes isolated landmark spikes
+  // that would otherwise inflate a fixation window's dispersion and split one
+  // fixation into two.
   const h = medianFilter3(valid.map(s => s.h));
+  const filtered: GazeSample[] = valid.map((s, i) => ({ ...s, h: h[i] }));
 
-  let inSaccade = false;
-  let saccadeStartH = 0;
-  let saccadeStartT = valid[0].t;
-  let lastSaccadeEndT = valid[0].t;
-  // True when the interval since lastSaccadeEndT contains a tracking gap.
-  let gapInFixation = false;
+  // Detect what the webcam can actually resolve — the eye standing still — and
+  // read the saccades off the transitions between those rests. See
+  // fixationDetection.ts for why velocity thresholding cannot work at 24-60Hz.
+  const fixations = detectFixations(filtered, {
+    dispersionThreshold: dispersionThresholdFor(dispersion(filtered)),
+    minDurationMs: MIN_FIXATION_MS,
+    maxGapMs: MAX_FIXATION_GAP_MS,
+  });
+  const fixationDurations = fixations.map(f => f.durationMs);
 
-  const fixationDurations: number[] = [];
-  // Detected saccade candidates, classified in a second pass once the whole
-  // capture's progressive amplitudes are known (the line-return cut is relative).
-  const candidates: { amplitude: number; tStart: number; tEnd: number }[] = [];
-
-  const closeSaccade = (amplitude: number, tStart: number, tEnd: number) => {
-    if (Math.abs(amplitude) < MIN_SACCADE_AMPLITUDE) return;
-    candidates.push({ amplitude, tStart, tEnd });
-  };
-
-  for (let i = 1; i < valid.length; i++) {
-    const prev = valid[i - 1];
-    const cur = valid[i];
-    const dt = cur.t - prev.t;
-    if (dt <= 0) continue;
-    if (dt > MAX_FIXATION_GAP_MS) gapInFixation = true;
-    const velocity = Math.abs(h[i] - h[i - 1]) / dt;
-
-    if (!inSaccade && velocity > VELOCITY_THRESHOLD) {
-      // Saccade begins: close the preceding fixation, unless tracking dropped out
-      // somewhere inside it.
-      inSaccade = true;
-      saccadeStartH = h[i - 1];
-      saccadeStartT = prev.t;
-      const fixation = prev.t - lastSaccadeEndT;
-      if (!gapInFixation && fixation > 0) fixationDurations.push(fixation);
-    } else if (inSaccade && velocity <= VELOCITY_THRESHOLD) {
-      // Saccade ends.
-      inSaccade = false;
-      closeSaccade(h[i] - saccadeStartH, saccadeStartT, cur.t);
-      lastSaccadeEndT = cur.t;
-      gapInFixation = false;
-    }
-  }
-
-  // If we ended while still in a saccade, close it using the last sample.
-  if (inSaccade) {
-    closeSaccade(h[h.length - 1] - saccadeStartH, saccadeStartT, valid[valid.length - 1].t);
-  }
+  // Saccade candidates, classified in a second pass once the whole capture's
+  // progressive amplitudes are known (the line-return cut is relative).
+  const candidates: { amplitude: number; tStart: number; tEnd: number }[] =
+    saccadesFromFixations(fixations, { minAmplitude: MIN_SACCADE_AMPLITUDE });
 
   // Second pass: derive the line-return cut from this capture's own progressive
   // amplitudes, then route each candidate to its bucket. Line-return sweeps stay
@@ -162,6 +158,7 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
     samplesValid: valid.length,
     signalSource: options.signalSource,
     sampleRateHz: sampleRateHz(valid),
+    analyzerVersion: GAZE_ANALYZER_VERSION,
     saccadeCount: amplitudes.length,
     regressionCount,
     lineReturnCount,

@@ -1,6 +1,7 @@
 import { openDB, DBSchema } from 'idb';
 import { UserProfile, SessionResult, ValidationCapture, PreTestContext, RecallTestResult } from '@/types';
 import { selectTodayPreContext } from './preTestContext';
+import { needsReprocessing, reprocessCapture, type ReprocessSummary } from './captureReprocess';
 
 interface LinhaFixaDB extends DBSchema {
   profile: {
@@ -113,6 +114,31 @@ export async function getValidationCaptures(): Promise<ValidationCapture[]> {
 export async function deleteValidationCapture(id: string) {
   const db = await initDB();
   await db.delete('validationCaptures', id);
+}
+
+// Re-measures every stored capture with the current analyser so the whole series
+// is comparable end to end. Only records that carry a raw signal and an outdated
+// analyzerVersion are touched, and each keeps its original metrics in
+// legacyMetrics, so this is idempotent and destroys nothing. Runs in one
+// transaction: either the whole series is lifted or none of it is.
+export async function reprocessStoredCaptures(): Promise<ReprocessSummary> {
+  const db = await initDB();
+  const stored = await db.getAll('validationCaptures');
+  const pending = stored.filter(needsReprocessing);
+
+  if (pending.length === 0) {
+    return { total: stored.length, reprocessed: 0, skipped: stored.length };
+  }
+
+  const tx = db.transaction('validationCaptures', 'readwrite');
+  await Promise.all(pending.map(capture => tx.store.put(reprocessCapture(capture))));
+  await tx.done;
+
+  return {
+    total: stored.length,
+    reprocessed: pending.length,
+    skipped: stored.length - pending.length,
+  };
 }
 
 export async function saveRecallTest(result: RecallTestResult) {

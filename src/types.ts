@@ -103,6 +103,11 @@ export interface SaccadeMetrics {
   samplesValid: number;       // number of usable gaze samples
   signalSource?: 'calibrated-mediapipe' | 'raw-mediapipe' | 'unavailable';
   sampleRateHz?: number;
+  // Which analyser produced these numbers. Absent means version 1, the old
+  // velocity-threshold (I-VT) detector, whose sensitivity depended on the
+  // negotiated frame rate — those values are NOT comparable with version 2
+  // (fixation-first) without reprocessing the raw signal. See captureReprocess.ts.
+  analyzerVersion?: number;
   saccadeCount: number;           // reading saccades (progressive + regressions), excludes line returns
   regressionCount: number;        // saccades against the reading direction (re-reading), excludes line returns
   lineReturnCount?: number;       // large leftward sweeps back to the next line start (absent on legacy captures)
@@ -233,6 +238,10 @@ export interface ValidationCapture {
   coverage: number; // % of frames with a detected face
   calibrated: boolean; // whether the gaze samples came from the calibrated model
   metrics: SaccadeMetrics;
+  // The metrics this capture carried before it was reprocessed onto a newer
+  // analyser. Written once, on the first reprocessing, and never overwritten:
+  // the original measurement is kept so no reading of Anders' series is lost.
+  legacyMetrics?: SaccadeMetrics;
   postural: PosturalStabilityMetrics;
   axis: AxisSignalSummary;
   environment?: CaptureEnvironment;
