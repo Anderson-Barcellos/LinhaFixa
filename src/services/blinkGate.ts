@@ -9,11 +9,15 @@ import { BLINK_REJECT_THRESHOLD, BLINK_REJECT_GATE_ENABLED, isBlinking } from '.
 export const BLINK_EXIT_THRESHOLD = 0.25;
 export const BLINK_HOLD_MS = 100;
 export const BLINK_LEADING_PURGE_MS = 80;
+// Duração máxima de uma piscada completa (fechamento + reabertura). A literatura
+// põe a piscada espontânea em 100-400ms; 500ms cobre a cauda com folga.
+export const MAX_BLINK_MS = 500;
 
 export interface BlinkGateOptions {
   enterThreshold?: number;
   exitThreshold?: number;
   holdMs?: number;
+  maxBlinkMs?: number;
   enabled?: boolean;
 }
 
@@ -27,30 +31,40 @@ export function createBlinkGateTracker(opts: BlinkGateOptions = {}): BlinkGateTr
   const enter = opts.enterThreshold ?? BLINK_REJECT_THRESHOLD;
   const exit = opts.exitThreshold ?? BLINK_EXIT_THRESHOLD;
   const holdMs = opts.holdMs ?? BLINK_HOLD_MS;
+  const maxBlinkMs = opts.maxBlinkMs ?? MAX_BLINK_MS;
   const enabled = opts.enabled ?? BLINK_REJECT_GATE_ENABLED;
 
   let state: 'open' | 'closed' | 'hold' = 'open';
   let holdUntil = 0;
+  let closedSince = 0;
 
   return {
     update(score, tMs) {
       if (!enabled) return false;
       if (state === 'open') {
-        if (isBlinking(score, enter)) { state = 'closed'; return true; }
+        if (isBlinking(score, enter)) { state = 'closed'; closedSince = tMs; return true; }
         return false;
       }
       if (state === 'closed') {
         // Fail-open só para ENTRAR: um null no meio da piscada vira hold, não reabertura.
         if (score == null || score <= exit) { state = 'hold'; holdUntil = tMs + holdMs; }
+        // Baseline elevado: para quem repousa acima do exit (0.29 acontece), a saída
+        // por score sozinha nunca dispara e o gate ficaria fechado para sempre. Uma
+        // piscada, porém, tem duração fisiológica: passado maxBlinkMs com o score já
+        // abaixo do enter, o que sobra é linha de base, não piscada.
+        else if (tMs - closedSince > maxBlinkMs && !isBlinking(score, enter)) {
+          state = 'hold';
+          holdUntil = tMs + holdMs;
+        }
         return true;
       }
       // state === 'hold'
-      if (isBlinking(score, enter)) { state = 'closed'; return true; }
+      if (isBlinking(score, enter)) { state = 'closed'; closedSince = tMs; return true; }
       if (tMs < holdUntil) return true;
       state = 'open';
       return false;
     },
-    reset() { state = 'open'; holdUntil = 0; },
+    reset() { state = 'open'; holdUntil = 0; closedSince = 0; },
   };
 }
 

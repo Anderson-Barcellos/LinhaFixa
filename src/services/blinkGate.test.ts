@@ -5,6 +5,7 @@ import {
   purgeLeadingBlinkSamples,
   BLINK_HOLD_MS,
   BLINK_LEADING_PURGE_MS,
+  MAX_BLINK_MS,
 } from './blinkGate';
 
 test('tracker enters rejection only above the strict enter threshold', () => {
@@ -35,6 +36,33 @@ test('a new blink during hold re-enters rejection', () => {
   gate.update(0.1, 20);              // hold
   assert.equal(gate.update(0.8, 40), true);
   assert.equal(gate.update(0.4, 60), true); // e a histerese vale de novo
+});
+
+test('an elevated resting baseline does not lock the gate closed forever', () => {
+  // Rosto real do Anders: eyeBlink em repouso ~0.29, ACIMA do exit (0.25). Sem um
+  // limite de duração, o estado 'closed' nunca reabre e todo frame vira descarte.
+  const gate = createBlinkGateTracker();
+  gate.update(0.9, 0);                                 // piscada de verdade
+  assert.equal(gate.update(0.29, 100), true);          // dentro da piscada: rejeita
+  // Passado o tempo máximo de uma piscada, com o score já abaixo do enter, o que
+  // resta é baseline — não piscada. O gate arma o hold e volta a aceitar.
+  assert.equal(gate.update(0.29, MAX_BLINK_MS + 1), true);
+  assert.equal(gate.update(0.29, MAX_BLINK_MS + BLINK_HOLD_MS + 2), false);
+});
+
+test('a real blink still gets the full hysteresis before the duration limit', () => {
+  const gate = createBlinkGateTracker();
+  gate.update(0.9, 0);
+  // Borda de descida dentro da janela fisiológica: histerese manda, ainda rejeita.
+  assert.equal(gate.update(0.4, MAX_BLINK_MS - 50), true);
+});
+
+test('a score still above the enter threshold keeps rejecting past the limit', () => {
+  const gate = createBlinkGateTracker();
+  gate.update(0.9, 0);
+  // Olho genuinamente fechado (score alto) não é baseline: o limite não reabre.
+  assert.equal(gate.update(0.9, MAX_BLINK_MS + 1), true);
+  assert.equal(gate.update(0.9, MAX_BLINK_MS * 3), true);
 });
 
 test('null score never starts a rejection (fail-open) but does not abort a blink', () => {
