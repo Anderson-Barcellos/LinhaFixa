@@ -12,12 +12,18 @@ export const BLINK_LEADING_PURGE_MS = 80;
 // Duração máxima de uma piscada completa (fechamento + reabertura). A literatura
 // põe a piscada espontânea em 100-400ms; 500ms cobre a cauda com folga.
 export const MAX_BLINK_MS = 500;
+// Estabilidade mínima de score abaixo do enter para aceitar que a pálpebra
+// reabriu. Necessária porque um baseline de repouso entre exit e enter (0.29
+// acontece) nunca cruza o exit — sem ela, toda piscada custaria maxBlinkMs
+// inteiro. ~4 frames a 30fps; em ms, não frames, como todas as janelas daqui.
+export const BLINK_RECOVERY_STABLE_MS = 120;
 
 export interface BlinkGateOptions {
   enterThreshold?: number;
   exitThreshold?: number;
   holdMs?: number;
   maxBlinkMs?: number;
+  recoveryStableMs?: number;
   enabled?: boolean;
 }
 
@@ -32,39 +38,50 @@ export function createBlinkGateTracker(opts: BlinkGateOptions = {}): BlinkGateTr
   const exit = opts.exitThreshold ?? BLINK_EXIT_THRESHOLD;
   const holdMs = opts.holdMs ?? BLINK_HOLD_MS;
   const maxBlinkMs = opts.maxBlinkMs ?? MAX_BLINK_MS;
+  const recoveryStableMs = opts.recoveryStableMs ?? BLINK_RECOVERY_STABLE_MS;
   const enabled = opts.enabled ?? BLINK_REJECT_GATE_ENABLED;
 
   let state: 'open' | 'closed' | 'hold' = 'open';
   let holdUntil = 0;
   let closedSince = 0;
+  let belowEnterSince: number | null = null;
 
   return {
     update(score, tMs) {
       if (!enabled) return false;
       if (state === 'open') {
-        if (isBlinking(score, enter)) { state = 'closed'; closedSince = tMs; return true; }
+        if (isBlinking(score, enter)) { state = 'closed'; closedSince = tMs; belowEnterSince = null; return true; }
         return false;
       }
       if (state === 'closed') {
         // Fail-open só para ENTRAR: um null no meio da piscada vira hold, não reabertura.
-        if (score == null || score <= exit) { state = 'hold'; holdUntil = tMs + holdMs; }
-        // Baseline elevado: para quem repousa acima do exit (0.29 acontece), a saída
-        // por score sozinha nunca dispara e o gate ficaria fechado para sempre. Uma
-        // piscada, porém, tem duração fisiológica: passado maxBlinkMs com o score já
-        // abaixo do enter, o que sobra é linha de base, não piscada.
-        else if (tMs - closedSince > maxBlinkMs && !isBlinking(score, enter)) {
-          state = 'hold';
-          holdUntil = tMs + holdMs;
+        if (score == null || score <= exit) {
+          state = 'hold'; holdUntil = tMs + holdMs; belowEnterSince = null;
+        } else if (!isBlinking(score, enter)) {
+          // Recuperação estável: o score saiu da zona de piscada e se manteve fora
+          // por recoveryStableMs — a pálpebra reabriu, mesmo que o baseline (0.29
+          // acontece) nunca cruze o exit. Sem esta saída, quem repousa entre exit
+          // e enter pagaria maxBlinkMs inteiro em TODA piscada.
+          if (belowEnterSince === null) belowEnterSince = tMs;
+          const stableRecovery = tMs - belowEnterSince >= recoveryStableMs;
+          // Backstop fisiológico: score oscilando em torno do enter nunca acumula
+          // estabilidade; passado maxBlinkMs o que sobra é baseline, não piscada.
+          const overdue = tMs - closedSince > maxBlinkMs;
+          if (stableRecovery || overdue) {
+            state = 'hold'; holdUntil = tMs + holdMs; belowEnterSince = null;
+          }
+        } else {
+          belowEnterSince = null; // ainda piscando: janela de recuperação descartada
         }
         return true;
       }
       // state === 'hold'
-      if (isBlinking(score, enter)) { state = 'closed'; closedSince = tMs; return true; }
+      if (isBlinking(score, enter)) { state = 'closed'; closedSince = tMs; belowEnterSince = null; return true; }
       if (tMs < holdUntil) return true;
       state = 'open';
       return false;
     },
-    reset() { state = 'open'; holdUntil = 0; closedSince = 0; },
+    reset() { state = 'open'; holdUntil = 0; closedSince = 0; belowEnterSince = null; },
   };
 }
 

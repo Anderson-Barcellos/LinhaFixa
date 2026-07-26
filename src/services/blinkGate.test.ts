@@ -5,6 +5,7 @@ import {
   purgeLeadingBlinkSamples,
   BLINK_HOLD_MS,
   BLINK_LEADING_PURGE_MS,
+  BLINK_RECOVERY_STABLE_MS,
   MAX_BLINK_MS,
 } from './blinkGate';
 
@@ -79,6 +80,34 @@ test('disabled tracker never rejects and reset clears state', () => {
   gate.update(0.9, 0);
   gate.reset();
   assert.equal(gate.update(0.3, 16), false); // estado limpo: 0.3 não rejeita
+});
+
+test('stable recovery below enter reopens the gate well before MAX_BLINK_MS', () => {
+  // Regressão de 25/07: com baseline 0.29 (entre exit e enter), a única saída era
+  // a por duração, avaliada só após MAX_BLINK_MS — toda piscada custava ~667ms.
+  // Contrato: score estável abaixo do enter por BLINK_RECOVERY_STABLE_MS prova a
+  // reabertura palpebral e arma o hold, sem esperar o backstop.
+  const gate = createBlinkGateTracker();
+  gate.update(0.9, 0);                                  // piscada real
+  assert.equal(gate.update(0.29, 200), true);           // recuperação começa: ainda rejeita
+  // Estabilidade completa neste frame → hold armado (ainda rejeita durante o hold)
+  assert.equal(gate.update(0.29, 200 + BLINK_RECOVERY_STABLE_MS), true);
+  const reopenAt = 200 + BLINK_RECOVERY_STABLE_MS + BLINK_HOLD_MS + 1;
+  assert.ok(reopenAt < MAX_BLINK_MS, 'o contrato exige reabertura antes do backstop');
+  assert.equal(gate.update(0.29, reopenAt), false);     // reaberto — sem pagar os 500ms
+});
+
+test('a score bouncing back above enter resets the recovery stability window', () => {
+  const gate = createBlinkGateTracker();
+  gate.update(0.9, 0);
+  gate.update(0.29, 100);                               // recuperação começa (janela em 100)
+  gate.update(0.6, 150);                                // voltou a fechar: janela descartada
+  assert.equal(gate.update(0.29, 200), true);           // nova janela começa em 200
+  // 100ms depois: janela nova (200) ainda não fecha os 120ms — segue rejeitando
+  assert.equal(gate.update(0.29, 200 + BLINK_RECOVERY_STABLE_MS - 20), true);
+  // Janela nova completa + hold → reabre
+  gate.update(0.29, 200 + BLINK_RECOVERY_STABLE_MS);
+  assert.equal(gate.update(0.29, 200 + BLINK_RECOVERY_STABLE_MS + BLINK_HOLD_MS + 1), false);
 });
 
 test('purgeLeadingBlinkSamples drops only the trailing window in place', () => {
