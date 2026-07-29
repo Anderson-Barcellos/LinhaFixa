@@ -1,4 +1,7 @@
 import { GazeSample } from '@/types';
+import { detectFixations, dispersion } from '@/exercises/fixationDetection';
+import { saccadesFromFixations, dispersionThresholdFor } from '@/exercises/saccadesFromFixations';
+import { lineReturnThresholdFor } from '@/exercises/saccadeAnalysis';
 
 export interface VisualSignalSample extends GazeSample {
   calibrated?: boolean;
@@ -26,14 +29,20 @@ export interface FunctionalVisualSignalOptions {
   coverage?: number | null;
 }
 
+// --- Limiares de APRESENTAÇÃO do painel ao vivo ---
+// Sintonizados na régua antiga (por amostra); mantidos após a migração para o
+// detector por tempo e sujeitos a reancoragem empírica com Anders lendo o
+// painel (REVISÃO SUGERIDA no spec 2026-07-28). São cortes de rótulo, não medidas.
 const MIN_SAMPLES = 5;
 const MIN_DURATION_MS = 250;
 const USEFUL_HORIZONTAL_RANGE = 0.18;
 const LOW_HORIZONTAL_RANGE = 0.08;
-const FIXATION_VELOCITY = 0.00045;
 const CONTINUITY_GAP_MS = 160;
-const LINE_RETURN_DH = -0.35;
-const LINE_RETURN_DV = 0.08;
+const NOISY_DIRECTION_CHANGE_RATE = 0.7;
+const NOISY_MIN_RANGE = 0.12;
+const USEFUL_CONTINUITY = 70;
+const USEFUL_SENSITIVITY = 55;
+const LOW_CONTINUITY = 50;
 
 export function summarizeFunctionalVisualSignal(
   samples: VisualSignalSample[],
@@ -63,12 +72,29 @@ export function summarizeFunctionalVisualSignal(
   })).filter(i => i.dt > 0);
 
   const continuityPct = round0((intervals.filter(i => i.dt <= CONTINUITY_GAP_MS).length / intervals.length) * 100);
-  const fixationShare = round0((intervals.filter(i => Math.abs(i.dh) / i.dt <= FIXATION_VELOCITY).length / intervals.length) * 100);
   // Keep measurement precision in the evidence path. Consumers round only when
   // formatting; rounding here could promote 23.5 Hz to the 24 Hz validity tier.
   const sampleRateHz = ((valid.length - 1) / durationMs) * 1000;
-  const lineReturnCandidate = intervals.some(i => i.dh <= LINE_RETURN_DH && Math.abs(i.dv) >= LINE_RETURN_DV);
-  const directionChangeRate = directionChanges(intervals.map(i => i.dh)) / Math.max(1, intervals.length - 1);
+
+  // Mesmo detector do clínico (saccadeAnalysis): fixações por dispersão (I-DT),
+  // sacadas derivadas das transições, limiar de dispersão relativo à extensão do
+  // próprio sinal. Fps-invariante por construção — provado no teste 30↔60fps.
+  const fixations = detectFixations(valid, {
+    dispersionThreshold: dispersionThresholdFor(dispersion(valid)),
+  });
+  const fixatedMs = fixations.reduce((sum, f) => sum + f.durationMs, 0);
+  const fixationShare = round0(Math.min(100, (fixatedMs / durationMs) * 100));
+
+  const saccades = saccadesFromFixations(fixations);
+  const progressive = saccades.filter(s => s.amplitude > 0).map(s => s.amplitude);
+  const lineReturnThreshold = lineReturnThresholdFor(progressive);
+  const lineReturnCandidate = saccades.some(
+    s => s.amplitude < 0 && Math.abs(s.amplitude) >= lineReturnThreshold,
+  );
+  // Oscilação entre SACADAS (o olho alternando direção), não entre amostras —
+  // a alternância por amostra era dominada pelo ruído e dependia da taxa.
+  const directionChangeRate = directionChanges(saccades.map(s => s.amplitude))
+    / Math.max(1, saccades.length - 1);
   const sourceLabel = valid.some(s => s.calibrated) ? 'Calibrado' : 'Bruto';
   const coveragePenalty = typeof options.coverage === 'number' && options.coverage < 60 ? 25 : 0;
   const sensitivityScore = clampScore(
@@ -79,7 +105,7 @@ export function summarizeFunctionalVisualSignal(
     - coveragePenalty
   );
 
-  if (continuityPct < 50 || horizontalRange < LOW_HORIZONTAL_RANGE) {
+  if (continuityPct < LOW_CONTINUITY || horizontalRange < LOW_HORIZONTAL_RANGE) {
     return summary({
       status: 'baixo',
       label: 'Captação baixa',
@@ -97,7 +123,7 @@ export function summarizeFunctionalVisualSignal(
     });
   }
 
-  if (directionChangeRate > 0.7 && horizontalRange >= 0.12) {
+  if (directionChangeRate > NOISY_DIRECTION_CHANGE_RATE && horizontalRange >= NOISY_MIN_RANGE) {
     return summary({
       status: 'ruidoso',
       label: 'Sinal ruidoso',
@@ -115,7 +141,9 @@ export function summarizeFunctionalVisualSignal(
     });
   }
 
-  const useful = horizontalRange >= USEFUL_HORIZONTAL_RANGE && continuityPct >= 70 && sensitivityScore >= 55;
+  const useful = horizontalRange >= USEFUL_HORIZONTAL_RANGE
+    && continuityPct >= USEFUL_CONTINUITY
+    && sensitivityScore >= USEFUL_SENSITIVITY;
   return summary({
     status: useful ? 'adequado' : 'baixo',
     label: useful ? 'Captação útil' : 'Captação parcial',

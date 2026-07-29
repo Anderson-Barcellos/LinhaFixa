@@ -49,8 +49,8 @@ const MIN_FIXATION_MS = 100;
 // cut is derived per capture from the median progressive (rightward) amplitude,
 // bounded by an absolute floor (noise guard) and by the historical 0.35 cap (a
 // leftward jump that big is always a sweep). With no progressive saccades to anchor
-// on, the cap alone applies. visualSignal.ts keeps its own fixed LINE_RETURN_DH for
-// the live candidate hint; this clinical classification is the source of truth.
+// on, the cap alone applies. visualSignal.ts (live hint) shares this same adaptive
+// rule via lineReturnThresholdFor; this clinical classification is the source of truth.
 const LINE_RETURN_RELATIVE_FACTOR = 3;      // × median progressive amplitude
 const LINE_RETURN_THRESHOLD_FLOOR = 0.08;   // ratio units (2× MIN_SACCADE_AMPLITUDE)
 const LINE_RETURN_THRESHOLD_CAP = 0.35;     // ratio units (previous fixed threshold)
@@ -127,12 +127,7 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
   // amplitudes, then route each candidate to its bucket. Line-return sweeps stay
   // OUT of the reading-saccade amplitudes and regression count.
   const progressive = candidates.filter(c => c.amplitude > 0).map(c => c.amplitude);
-  const lineReturnThreshold = progressive.length
-    ? Math.min(
-        LINE_RETURN_THRESHOLD_CAP,
-        Math.max(LINE_RETURN_THRESHOLD_FLOOR, LINE_RETURN_RELATIVE_FACTOR * median(progressive))
-      )
-    : LINE_RETURN_THRESHOLD_CAP;
+  const lineReturnThreshold = lineReturnThresholdFor(progressive);
 
   const amplitudes: number[] = [];
   let regressionCount = 0;
@@ -166,6 +161,18 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
     meanFixationMs: meanOrNull(fixationDurations),
     ...(events ? { events } : {}),
   };
+}
+
+// Limiar de retorno de linha derivado das amplitudes progressivas da própria
+// captura (ver o bloco de comentário das constantes LINE_RETURN_* acima).
+// Exportado para o hint ao vivo (visualSignal) usar a MESMA régua do clínico.
+export function lineReturnThresholdFor(progressiveAmplitudes: number[]): number {
+  return progressiveAmplitudes.length
+    ? Math.min(
+        LINE_RETURN_THRESHOLD_CAP,
+        Math.max(LINE_RETURN_THRESHOLD_FLOOR, LINE_RETURN_RELATIVE_FACTOR * median(progressiveAmplitudes))
+      )
+    : LINE_RETURN_THRESHOLD_CAP;
 }
 
 function median(values: number[]): number {
