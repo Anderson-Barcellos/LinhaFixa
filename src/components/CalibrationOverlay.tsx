@@ -2,6 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLandmarks, estimateHeadPose, getBlinkScore } from '@/services/faceTracking';
 import { createBlinkGateTracker } from '@/services/blinkGate';
 import {
+  createBlinkBaselineMeter,
+  commitDerivedBlinkThresholds,
+  resetDerivedBlinkThresholds,
+} from '@/services/blinkBaseline';
+import {
   acceptPendingCalibration,
   addCalibrationSample,
   fitCalibration,
@@ -91,6 +96,9 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   // IPD (px) samples gathered across the routine; their median anchors distance estimation.
   const ipdSamplesRef = useRef<number[]>([]);
   const posturalSamplesRef = useRef<PosturalSample[]>([]);
+  // Repouso de eyeBlink medido nos settles desta calibração (ref de componente:
+  // o restart não re-roda o effect do loop, mas precisa zerar a coleta).
+  const baselineMeterRef = useRef(createBlinkBaselineMeter());
   // Trigger a re-render to nudge progress without spamming state every frame.
   const [, setTick] = useState(0);
 
@@ -185,6 +193,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           }
           setPosturalBaseline(summarizePosturalBaseline(posturalSamplesRef.current));
           setMotionBaseline('calibration');
+          // Limiares de piscada derivados do repouso medido nesta calibração.
+          // derive() === null (amostras insuficientes / fora das faixas) mantém
+          // os limiares fixos — fallback é o comportamento de hoje.
+          commitDerivedBlinkThresholds(baselineMeterRef.current.derive());
           setPhaseBoth('done');
         } else if (!assessment.accepted) {
           rejectAttempt(assessment, false);
@@ -221,6 +233,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     const setup = async () => {
       resetCalibration();
       resetCalibrationAnchorsAndBaselines();
+      baselineMeterRef.current.reset();
       ipdSamplesRef.current = [];
       posturalSamplesRef.current = [];
       fitSampleCountsRef.current = Array(CALIB_POINTS.length).fill(0);
@@ -311,6 +324,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           if (hasEnoughSamples) {
             completeCurrentPoint();
           }
+        } else if (phaseNow === 'calibrating') {
+          // Janela de settle: o olho está pousando e nada alimenta o fit — é a
+          // amostra de repouso que calibra os limiares de piscada (spec P3).
+          baselineMeterRef.current.observe(getBlinkScore());
         }
         setTick(t => (t + 1) % 1000);
       }
@@ -335,6 +352,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     // Re-run the whole flow by remounting the loop via a phase reset.
     resetCalibration();
     resetCalibrationAnchorsAndBaselines();
+    baselineMeterRef.current.reset();
     ipdSamplesRef.current = [];
     posturalSamplesRef.current = [];
     fitSampleCountsRef.current = Array(CALIB_POINTS.length).fill(0);
@@ -552,6 +570,9 @@ function createEmptyValidationEvidence(): CalibrationValidationPointEvidence[] {
 function resetCalibrationAnchorsAndBaselines(): void {
   resetDistanceAnchor();
   resetPosturalBaseline();
+  // Mesma semântica transacional das âncoras: rejeição/recalibração descarta o
+  // limiar derivado e os gates voltam aos fixos até o próximo aceite.
+  resetDerivedBlinkThresholds();
   const motionWasActive = getMotionSnapshot().active;
   stopMotionSensor();
   if (motionWasActive) startMotionSensor();
