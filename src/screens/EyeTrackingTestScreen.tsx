@@ -330,7 +330,6 @@ export function EyeTrackingTestScreen({
   const visualSignalSamplesRef = useRef<VisualSignalSample[]>([]);
   const rawVEmaRef = useRef<number | null>(null);
   const lastFrameTsRef = useRef<number | null>(null);
-  const prevBlinkingRef = useRef(false);
   const screenDistanceTrackerRef = useRef<ReturnType<typeof createStimulusDistanceTracker> | null>(null);
   const textRef = useRef(text);
   const layoutRef = useRef<{ w: number; h: number; font: number; lines: string[] } | null>(null);
@@ -453,16 +452,16 @@ export function EyeTrackingTestScreen({
   }, []);
 
   const handleFrame = (frame: CameraPipelineFrame) => {
-    const { ts, video, pose, gaze, faceFound, eyesFound, blinking } = frame;
+    const { ts, video, pose, gaze, faceFound, eyesFound, blinking, blinkRising } = frame;
     const canvas = canvasRef.current;
     const dtMs = lastFrameTsRef.current != null ? ts - lastFrameTsRef.current : null;
     lastFrameTsRef.current = ts;
     // Borda de subida da piscada: as amostras dos últimos ~80ms já entraram no traçado
     // com a íris parcialmente coberta (score ainda abaixo do enter threshold) — remover.
-    if (blinking && !prevBlinkingRef.current) {
+    // O gate do pipeline é o dono da informação de borda (wasRisingEdge → frame).
+    if (blinkRising) {
       purgeLeadingBlinkSamples(visualSignalSamplesRef.current, ts);
     }
-    prevBlinkingRef.current = blinking;
 
     if (canvas) {
       // Distance from IPD (detect already ran in the pipeline hook) → font sized by
@@ -611,6 +610,7 @@ export function EyeTrackingTestScreen({
         pose,
         gaze,
         blinking,
+        blinkRising,
         dot: dot ? { h: dot.x / cssW, v: dot.y / cssH } : null,
         dotCalibrated,
         dotExtrapolated,

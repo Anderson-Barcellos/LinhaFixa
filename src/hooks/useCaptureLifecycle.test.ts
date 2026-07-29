@@ -6,8 +6,19 @@ import {
   captureDeviceClassConfirmed,
   captureTickAction,
   medianCaptureDistanceCm,
+  purgeCaptureBuffersOnBlinkEdge,
   routeCaptureSample,
 } from './useCaptureLifecycle';
+
+test('borda de piscada purga os DOIS buffers de captura, não só o traçado', () => {
+  // Critério de aceite 4 do spec: calibrado e bruto acumulam em buffers
+  // separados (routeCaptureSample) e ambos ingeriram a borda de subida.
+  const cal = [{ t: 100, h: 0.5, v: 0.5 }, { t: 950, h: 0.6, v: 0.5 }];
+  const raw = [{ t: 120, h: 0.4, v: 0.5 }, { t: 990, h: 0.7, v: 0.5 }];
+  purgeCaptureBuffersOnBlinkEdge(cal, raw, 1000);
+  assert.deepEqual(cal.map(s => s.t), [100]);   // 950 está nos últimos 80ms
+  assert.deepEqual(raw.map(s => s.t), [120]);   // 990 idem
+});
 
 test('only an explicitly confirmed frozen environment is validity-eligible', () => {
   assert.equal(captureDeviceClassConfirmed({ deviceClassSource: 'confirmed' }), true);

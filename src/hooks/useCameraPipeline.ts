@@ -69,6 +69,7 @@ export interface CameraPipelineFrame {
   eyesFound: boolean;
   blinkScore: number | null;
   blinking: boolean;
+  blinkRising: boolean; // transição aceitar→rejeitar neste frame (borda de subida da piscada)
   fps: number;        // frames processed in the last second
   coverage: number;   // % of recent frames (2s) with a face
   cameraFps: number | null;   // negotiated track frameRate
@@ -147,6 +148,7 @@ export function useCameraPipeline(options: UseCameraPipelineOptions): CameraPipe
     // Missing blendshape data remains fail-open so detection does not look dead.
     const blinkScore = getBlinkScore();
     const blinking = blinkGateRef.current.update(blinkScore, ts);
+    const blinkRising = blinkGateRef.current.wasRisingEdge();
 
     const fps = updateFrameWindow(frameTimesRef.current, ts);
     const coverage = updateCoverageWindow(coverageWindowRef.current, ts, faceFound);
@@ -161,6 +163,7 @@ export function useCameraPipeline(options: UseCameraPipelineOptions): CameraPipe
       eyesFound,
       blinkScore,
       blinking,
+      blinkRising,
       fps,
       coverage,
       cameraFps: readNegotiatedTrackFps(video),

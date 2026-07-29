@@ -7,6 +7,7 @@ import {
   type PosturalSample,
 } from '@/exercises/posturalStability';
 import { getDetectionTelemetry, type HeadPose } from '@/services/faceTracking';
+import { purgeLeadingBlinkSamples } from '@/services/blinkGate';
 import { getMotionQuality } from '@/services/motionSensor';
 import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { cssPxPerDeg } from '@/services/viewingGeometry';
@@ -97,6 +98,18 @@ export function captureCoveragePct(faceFrames: number, totalFrames: number): num
   return totalFrames ? (faceFrames / totalFrames) * 100 : 0;
 }
 
+// Borda de subida da piscada durante captura: as amostras dos últimos ~80ms
+// entraram nos buffers com a íris parcialmente coberta. O buffer de traçado já
+// recebia esta purga; os buffers que viram MEDIDA (spec P2) agora também.
+export function purgeCaptureBuffersOnBlinkEdge(
+  calSamples: GazeSample[],
+  rawSamples: GazeSample[],
+  nowMs: number,
+): void {
+  purgeLeadingBlinkSamples(calSamples, nowMs);
+  purgeLeadingBlinkSamples(rawSamples, nowMs);
+}
+
 export function captureDeviceClassConfirmed(
   environment: Pick<CaptureEnvironment, 'deviceClassSource'>,
 ): boolean {
@@ -118,6 +131,8 @@ export interface CaptureFrameInput {
   pose: HeadPose | null;
   gaze: GazeSample | null;
   blinking: boolean;
+  // Borda de subida do gate de piscada neste frame (transição aceitar→rejeitar).
+  blinkRising: boolean;
   // Gaze dot in surface-normalized coordinates (dot.x/cssW, dot.y/cssH), when drawn.
   dot: { h: number; v: number } | null;
   dotCalibrated: boolean;
@@ -384,6 +399,11 @@ export function useCaptureLifecycle(options: UseCaptureLifecycleOptions): Captur
     if (getMotionQuality().status === 'shaking') captureShakeRef.current = true;
     if (input.distanceEstimateCm != null) {
       captureDistanceSamplesRef.current.push(input.distanceEstimateCm);
+    }
+    if (input.blinkRising) {
+      // Buffers guardam t relativo ao início da captura — a janela da purga
+      // precisa do mesmo relógio (tMs), não do ts absoluto do pipeline.
+      purgeCaptureBuffersOnBlinkEdge(captureCalSamplesRef.current, captureRawSamplesRef.current, tMs);
     }
     const routing = routeCaptureSample({
       blinking: input.blinking,
