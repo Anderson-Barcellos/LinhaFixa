@@ -221,6 +221,29 @@ Depois da revisao desta fatia, as frentes ainda abertas sao reconstruir as demai
 secoes da shell e, separadamente, decidir a fase de persistencia duravel. Nenhum
 plano detalhado dessas frentes fica ativo antes da escolha de Anders.
 
+### BUNDLE Coerencia do Engine Oculomotor (implementado em 2026-07-28; deploy e revisao de Anders pendentes)
+
+Spec `docs/superpowers/specs/2026-07-28-engine-oculomotor-coerencia-design.md`,
+plano `docs/superpowers/plans/2026-07-28-engine-oculomotor-coerencia.md`. Fecha a
+migracao I-VT → I-DT que parou no detector (`01e48f5`): baseline de eyeBlink
+medido no settle da calibracao deriva enter/exit do proprio olho (fallback nos
+fixos), purga da borda de subida cobre buffers de captura e amostras de fit da
+calibracao (nao so o tracado), e o painel ao vivo (`visualSignal`) roda o mesmo
+detector fixacao-primeiro do clinico — invariancia 30↔60fps provada por teste.
+Commits `9ed81a4..60a14a8`; `npm test` 463/463, lint limpo, build 107932/180000.
+
+Pendencias reais do BUNDLE:
+
+- Reancoragem empirica dos cortes de status do painel ao vivo (bloco "Limiares
+  de APRESENTACAO" no topo de `src/services/visualSignal.ts`): `fixationShare`
+  mudou de fracao de intervalos para fracao de tempo — os cortes atuais foram
+  mantidos, mas precisam de sessao de Anders lendo o painel com o engine novo.
+- Smoke fisico com camera: primeira calibracao pos-deploy confirma coleta do
+  baseline no settle e saida de piscada pelo exit derivado (host e headless).
+- Decisao adiada por Anders (spec, fora de escopo): trilho EMA de 1,65s do ponto
+  azul calibrado (`EyeTrackingTestScreen.tsx` renderY) — o que se ve nao e a
+  predicao medida; display-only documentado.
+
 ## Frentes estacionadas
 
 - Repetibilidade e Sanidade do Instrumento: analise teste-reteste e painel de
