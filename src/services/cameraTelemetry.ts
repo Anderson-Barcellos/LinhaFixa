@@ -89,7 +89,7 @@ function readTrackCapabilities(track: MediaStreamTrack | undefined): CameraCapab
   }
 }
 
-function rangeCapability(value: NumericCapabilityRange | undefined): NumericCapabilityRange | undefined {
+export function rangeCapability(value: NumericCapabilityRange | undefined): NumericCapabilityRange | undefined {
   if (!value) return undefined;
   return {
     min: finiteNumber(value.min),
@@ -97,6 +97,6 @@ function rangeCapability(value: NumericCapabilityRange | undefined): NumericCapa
   };
 }
 
-function finiteNumber(value: unknown): number | undefined {
+export function finiteNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }

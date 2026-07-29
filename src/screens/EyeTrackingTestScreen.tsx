@@ -19,6 +19,7 @@ import { CalibrationOverlay } from '@/components/CalibrationOverlay';
 import { CaptureValiditySummary } from '@/components/CaptureValiditySummary';
 import { DiagnosticsDrawer } from '@/components/DiagnosticsDrawer';
 import { DiagnosticsAccordion, type DiagnosticsSection } from '@/components/DiagnosticsAccordion';
+import { ExposureControlCard } from '@/components/ExposureControlCard';
 import type { DrawerVariant } from '@/services/diagnosticsDrawerLayout';
 import { summarizeReadingDynamics } from '@/exercises/readingDynamics';
 import { resetPosturalBaseline } from '@/exercises/posturalStability';
@@ -1140,6 +1141,10 @@ export function EyeTrackingTestScreen({
     </div>
   );
 
+  const exposureCard = (
+    <ExposureControlCard active={cameraState === 'running'} streamRef={streamRef} />
+  );
+
   // Miolo de diagnóstico do <aside> desktop — mesma composição e ordem de sempre.
   const diagnosticsCards = (
     <>
@@ -1152,6 +1157,7 @@ export function EyeTrackingTestScreen({
         <div className="mt-2">{interpretBody}</div>
       </details>
       {conditionsCard}
+      {exposureCard}
     </>
   );
 
@@ -1160,6 +1166,7 @@ export function EyeTrackingTestScreen({
     { id: 'metrics', title: 'Métricas', summary: `${live.fps ? `${live.fps}fps` : '—'}${live.cameraFps != null ? `/${Math.round(live.cameraFps)}cam` : ''} · ${live.inferenceMs != null ? `${live.inferenceMs.toFixed(0)}ms` : `H ${fmt(live.h)}`}`, content: metricsGrid },
     { id: 'signal', title: 'Captação', summary: `${liveSignal.sensitivityScore}% · ${liveSignal.sourceLabel}`, content: signalCard },
     { id: 'conditions', title: 'Condição', summary: `${optionLabel(LIGHTING_OPTIONS, conditions.lighting)} · ${optionLabel(POSTURE_OPTIONS, conditions.posture)}`, content: conditionsCard },
+    { id: 'exposure', title: 'Exposição', content: exposureCard },
     { id: 'interpret', title: 'Como interpretar', content: <div className="text-xs text-slate-400 px-1">{interpretBody}</div> },
   ];
 
