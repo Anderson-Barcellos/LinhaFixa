@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   acceptPendingCalibration,
   addCalibrationSample,
+  calibrationSampleCount,
   fitCalibration,
   getAccuracyDeg,
   getCalibrationAssessment,
@@ -10,6 +11,7 @@ import {
   isCalibrated,
   predictPendingNorm,
   predictNorm,
+  purgeRecentCalibrationSamples,
   rejectCalibration,
   resetCalibration,
 } from './gazeCalibration';
@@ -69,11 +71,34 @@ function seedRidgeFixture() {
     }
     const target = { x: clamp01(tx), y: clamp01(ty) };
     built.push({ features, target });
-    addCalibrationSample(features, target);
+    addCalibrationSample(features, target, n * 40);
   }
 
   return built;
 }
+
+// Vetor de features finito e determinístico no shape que addCalibrationSample exige.
+const makeFeatures = (seed: number) =>
+  Array.from({ length: GAZE_FEATURE_LENGTH }, (_, i) => seed + i * 0.01);
+
+test('purga remove só as amostras da janela recente e informa quantas', () => {
+  resetCalibration();
+  addCalibrationSample(makeFeatures(0.1), { x: 0.1, y: 0.1 }, 1000);
+  addCalibrationSample(makeFeatures(0.2), { x: 0.2, y: 0.2 }, 1400);
+  addCalibrationSample(makeFeatures(0.3), { x: 0.3, y: 0.3 }, 1950);
+  addCalibrationSample(makeFeatures(0.4), { x: 0.4, y: 0.4 }, 1990);
+  // Borda de subida em t=2000 com janela default de 80ms: 1950 e 1990 caem.
+  const removed = purgeRecentCalibrationSamples(2000);
+  assert.equal(removed, 2);
+  assert.equal(calibrationSampleCount(), 2);
+});
+
+test('purga sem amostras na janela é um no-op', () => {
+  resetCalibration();
+  addCalibrationSample(makeFeatures(0.1), { x: 0.1, y: 0.1 }, 100);
+  assert.equal(purgeRecentCalibrationSamples(5000), 0);
+  assert.equal(calibrationSampleCount(), 1);
+});
 
 test('fit produces only a pending model until accepted evidence activates it', () => {
   resetCalibration();
@@ -170,7 +195,7 @@ test('ridge recovers a linear mapping despite a feature on a 100x scale (z-score
     }
     const target = { x: clamp01(tx), y: clamp01(ty) };
     built.push({ features, target });
-    addCalibrationSample(features, target);
+    addCalibrationSample(features, target, n * 40);
   }
 
   assert.equal(fitCalibration(), true);
@@ -208,7 +233,7 @@ test('predictNorm flags extrapolation instead of passing clamped border points a
   for (let n = 0; n < 40; n++) {
     const features = Array.from({ length: GAZE_FEATURE_LENGTH }, () => rand());
     const target = { x: 0.25 + features[0] * 0.5, y: 0.25 + features[1] * 0.5 };
-    addCalibrationSample(features, target);
+    addCalibrationSample(features, target, n * 40);
   }
   assert.equal(fitCalibration(), true);
   assert.equal(acceptPendingCalibration(assessment({ accepted: true })), true);

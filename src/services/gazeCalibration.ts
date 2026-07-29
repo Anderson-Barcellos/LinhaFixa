@@ -12,10 +12,12 @@
 // gaze. Head movement and lighting changes degrade it; recalibration fixes drift.
 
 import { GAZE_FEATURE_LENGTH } from './faceTracking';
+import { purgeLeadingBlinkSamples, BLINK_LEADING_PURGE_MS } from './blinkGate';
 import type { CalibrationAssessment } from './calibrationValidity';
 import type { CalibrationSignature } from './ocularSignalContract';
 
 interface Sample {
+  t: number; // ms — permite purga retroativa da borda de subida da piscada
   features: number[];
   target: { x: number; y: number }; // normalized [0,1] screen coords
 }
@@ -69,13 +71,26 @@ function standardizeFeatures(
 
 // Buffer one labelled calibration sample (a feature vector seen while the user
 // looked at a target at the given normalized screen position).
-export function addCalibrationSample(features: number[], target: { x: number; y: number }) {
+export function addCalibrationSample(features: number[], target: { x: number; y: number }, tMs: number) {
   if (features.length !== GAZE_FEATURE_LENGTH) return;
-  samples.push({ features: features.slice(), target });
+  samples.push({ t: tMs, features: features.slice(), target });
 }
 
 export function calibrationSampleCount(): number {
   return samples.length;
+}
+
+// Borda de subida da piscada detectada AGORA: as amostras dos últimos windowMs
+// entraram no buffer com a pálpebra já descendo (score ainda abaixo do enter) e
+// contaminariam o ridge fit — o modelo treinado espalha o erro para TODAS as
+// medidas posteriores. Mesma semântica da purga do buffer de traçado.
+export function purgeRecentCalibrationSamples(
+  nowMs: number,
+  windowMs: number = BLINK_LEADING_PURGE_MS,
+): number {
+  const before = samples.length;
+  purgeLeadingBlinkSamples(samples, nowMs, windowMs);
+  return before - samples.length;
 }
 
 // Solve A x = B (A: d×d, B: d×k) via Gaussian elimination with partial pivoting.

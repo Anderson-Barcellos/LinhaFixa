@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLandmarks, estimateHeadPose, getBlinkScore } from '@/services/faceTracking';
-import { createBlinkGateTracker } from '@/services/blinkGate';
+import { createBlinkGateTracker, BLINK_LEADING_PURGE_MS } from '@/services/blinkGate';
 import {
   createBlinkBaselineMeter,
   commitDerivedBlinkThresholds,
@@ -11,6 +11,7 @@ import {
   addCalibrationSample,
   fitCalibration,
   predictPendingNorm,
+  purgeRecentCalibrationSamples,
   rejectCalibration,
   resetCalibration,
 } from '@/services/gazeCalibration';
@@ -99,6 +100,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   // Repouso de eyeBlink medido nos settles desta calibração (ref de componente:
   // o restart não re-roda o effect do loop, mas precisa zerar a coleta).
   const baselineMeterRef = useRef(createBlinkBaselineMeter());
+  // Registro paralelo das amostras aceitas no fit ({t, ponto}): a purga da borda
+  // de piscada precisa decrementar o contador do PONTO dono de cada amostra
+  // removida (a janela de 80ms pode atravessar a fronteira do ponto anterior).
+  const fitSampleLogRef = useRef<Array<{ t: number; point: number }>>([]);
   // Trigger a re-render to nudge progress without spamming state every frame.
   const [, setTick] = useState(0);
 
@@ -234,6 +239,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
       resetCalibration();
       resetCalibrationAnchorsAndBaselines();
       baselineMeterRef.current.reset();
+      fitSampleLogRef.current = [];
       ipdSamplesRef.current = [];
       posturalSamplesRef.current = [];
       fitSampleCountsRef.current = Array(CALIB_POINTS.length).fill(0);
@@ -292,12 +298,25 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           // the point timeout turns an abnormally high eyeBlink baseline into an
           // explicit rejected attempt instead of silently training a distorted model.
           const blinking = blinkGate.update(getBlinkScore(), now);
+          if (blinkGate.wasRisingEdge() && phaseNow === 'calibrating') {
+            // Mesmo predicado nas duas estruturas (janela de t sobre agora):
+            // buffer de fit e contadores não podem divergir — os contadores
+            // alimentam o contrato de validade (minimumSamplesPerPoint).
+            purgeRecentCalibrationSamples(now);
+            const log = fitSampleLogRef.current;
+            while (log.length && now - log[log.length - 1].t <= BLINK_LEADING_PURGE_MS) {
+              const entry = log.pop()!;
+              fitSampleCountsRef.current[entry.point] -= 1;
+              if (entry.point === idxRef.current) collectedRef.current -= 1;
+            }
+          }
           if (feat && !blinking) {
             // detect() just ran inside extractGazeFeatures, so the landmarks are fresh.
             const ipd = interpupillaryPx(getLastLandmarks(), video.videoWidth || 1280, video.videoHeight || 720);
             if (ipd) ipdSamplesRef.current.push(ipd);
             if (phaseNow === 'calibrating') {
-              addCalibrationSample(feat, targetAbs);
+              addCalibrationSample(feat, targetAbs, now);
+              fitSampleLogRef.current.push({ t: now, point: idxRef.current });
               fitSampleCountsRef.current[idxRef.current] += 1;
               collectedRef.current += 1;
             } else {
@@ -353,6 +372,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     resetCalibration();
     resetCalibrationAnchorsAndBaselines();
     baselineMeterRef.current.reset();
+    fitSampleLogRef.current = [];
     ipdSamplesRef.current = [];
     posturalSamplesRef.current = [];
     fitSampleCountsRef.current = Array(CALIB_POINTS.length).fill(0);
