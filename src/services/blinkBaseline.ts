@@ -61,3 +61,21 @@ export function createBlinkBaselineMeter(): BlinkBaselineMeter {
     },
   };
 }
+
+// --- Fonte única dos limiares vigentes ---
+// Estado de sessão, como o modelo de calibração: derivado no aceite da
+// calibração, zerado junto com âncoras/baselines. Os gates leem em tempo de
+// update — o gate do pipeline nasce antes da calibração existir.
+let derivedThresholds: DerivedBlinkThresholds | null = null;
+
+export function commitDerivedBlinkThresholds(t: DerivedBlinkThresholds | null): void {
+  derivedThresholds = t;
+}
+
+export function getDerivedBlinkThresholds(): DerivedBlinkThresholds | null {
+  return derivedThresholds;
+}
+
+export function resetDerivedBlinkThresholds(): void {
+  derivedThresholds = null;
+}

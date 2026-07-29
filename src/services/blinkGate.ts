@@ -5,6 +5,7 @@
 // re-opening wobble, and the leading purge retroactively removes the rising edge from
 // sample buffers. All windows are in ms, not frames — fps-independent by design.
 import { BLINK_REJECT_THRESHOLD, BLINK_REJECT_GATE_ENABLED, isBlinking } from './faceTracking';
+import { getDerivedBlinkThresholds } from './blinkBaseline';
 
 export const BLINK_EXIT_THRESHOLD = 0.25;
 export const BLINK_HOLD_MS = 100;
@@ -30,12 +31,17 @@ export interface BlinkGateOptions {
 export interface BlinkGateTracker {
   /** true = descartar a amostra de gaze deste frame. */
   update(score: number | null, tMs: number): boolean;
+  /** true sse o último update transicionou de aceitando para rejeitando (borda de subida). */
+  wasRisingEdge(): boolean;
   reset(): void;
 }
 
 export function createBlinkGateTracker(opts: BlinkGateOptions = {}): BlinkGateTracker {
-  const enter = opts.enterThreshold ?? BLINK_REJECT_THRESHOLD;
-  const exit = opts.exitThreshold ?? BLINK_EXIT_THRESHOLD;
+  // Limiar explícito nas opções vence; sem ele, o derivado da calibração vence
+  // o default fixo — resolvido a cada update porque o commit acontece depois
+  // que os gates de longa vida (pipeline) já existem.
+  const resolveEnter = () => opts.enterThreshold ?? getDerivedBlinkThresholds()?.enter ?? BLINK_REJECT_THRESHOLD;
+  const resolveExit = () => opts.exitThreshold ?? getDerivedBlinkThresholds()?.exit ?? BLINK_EXIT_THRESHOLD;
   const holdMs = opts.holdMs ?? BLINK_HOLD_MS;
   const maxBlinkMs = opts.maxBlinkMs ?? MAX_BLINK_MS;
   const recoveryStableMs = opts.recoveryStableMs ?? BLINK_RECOVERY_STABLE_MS;
@@ -45,12 +51,19 @@ export function createBlinkGateTracker(opts: BlinkGateOptions = {}): BlinkGateTr
   let holdUntil = 0;
   let closedSince = 0;
   let belowEnterSince: number | null = null;
+  let risingEdge = false;
 
   return {
     update(score, tMs) {
+      risingEdge = false;
       if (!enabled) return false;
+      const enter = resolveEnter();
+      const exit = resolveExit();
       if (state === 'open') {
-        if (isBlinking(score, enter)) { state = 'closed'; closedSince = tMs; belowEnterSince = null; return true; }
+        if (isBlinking(score, enter)) {
+          state = 'closed'; closedSince = tMs; belowEnterSince = null; risingEdge = true;
+          return true;
+        }
         return false;
       }
       if (state === 'closed') {
@@ -81,7 +94,8 @@ export function createBlinkGateTracker(opts: BlinkGateOptions = {}): BlinkGateTr
       state = 'open';
       return false;
     },
-    reset() { state = 'open'; holdUntil = 0; closedSince = 0; belowEnterSince = null; },
+    wasRisingEdge() { return risingEdge; },
+    reset() { state = 'open'; holdUntil = 0; closedSince = 0; belowEnterSince = null; risingEdge = false; },
   };
 }
 

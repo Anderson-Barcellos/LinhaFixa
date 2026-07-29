@@ -8,6 +8,7 @@ import {
   BLINK_RECOVERY_STABLE_MS,
   MAX_BLINK_MS,
 } from './blinkGate';
+import { commitDerivedBlinkThresholds, resetDerivedBlinkThresholds } from './blinkBaseline';
 
 test('tracker enters rejection only above the strict enter threshold', () => {
   const gate = createBlinkGateTracker();
@@ -108,6 +109,48 @@ test('a score bouncing back above enter resets the recovery stability window', (
   // Janela nova completa + hold → reabre
   gate.update(0.29, 200 + BLINK_RECOVERY_STABLE_MS);
   assert.equal(gate.update(0.29, 200 + BLINK_RECOVERY_STABLE_MS + BLINK_HOLD_MS + 1), false);
+});
+
+test('gate criado ANTES do commit adota os limiares derivados no update seguinte', () => {
+  // O gate do pipeline nasce antes da calibração existir: a resolução precisa
+  // ser em tempo de update, não de criação.
+  resetDerivedBlinkThresholds();
+  const gate = createBlinkGateTracker();
+  assert.equal(gate.update(0.45, 0), false);       // default: 0.45 < 0.5 não entra
+  commitDerivedBlinkThresholds({ enter: 0.40, exit: 0.30 });
+  assert.equal(gate.update(0.45, 16), true);       // derivado: 0.45 > 0.40 entra
+  resetDerivedBlinkThresholds();
+});
+
+test('limiar explícito nas opções vence o derivado', () => {
+  commitDerivedBlinkThresholds({ enter: 0.40, exit: 0.30 });
+  const gate = createBlinkGateTracker({ enterThreshold: 0.7 });
+  assert.equal(gate.update(0.5, 0), false);        // 0.5 < 0.7 explícito
+  resetDerivedBlinkThresholds();
+});
+
+test('exit derivado acima do baseline reabre pelo caminho projetado', () => {
+  // Critério de aceite 2 do spec: baseline 0.29 sai da piscada cruzando o exit
+  // derivado (0.34), sem depender do backstop de recoveryStableMs.
+  commitDerivedBlinkThresholds({ enter: 0.49, exit: 0.34 });
+  const gate = createBlinkGateTracker();
+  gate.update(0.9, 0);                              // piscada real
+  assert.equal(gate.update(0.29, 40), true);        // 0.29 <= exit 0.34 → hold armado
+  assert.equal(gate.update(0.29, 40 + BLINK_HOLD_MS + 1), false); // reaberto após o hold
+  resetDerivedBlinkThresholds();
+});
+
+test('wasRisingEdge marca só o frame da transição aberto→fechado', () => {
+  resetDerivedBlinkThresholds();
+  const gate = createBlinkGateTracker();
+  assert.equal(gate.update(0.3, 0), false);
+  assert.equal(gate.wasRisingEdge(), false);
+  assert.equal(gate.update(0.9, 16), true);
+  assert.equal(gate.wasRisingEdge(), true);         // este frame é a borda
+  assert.equal(gate.update(0.9, 33), true);
+  assert.equal(gate.wasRisingEdge(), false);        // segue fechado, sem nova borda
+  gate.reset();
+  assert.equal(gate.wasRisingEdge(), false);
 });
 
 test('purgeLeadingBlinkSamples drops only the trailing window in place', () => {

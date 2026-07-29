@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   createBlinkBaselineMeter,
+  commitDerivedBlinkThresholds,
+  getDerivedBlinkThresholds,
+  resetDerivedBlinkThresholds,
   BLINK_ENTER_GAP,
   MIN_BASELINE_SAMPLES,
 } from './blinkBaseline';
@@ -71,4 +74,16 @@ test('janela dominada por piscadas recusa a derivação (fallback)', () => {
   for (let i = 0; i < 60; i++) meter.observe(0.1);
   for (let i = 0; i < 40; i++) meter.observe(0.95);
   assert.equal(meter.derive(), null);
+});
+
+test('store: commit publica, null e reset restauram o default', () => {
+  resetDerivedBlinkThresholds();
+  assert.equal(getDerivedBlinkThresholds(), null);
+  commitDerivedBlinkThresholds({ enter: 0.49, exit: 0.34 });
+  assert.deepEqual(getDerivedBlinkThresholds(), { enter: 0.49, exit: 0.34 });
+  commitDerivedBlinkThresholds(null);
+  assert.equal(getDerivedBlinkThresholds(), null);
+  commitDerivedBlinkThresholds({ enter: 0.49, exit: 0.34 });
+  resetDerivedBlinkThresholds();
+  assert.equal(getDerivedBlinkThresholds(), null);
 });
