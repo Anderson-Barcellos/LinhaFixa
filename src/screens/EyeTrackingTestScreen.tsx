@@ -8,7 +8,8 @@ import { useAppStore } from '@/store/useAppStore';
 import { extractGazeFeatures, getLastLandmarks } from '@/services/faceTracking';
 import { emaAlpha, RAW_V_EMA_TAU_MS, DISTANCE_EMA_TAU_MS } from '@/services/emaTiming';
 import { createStimulusDistanceTracker } from '@/services/stimulusDistance';
-import { purgeLeadingBlinkSamples } from '@/services/blinkGate';
+import { activeBlinkThresholds, purgeLeadingBlinkSamples } from '@/services/blinkGate';
+import { getBlinkBaselineSnapshot } from '@/services/blinkBaseline';
 import {
   interpupillaryPx, estimateDistanceCm, getDistanceAnchor, readingFontCssPx, readingFontAngleDeg,
   distanceWithinAnchorTolerance,
@@ -1031,6 +1032,12 @@ export function EyeTrackingTestScreen({
     />
   );
 
+  // Limiares de blink vigentes + repouso medido na última calibração: lidos a
+  // cada render (o grid re-renderiza com as métricas vivas) — é a evidência
+  // que separa "enter derivado alto" de "derivação recusada → fallback fixo".
+  const blinkGateActive = activeBlinkThresholds();
+  const blinkBaselineSnap = getBlinkBaselineSnapshot();
+
   // Cards de diagnóstico como dados: o desktop recompõe verbatim (pixel igual),
   // a gaveta mobile empilha os mesmos nós como acordeão com resumo vivo.
   const metricsGrid = (
@@ -1041,6 +1048,16 @@ export function EyeTrackingTestScreen({
       <Metric label="Inferência" value={live.inferenceMs != null ? `${live.inferenceMs.toFixed(0)} ms` : '—'} />
       <Metric label="Delegate" value={live.delegate ?? '—'} />
       <Metric label="Blink" value={live.blinkScore != null ? live.blinkScore.toFixed(2) : '—'} />
+      <Metric
+        label="Gate blink"
+        value={`${blinkGateActive.enter.toFixed(2)}/${blinkGateActive.exit.toFixed(2)} ${blinkGateActive.source === 'calibrated' ? 'calib' : 'fixo'}`}
+      />
+      <Metric
+        label="Repouso blink"
+        value={blinkBaselineSnap?.baseline != null
+          ? `${blinkBaselineSnap.baseline.toFixed(2)} p90 ${blinkBaselineSnap.p90?.toFixed(2)} n${blinkBaselineSnap.sampleCount}`
+          : '—'}
+      />
       <Metric label="Olhar H" value={fmt(live.h)} />
       <Metric label="Olhar V" value={fmt(live.v)} />
       <Metric label="Yaw idx" value={live.yaw != null ? live.yaw.toFixed(0) : '—'} />

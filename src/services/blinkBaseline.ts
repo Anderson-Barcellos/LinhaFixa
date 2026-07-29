@@ -22,10 +22,22 @@ export const BLINK_ENTER_RANGE = Object.freeze({ min: 0.45, max: 0.75 });
 // ~1s de settle a 30fps; as janelas somadas dão 100-240 frames em condições normais.
 export const MIN_BASELINE_SAMPLES = 30;
 
+// Medição crua + resultado da derivação, lado a lado: quando a derivação é
+// recusada (fallback fixo), o número medido é exatamente a evidência que
+// explica o porquê — sem ela o fallback é indistinguível de "não mediu".
+export interface BlinkBaselineSnapshot {
+  sampleCount: number;
+  /** Mediana dos scores de settle (repouso medido do sujeito). */
+  baseline: number | null;
+  p90: number | null;
+  derived: DerivedBlinkThresholds | null;
+}
+
 export interface BlinkBaselineMeter {
   observe(score: number | null): void;
   sampleCount(): number;
   derive(): DerivedBlinkThresholds | null;
+  snapshot(): BlinkBaselineSnapshot;
   reset(): void;
 }
 
@@ -56,6 +68,18 @@ export function createBlinkBaselineMeter(): BlinkBaselineMeter {
       if (enter < BLINK_ENTER_RANGE.min || enter > BLINK_ENTER_RANGE.max) return null;
       return { enter, exit };
     },
+    snapshot() {
+      if (scores.length === 0) {
+        return { sampleCount: 0, baseline: null, p90: null, derived: null };
+      }
+      const sorted = scores.slice().sort((a, b) => a - b);
+      return {
+        sampleCount: scores.length,
+        baseline: percentile(sorted, 0.5),
+        p90: percentile(sorted, 0.9),
+        derived: this.derive(),
+      };
+    },
     reset() {
       scores.length = 0;
     },
@@ -65,17 +89,28 @@ export function createBlinkBaselineMeter(): BlinkBaselineMeter {
 // --- Fonte única dos limiares vigentes ---
 // Estado de sessão, como o modelo de calibração: derivado no aceite da
 // calibração, zerado junto com âncoras/baselines. Os gates leem em tempo de
-// update — o gate do pipeline nasce antes da calibração existir.
-let derivedThresholds: DerivedBlinkThresholds | null = null;
+// update — o gate do pipeline nasce antes da calibração existir. O store
+// guarda o snapshot inteiro: o gate consome só `derived`, o diagnóstico lê
+// também a medição que o originou.
+let committedSnapshot: BlinkBaselineSnapshot | null = null;
 
+export function commitBlinkBaselineSnapshot(s: BlinkBaselineSnapshot | null): void {
+  committedSnapshot = s;
+}
+
+export function getBlinkBaselineSnapshot(): BlinkBaselineSnapshot | null {
+  return committedSnapshot;
+}
+
+/** Commit de limiares sem medição associada (testes e overrides diretos). */
 export function commitDerivedBlinkThresholds(t: DerivedBlinkThresholds | null): void {
-  derivedThresholds = t;
+  committedSnapshot = t ? { sampleCount: 0, baseline: null, p90: null, derived: t } : null;
 }
 
 export function getDerivedBlinkThresholds(): DerivedBlinkThresholds | null {
-  return derivedThresholds;
+  return committedSnapshot?.derived ?? null;
 }
 
 export function resetDerivedBlinkThresholds(): void {
-  derivedThresholds = null;
+  committedSnapshot = null;
 }

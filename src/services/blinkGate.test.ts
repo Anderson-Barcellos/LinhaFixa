@@ -1,14 +1,30 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  activeBlinkThresholds,
   createBlinkGateTracker,
   purgeLeadingBlinkSamples,
+  BLINK_EXIT_THRESHOLD,
   BLINK_HOLD_MS,
   BLINK_LEADING_PURGE_MS,
   BLINK_RECOVERY_STABLE_MS,
   MAX_BLINK_MS,
 } from './blinkGate';
 import { commitDerivedBlinkThresholds, resetDerivedBlinkThresholds } from './blinkBaseline';
+import { BLINK_REJECT_THRESHOLD } from './faceTracking';
+
+test('activeBlinkThresholds: fixo sem calibração, calibrado após commit', () => {
+  resetDerivedBlinkThresholds();
+  assert.deepEqual(activeBlinkThresholds(), {
+    enter: BLINK_REJECT_THRESHOLD,
+    exit: BLINK_EXIT_THRESHOLD,
+    source: 'fixed',
+  });
+  commitDerivedBlinkThresholds({ enter: 0.49, exit: 0.34 });
+  assert.deepEqual(activeBlinkThresholds(), { enter: 0.49, exit: 0.34, source: 'calibrated' });
+  resetDerivedBlinkThresholds();
+  assert.equal(activeBlinkThresholds().source, 'fixed');
+});
 
 test('tracker enters rejection only above the strict enter threshold', () => {
   const gate = createBlinkGateTracker();

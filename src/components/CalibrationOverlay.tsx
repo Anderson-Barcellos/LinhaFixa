@@ -3,7 +3,7 @@ import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLan
 import { createBlinkGateTracker, BLINK_LEADING_PURGE_MS } from '@/services/blinkGate';
 import {
   createBlinkBaselineMeter,
-  commitDerivedBlinkThresholds,
+  commitBlinkBaselineSnapshot,
   resetDerivedBlinkThresholds,
 } from '@/services/blinkBaseline';
 import {
@@ -199,9 +199,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           setPosturalBaseline(summarizePosturalBaseline(posturalSamplesRef.current));
           setMotionBaseline('calibration');
           // Limiares de piscada derivados do repouso medido nesta calibração.
-          // derive() === null (amostras insuficientes / fora das faixas) mantém
-          // os limiares fixos — fallback é o comportamento de hoje.
-          commitDerivedBlinkThresholds(baselineMeterRef.current.derive());
+          // derived === null (amostras insuficientes / fora das faixas) mantém
+          // os limiares fixos — mas a medição fica publicada para o diagnóstico
+          // distinguir "fallback por recusa" de "não mediu".
+          commitBlinkBaselineSnapshot(baselineMeterRef.current.snapshot());
           setPhaseBoth('done');
         } else if (!assessment.accepted) {
           rejectAttempt(assessment, false);

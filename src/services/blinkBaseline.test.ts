@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   createBlinkBaselineMeter,
+  commitBlinkBaselineSnapshot,
   commitDerivedBlinkThresholds,
+  getBlinkBaselineSnapshot,
   getDerivedBlinkThresholds,
   resetDerivedBlinkThresholds,
   BLINK_ENTER_GAP,
@@ -74,6 +76,46 @@ test('janela dominada por piscadas recusa a derivação (fallback)', () => {
   for (let i = 0; i < 60; i++) meter.observe(0.1);
   for (let i = 0; i < 40; i++) meter.observe(0.95);
   assert.equal(meter.derive(), null);
+});
+
+test('snapshot expõe a medição junto com a derivação', () => {
+  const meter = createBlinkBaselineMeter();
+  observeAndersBaseline(meter);
+  const s = meter.snapshot();
+  assert.equal(s.sampleCount, 100);
+  assert.ok(Math.abs((s.baseline ?? 0) - 0.29) < 1e-9);
+  assert.ok(Math.abs((s.p90 ?? 0) - 0.34) < 1e-9);
+  assert.deepEqual(s.derived, meter.derive());
+});
+
+test('snapshot preserva a medição mesmo quando a derivação é recusada', () => {
+  // Repouso em 0.45 recusa a derivação (exit fora da faixa) — mas o número
+  // medido é exatamente a evidência de diagnóstico que precisa sobreviver.
+  const meter = createBlinkBaselineMeter();
+  for (let i = 0; i < 100; i++) meter.observe(0.45);
+  const s = meter.snapshot();
+  assert.equal(s.derived, null);
+  assert.equal(s.sampleCount, 100);
+  assert.ok(Math.abs((s.baseline ?? 0) - 0.45) < 1e-9);
+});
+
+test('snapshot do meter vazio devolve nulls e n=0', () => {
+  const s = createBlinkBaselineMeter().snapshot();
+  assert.deepEqual(s, { sampleCount: 0, baseline: null, p90: null, derived: null });
+});
+
+test('store: snapshot commitado alimenta getDerivedBlinkThresholds e sobrevive à recusa', () => {
+  resetDerivedBlinkThresholds();
+  assert.equal(getBlinkBaselineSnapshot(), null);
+  commitBlinkBaselineSnapshot({ sampleCount: 100, baseline: 0.29, p90: 0.34, derived: { enter: 0.49, exit: 0.34 } });
+  assert.deepEqual(getDerivedBlinkThresholds(), { enter: 0.49, exit: 0.34 });
+  assert.equal(getBlinkBaselineSnapshot()?.baseline, 0.29);
+  // Derivação recusada: gate cai no fixo, mas a medição continua visível.
+  commitBlinkBaselineSnapshot({ sampleCount: 100, baseline: 0.45, p90: 0.45, derived: null });
+  assert.equal(getDerivedBlinkThresholds(), null);
+  assert.equal(getBlinkBaselineSnapshot()?.baseline, 0.45);
+  resetDerivedBlinkThresholds();
+  assert.equal(getBlinkBaselineSnapshot(), null);
 });
 
 test('store: commit publica, null e reset restauram o default', () => {

@@ -28,6 +28,22 @@ export interface BlinkGateOptions {
   enabled?: boolean;
 }
 
+// Limiares vigentes da sessão: derivados da calibração quando o commit
+// aconteceu e passou nas faixas de sanidade; fixos caso contrário. Dono único
+// da cadeia de fallback — o tracker e o diagnóstico leem daqui.
+export interface ActiveBlinkThresholds {
+  enter: number;
+  exit: number;
+  source: 'calibrated' | 'fixed';
+}
+
+export function activeBlinkThresholds(): ActiveBlinkThresholds {
+  const derived = getDerivedBlinkThresholds();
+  return derived
+    ? { enter: derived.enter, exit: derived.exit, source: 'calibrated' }
+    : { enter: BLINK_REJECT_THRESHOLD, exit: BLINK_EXIT_THRESHOLD, source: 'fixed' };
+}
+
 export interface BlinkGateTracker {
   /** true = descartar a amostra de gaze deste frame. */
   update(score: number | null, tMs: number): boolean;
@@ -37,11 +53,16 @@ export interface BlinkGateTracker {
 }
 
 export function createBlinkGateTracker(opts: BlinkGateOptions = {}): BlinkGateTracker {
-  // Limiar explícito nas opções vence; sem ele, o derivado da calibração vence
-  // o default fixo — resolvido a cada update porque o commit acontece depois
-  // que os gates de longa vida (pipeline) já existem.
-  const resolveEnter = () => opts.enterThreshold ?? getDerivedBlinkThresholds()?.enter ?? BLINK_REJECT_THRESHOLD;
-  const resolveExit = () => opts.exitThreshold ?? getDerivedBlinkThresholds()?.exit ?? BLINK_EXIT_THRESHOLD;
+  // Limiar explícito nas opções vence; sem ele, os vigentes da sessão —
+  // resolvidos a cada update porque o commit acontece depois que os gates de
+  // longa vida (pipeline) já existem.
+  const resolveThresholds = () => {
+    const active = activeBlinkThresholds();
+    return {
+      enter: opts.enterThreshold ?? active.enter,
+      exit: opts.exitThreshold ?? active.exit,
+    };
+  };
   const holdMs = opts.holdMs ?? BLINK_HOLD_MS;
   const maxBlinkMs = opts.maxBlinkMs ?? MAX_BLINK_MS;
   const recoveryStableMs = opts.recoveryStableMs ?? BLINK_RECOVERY_STABLE_MS;
@@ -57,8 +78,7 @@ export function createBlinkGateTracker(opts: BlinkGateOptions = {}): BlinkGateTr
     update(score, tMs) {
       risingEdge = false;
       if (!enabled) return false;
-      const enter = resolveEnter();
-      const exit = resolveExit();
+      const { enter, exit } = resolveThresholds();
       if (state === 'open') {
         if (isBlinking(score, enter)) {
           state = 'closed'; closedSince = tMs; belowEnterSince = null; risingEdge = true;
