@@ -82,6 +82,16 @@ function medianFilter3(values: number[]): number[] {
   return out;
 }
 
+// Shared pre-filter for BOTH detection paths (clinical + live hint). MediaPipe's
+// single-frame landmark spikes hit h and v alike; filtering only h left a v-spike
+// free to inflate the dispersion (which sums h+v) — splitting one fixation in two
+// AND inflating the span that sizes the relative threshold. Endpoints unchanged.
+export function preprocessForDetection(samples: GazeSample[]): GazeSample[] {
+  const h = medianFilter3(samples.map(s => s.h));
+  const v = medianFilter3(samples.map(s => s.v));
+  return samples.map((s, i) => ({ ...s, h: h[i], v: v[i] }));
+}
+
 export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesOptions = {}): SaccadeMetrics {
   const valid = samples.filter(s => Number.isFinite(s.h) && Number.isFinite(s.t));
 
@@ -103,10 +113,9 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
 
   valid.sort((a, b) => a.t - b.t);
   // The median filter still earns its place: it removes isolated landmark spikes
-  // that would otherwise inflate a fixation window's dispersion and split one
-  // fixation into two.
-  const h = medianFilter3(valid.map(s => s.h));
-  const filtered: GazeSample[] = valid.map((s, i) => ({ ...s, h: h[i] }));
+  // in both h and v that would otherwise inflate a fixation window's dispersion
+  // and split one fixation into two.
+  const filtered = preprocessForDetection(valid);
 
   // Detect what the webcam can actually resolve — the eye standing still — and
   // read the saccades off the transitions between those rests. See

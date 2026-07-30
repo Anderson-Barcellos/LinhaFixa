@@ -285,3 +285,30 @@ test('analyzeSaccades events carry timestamps and signed amplitudes per bucket',
   assert.equal(lineReturn.tEnd, PLATEAU_SPACING_MS * 2);
   assert.ok(lineReturn.amplitude <= -0.35);
 });
+
+// Vitest tests for preprocessForDetection (Task 1)
+import { describe, expect } from 'vitest';
+import { preprocessForDetection } from './saccadeAnalysis';
+
+describe('preprocessForDetection', () => {
+  test('remove spike isolado no canal v (não só no h)', () => {
+    const samples = [
+      { t: 0, h: 0.5, v: 0.5 }, { t: 33, h: 0.5, v: 0.9 }, { t: 66, h: 0.5, v: 0.5 },
+    ];
+    const out = preprocessForDetection(samples);
+    expect(out[1].v).toBeCloseTo(0.5);
+    expect(out[1].t).toBe(33); // timestamps intocados
+  });
+
+  test('remove spike isolado no canal h (paridade com o filtro antigo)', () => {
+    const samples = [
+      { t: 0, h: 0.5, v: 0.5 }, { t: 33, h: 0.9, v: 0.5 }, { t: 66, h: 0.5, v: 0.5 },
+    ];
+    expect(preprocessForDetection(samples)[1].h).toBeCloseTo(0.5);
+  });
+
+  test('série real (rampa) passa inalterada', () => {
+    const samples = [0, 1, 2, 3, 4].map(i => ({ t: i * 33, h: 0.1 * i, v: 0.05 * i }));
+    expect(preprocessForDetection(samples)).toEqual(samples);
+  });
+});
