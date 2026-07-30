@@ -286,29 +286,27 @@ test('analyzeSaccades events carry timestamps and signed amplitudes per bucket',
   assert.ok(lineReturn.amplitude <= -0.35);
 });
 
-// Vitest tests for preprocessForDetection (Task 1)
-import { describe, expect } from 'vitest';
+// Tests for preprocessForDetection (Task 1)
 import { preprocessForDetection } from './saccadeAnalysis';
 
-describe('preprocessForDetection', () => {
-  test('remove spike isolado no canal v (não só no h)', () => {
-    const samples = [
-      { t: 0, h: 0.5, v: 0.5 }, { t: 33, h: 0.5, v: 0.9 }, { t: 66, h: 0.5, v: 0.5 },
-    ];
-    const out = preprocessForDetection(samples);
-    expect(out[1].v).toBeCloseTo(0.5);
-    expect(out[1].t).toBe(33); // timestamps intocados
-  });
+test('preprocessForDetection: remove spike isolado no canal v (não só no h)', () => {
+  const samples = [
+    { t: 0, h: 0.5, v: 0.5 }, { t: 33, h: 0.5, v: 0.9 }, { t: 66, h: 0.5, v: 0.5 },
+  ];
+  const out = preprocessForDetection(samples);
+  assert.ok(Math.abs(out[1].v - 0.5) < 1e-9, `expected v ≈ 0.5, got ${out[1].v}`);
+  assert.equal(out[1].t, 33, 'timestamps intocados');
+});
 
-  test('remove spike isolado no canal h (paridade com o filtro antigo)', () => {
-    const samples = [
-      { t: 0, h: 0.5, v: 0.5 }, { t: 33, h: 0.9, v: 0.5 }, { t: 66, h: 0.5, v: 0.5 },
-    ];
-    expect(preprocessForDetection(samples)[1].h).toBeCloseTo(0.5);
-  });
+test('preprocessForDetection: remove spike isolado no canal h (paridade com o filtro antigo)', () => {
+  const samples = [
+    { t: 0, h: 0.5, v: 0.5 }, { t: 33, h: 0.9, v: 0.5 }, { t: 66, h: 0.5, v: 0.5 },
+  ];
+  const result = preprocessForDetection(samples);
+  assert.ok(Math.abs(result[1].h - 0.5) < 1e-9, `expected h ≈ 0.5, got ${result[1].h}`);
+});
 
-  test('série real (rampa) passa inalterada', () => {
-    const samples = [0, 1, 2, 3, 4].map(i => ({ t: i * 33, h: 0.1 * i, v: 0.05 * i }));
-    expect(preprocessForDetection(samples)).toEqual(samples);
-  });
+test('preprocessForDetection: série real (rampa) passa inalterada', () => {
+  const samples = [0, 1, 2, 3, 4].map(i => ({ t: i * 33, h: 0.1 * i, v: 0.05 * i }));
+  assert.deepEqual(preprocessForDetection(samples), samples);
 });
