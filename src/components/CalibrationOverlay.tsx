@@ -102,6 +102,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   // não deve custar a tentativa inteira. Zeradas em setup() e restart().
   const calibRetriesRef = useRef<number[]>(Array(CALIB_POINTS.length).fill(0));
   const validRetriesRef = useRef<number[]>(Array(VALID_POINTS.length).fill(0));
+  // Passada sequencial da grade concluída: a partir daí, ponto completado vai
+  // direto à checagem de fracos/fit — sem re-percorrer os pontos seguintes ao
+  // re-visitado (re-visitar o ponto 3 não pode custar re-coletar 4..8).
+  const calibSweepDoneRef = useRef(false);
   const validationEvidenceRef = useRef<CalibrationValidationPointEvidence[]>(
     createEmptyValidationEvidence(),
   );
@@ -184,10 +188,13 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
 
       const points = phaseNow === 'calibrating' ? CALIB_POINTS : VALID_POINTS;
       const nextIdx = idxRef.current + 1;
-      if (nextIdx < points.length) {
+      const sequentialAdvance = nextIdx < points.length
+        && !(phaseNow === 'calibrating' && calibSweepDoneRef.current);
+      if (sequentialAdvance) {
         setIdxBoth(nextIdx);
         startPoint();
       } else if (phaseNow === 'calibrating') {
+        calibSweepDoneRef.current = true;
         // Re-coleta seletiva: a purga de blink pode derrubar pontos JÁ
         // completados abaixo do mínimo (a janela de 80ms atravessa a fronteira
         // do ponto anterior). Re-visita cada fraco uma vez antes de desistir.
@@ -293,6 +300,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
       validationEvidenceRef.current = createEmptyValidationEvidence();
       calibRetriesRef.current = Array(CALIB_POINTS.length).fill(0);
       validRetriesRef.current = Array(VALID_POINTS.length).fill(0);
+      calibSweepDoneRef.current = false;
       setRejection(null);
       await initFaceTracking();
       if (cancelled) return;
@@ -433,6 +441,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     validationEvidenceRef.current = createEmptyValidationEvidence();
     calibRetriesRef.current = Array(CALIB_POINTS.length).fill(0);
     validRetriesRef.current = Array(VALID_POINTS.length).fill(0);
+    calibSweepDoneRef.current = false;
     phaseRef.current = 'calibrating';
     modeRef.current = 'calib';
     idxRef.current = 0;
