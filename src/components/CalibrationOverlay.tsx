@@ -42,6 +42,7 @@ import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/video
 import { currentOrientation, fullViewportRect, type SurfaceRect } from '@/services/ocularSignalContract';
 import { activePxPerCm } from '@/services/screenCalibration';
 import { targetSizing } from '@/services/calibrationTarget';
+import { timeoutOutcome, nextWeakPointIndex } from '@/services/calibrationRecollect';
 
 interface CalibrationOverlayProps {
   viewingDistanceCm: number;
@@ -97,6 +98,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   const pointTimerGenerationRef = useRef(0);
   const startPointRef = useRef<(() => void) | null>(null);
   const fitSampleCountsRef = useRef<number[]>(Array(CALIB_POINTS.length).fill(0));
+  // Re-visitas usadas por ponto (1 máx.): piscada longa ou purga cross-ponto
+  // não deve custar a tentativa inteira. Zeradas em setup() e restart().
+  const calibRetriesRef = useRef<number[]>(Array(CALIB_POINTS.length).fill(0));
+  const validRetriesRef = useRef<number[]>(Array(VALID_POINTS.length).fill(0));
   const validationEvidenceRef = useRef<CalibrationValidationPointEvidence[]>(
     createEmptyValidationEvidence(),
   );
@@ -183,15 +188,34 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
         setIdxBoth(nextIdx);
         startPoint();
       } else if (phaseNow === 'calibrating') {
-        // Fit the model, then move to validation.
-        const ok = fitCalibration();
-        if (!ok) {
-          setPhaseBoth('unavailable');
+        // Re-coleta seletiva: a purga de blink pode derrubar pontos JÁ
+        // completados abaixo do mínimo (a janela de 80ms atravessa a fronteira
+        // do ponto anterior). Re-visita cada fraco uma vez antes de desistir.
+        const weakIdx = nextWeakPointIndex(
+          fitSampleCountsRef.current,
+          calibRetriesRef.current,
+          MIN_SAMPLES_PER_POINT,
+        );
+        if (weakIdx != null) {
+          calibRetriesRef.current[weakIdx] += 1;
+          setIdxBoth(weakIdx);
+          startPoint(fitSampleCountsRef.current[weakIdx]);
+        } else if (fitSampleCountsRef.current.some(c => c < MIN_SAMPLES_PER_POINT)) {
+          // Fraco sem re-visita disponível: o assessment rejeitaria depois da
+          // validação de qualquer forma — rejeita agora com a mesma evidência,
+          // sem gastar a fase de validação do usuário.
+          rejectAttempt(buildAssessment(), fitSampleCountsRef.current.some(c => c === 0));
         } else {
-          setPhaseBoth('validating');
-          setModeBoth('valid');
-          setIdxBoth(0);
-          startPoint();
+          // Fit the model, then move to validation.
+          const ok = fitCalibration();
+          if (!ok) {
+            setPhaseBoth('unavailable');
+          } else {
+            setPhaseBoth('validating');
+            setModeBoth('valid');
+            setIdxBoth(0);
+            startPoint();
+          }
         }
       } else {
         const assessment = buildAssessment();
@@ -220,10 +244,10 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
       }
     }
 
-    function startPoint() {
+    function startPoint(seedCollected = 0) {
       clearPointTimeout();
       pointStartRef.current = performance.now();
-      collectedRef.current = 0;
+      collectedRef.current = seedCollected;
       const generation = pointTimerGenerationRef.current;
       pointTimeoutRef.current = window.setTimeout(() => {
         if (
@@ -234,10 +258,24 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
         ) return;
 
         pointTimeoutRef.current = null;
-        if (collectedRef.current < MIN_SAMPLES_PER_POINT) {
-          rejectAttempt(buildAssessment(), collectedRef.current === 0);
-        } else {
+        const retriesArr = phaseRef.current === 'calibrating'
+          ? calibRetriesRef.current
+          : validRetriesRef.current;
+        const outcome = timeoutOutcome(
+          collectedRef.current,
+          MIN_SAMPLES_PER_POINT,
+          retriesArr[idxRef.current],
+        );
+        if (outcome === 'complete') {
           completeCurrentPoint();
+        } else if (outcome === 'retry') {
+          // Re-visita o MESMO ponto preservando o já coletado; o settle roda
+          // de novo (o olho precisa re-pousar) e o baseline re-observa a faixa
+          // correta por construção.
+          retriesArr[idxRef.current] += 1;
+          startPoint(collectedRef.current);
+        } else {
+          rejectAttempt(buildAssessment(), collectedRef.current === 0);
         }
       }, MAX_POINT_MS);
     }
@@ -253,6 +291,8 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
       posturalSamplesRef.current = [];
       fitSampleCountsRef.current = Array(CALIB_POINTS.length).fill(0);
       validationEvidenceRef.current = createEmptyValidationEvidence();
+      calibRetriesRef.current = Array(CALIB_POINTS.length).fill(0);
+      validRetriesRef.current = Array(VALID_POINTS.length).fill(0);
       setRejection(null);
       await initFaceTracking();
       if (cancelled) return;
@@ -391,6 +431,8 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
     posturalSamplesRef.current = [];
     fitSampleCountsRef.current = Array(CALIB_POINTS.length).fill(0);
     validationEvidenceRef.current = createEmptyValidationEvidence();
+    calibRetriesRef.current = Array(CALIB_POINTS.length).fill(0);
+    validRetriesRef.current = Array(VALID_POINTS.length).fill(0);
     phaseRef.current = 'calibrating';
     modeRef.current = 'calib';
     idxRef.current = 0;
@@ -405,6 +447,8 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   const points = mode === 'calib' ? CALIB_POINTS : VALID_POINTS;
   const target = points[Math.min(index, points.length - 1)];
   const totalThisMode = points.length;
+  const activeRetries = mode === 'calib' ? calibRetriesRef.current : validRetriesRef.current;
+  const revisiting = (activeRetries[index] ?? 0) > 0;
   const surface = activeSurfaceRect();
   const targetPx = targetToViewportPx(target, surface);
 
@@ -490,7 +534,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
               />
             </svg>
             <div
-              key={`${mode}-${index}`}
+              key={`${mode}-${index}-${activeRetries[index] ?? 0}`}
               className="relative rounded-full bg-blue-400 ring-2 ring-blue-300/40"
               style={{
                 width: `${sizing.corePx}px`,
@@ -509,7 +553,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
               className="absolute left-1/2 -translate-x-1/2 z-10 rounded-full bg-slate-950/70 px-3 py-1 text-xs text-slate-200 backdrop-blur whitespace-nowrap"
               style={{ top: `${Math.max(8, surface.top - 36)}px` }}
             >
-              Olhe para o ponto azul · {index + 1}/{totalThisMode}
+              Olhe para o ponto azul · {index + 1}/{totalThisMode}{revisiting ? ' · reforço' : ''}
             </div>
           ) : (
             <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2 text-center text-white px-4">
@@ -517,7 +561,7 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
                 {phase === 'calibrating' ? 'Calibrando posição do olhar' : 'Verificando mapeamento'}
               </p>
               <p className="text-slate-300 text-xs md:text-sm">
-                Olhe para o ponto azul dentro da área marcada · {index + 1}/{totalThisMode}
+                Olhe para o ponto azul dentro da área marcada · {index + 1}/{totalThisMode}{revisiting ? ' · reforço' : ''}
               </p>
             </div>
           )}
