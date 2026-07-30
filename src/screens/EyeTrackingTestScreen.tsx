@@ -12,7 +12,7 @@ import { activeBlinkThresholds, purgeLeadingBlinkSamples } from '@/services/blin
 import { getBlinkBaselineSnapshot } from '@/services/blinkBaseline';
 import {
   interpupillaryPx, estimateDistanceCm, getDistanceAnchor, readingFontCssPx, readingFontAngleDeg,
-  distanceWithinAnchorTolerance,
+  distanceWithinAnchorTolerance, cssPxPerDeg,
 } from '@/services/viewingGeometry';
 import { isCalibrated, predictNorm, getAccuracyDeg, getCalibrationSignature, getCalibrationAssessment } from '@/services/gazeCalibration';
 import { getMotionQuality, type MotionQuality } from '@/services/motionSensor';
@@ -638,7 +638,14 @@ export function EyeTrackingTestScreen({
       if (ts - lastLivePushRef.current > 200) {
         lastLivePushRef.current = ts;
         setLive(snap);
-        setLiveSignal(summarizeFunctionalVisualSignal(visualSignalSamplesRef.current, { coverage }));
+        setLiveSignal(summarizeFunctionalVisualSignal(visualSignalSamplesRef.current, {
+          coverage,
+          // Live IPD distance only: without a real estimate this frame, the hint
+          // falls back to the stamped relative threshold instead of faking geometry.
+          geometry: ipdPx != null && anchor && Number.isFinite(dEst)
+            ? { pxPerDeg: cssPxPerDeg(dEst), canvasWidthPx: cssW }
+            : undefined,
+        }));
       }
     }
   };

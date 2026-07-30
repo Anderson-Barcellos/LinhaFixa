@@ -1,7 +1,7 @@
 import { GazeSample } from '@/types';
-import { detectFixations, dispersion } from '@/exercises/fixationDetection';
-import { saccadesFromFixations, dispersionThresholdFor } from '@/exercises/saccadesFromFixations';
-import { lineReturnThresholdFor } from '@/exercises/saccadeAnalysis';
+import { detectMergedFixations, dispersion } from '@/exercises/fixationDetection';
+import { saccadesFromFixations, dispersionThresholdFor, dispersionThresholdForAngular } from '@/exercises/saccadesFromFixations';
+import { lineReturnThresholdFor, preprocessForDetection } from '@/exercises/saccadeAnalysis';
 
 export interface VisualSignalSample extends GazeSample {
   calibrated?: boolean;
@@ -23,10 +23,20 @@ export interface FunctionalVisualSignalSummary {
   sampleRateHz: number;
   sensitivityScore: number;
   lineReturnCandidate: boolean;
+  // Which rule anchored the fixation dispersion threshold this call — 'angular'
+  // when live geometry was usable, 'relative-fallback' otherwise. Mirrors
+  // SaccadeMetrics.thresholdSource so the live hint and the clinical metric can
+  // never silently disagree about which instrument produced the number.
+  thresholdSource: 'angular' | 'relative-fallback';
 }
 
 export interface FunctionalVisualSignalOptions {
   coverage?: number | null;
+  // Live viewing geometry (this frame's IPD-derived distance), NOT the
+  // capture-time anchor used by analyzeSaccades — the hint reruns every ~200ms
+  // as the geometry itself changes. Absent/invalid falls back to the
+  // span-relative threshold below.
+  geometry?: { pxPerDeg: number; canvasWidthPx: number };
 }
 
 // --- Limiares de APRESENTAÇÃO do painel ao vivo ---
@@ -76,11 +86,20 @@ export function summarizeFunctionalVisualSignal(
   // formatting; rounding here could promote 23.5 Hz to the 24 Hz validity tier.
   const sampleRateHz = ((valid.length - 1) / durationMs) * 1000;
 
-  // Mesmo detector do clínico (saccadeAnalysis): fixações por dispersão (I-DT),
-  // sacadas derivadas das transições, limiar de dispersão relativo à extensão do
-  // próprio sinal. Fps-invariante por construção — provado no teste 30↔60fps.
-  const fixations = detectFixations(valid, {
-    dispersionThreshold: dispersionThresholdFor(dispersion(valid)),
+  // Same instrument as the clinical analyser (v3): shared h+v pre-filter, Hooge
+  // merge pipeline, and the SAME angular anchor when live geometry is available —
+  // so the live hint can never disagree with the final metric about what a
+  // fixation is. Falls back to the span-relative threshold (stamped) without it.
+  const filtered = preprocessForDetection(valid);
+  const geo = options.geometry;
+  const angular = geo != null
+    && Number.isFinite(geo.pxPerDeg) && geo.pxPerDeg > 0
+    && Number.isFinite(geo.canvasWidthPx) && geo.canvasWidthPx > 0;
+  const thresholdSource = angular ? 'angular' as const : 'relative-fallback' as const;
+  const { fixations } = detectMergedFixations(filtered, {
+    dispersionThreshold: angular
+      ? dispersionThresholdForAngular(geo!.pxPerDeg, geo!.canvasWidthPx)
+      : dispersionThresholdFor(dispersion(filtered)),
   });
   const fixatedMs = fixations.reduce((sum, f) => sum + f.durationMs, 0);
   const fixationShare = round0(Math.min(100, (fixatedMs / durationMs) * 100));
@@ -120,6 +139,7 @@ export function summarizeFunctionalVisualSignal(
       sampleRateHz,
       sensitivityScore,
       lineReturnCandidate,
+      thresholdSource,
     });
   }
 
@@ -138,6 +158,7 @@ export function summarizeFunctionalVisualSignal(
       sampleRateHz,
       sensitivityScore,
       lineReturnCandidate,
+      thresholdSource,
     });
   }
 
@@ -160,6 +181,7 @@ export function summarizeFunctionalVisualSignal(
     sampleRateHz,
     sensitivityScore,
     lineReturnCandidate,
+    thresholdSource,
   });
 }
 
@@ -178,6 +200,7 @@ function emptySummary(detail: string): FunctionalVisualSignalSummary {
     sampleRateHz: 0,
     sensitivityScore: 0,
     lineReturnCandidate: false,
+    thresholdSource: 'relative-fallback',
   };
 }
 

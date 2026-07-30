@@ -113,6 +113,28 @@ test('fixationShare é fração de TEMPO em fixação, não de intervalos', () =
   assert.ok(s.fixationShare > 70, `share=${s.fixationShare}`);
 });
 
+test('com geometria viva o hint carimba angular; sem, relative-fallback', () => {
+  const samples: VisualSignalSample[] = Array.from({ length: 30 }, (_, i) => ({
+    t: i * 33,
+    h: 0.3 + (i % 10) * 0.03,
+    v: 0.5,
+  }));
+  const withGeo = summarizeFunctionalVisualSignal(samples, {
+    geometry: { pxPerDeg: 40, canvasWidthPx: 800 },
+  });
+  assert.equal(withGeo.thresholdSource, 'angular');
+  assert.equal(summarizeFunctionalVisualSignal(samples).thresholdSource, 'relative-fallback');
+});
+
+test('spike em v não degrada fixationShare no hint (pré-filtro compartilhado)', () => {
+  const stable: VisualSignalSample[] = Array.from({ length: 30 }, (_, i) => ({ t: i * 33, h: 0.5, v: 0.5 }));
+  const spiked: VisualSignalSample[] = stable.map((s, i) => (i === 15 ? { ...s, v: 0.95 } : s));
+  const geometry = { pxPerDeg: 40, canvasWidthPx: 800 };
+  const clean = summarizeFunctionalVisualSignal(stable, { geometry });
+  const withSpike = summarizeFunctionalVisualSignal(spiked, { geometry });
+  assert.equal(withSpike.fixationShare, clean.fixationShare);
+});
+
 test('summarizeFunctionalVisualSignal preserves fractional sample rate evidence', () => {
   for (const rate of [23.5, 23.99, 44.5, 44.99, 24, 45]) {
     const durationMs = (12 / rate) * 1000;
