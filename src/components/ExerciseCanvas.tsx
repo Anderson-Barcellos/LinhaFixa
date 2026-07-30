@@ -35,7 +35,6 @@ interface ExerciseCanvasProps {
   registerStop?: (stop: () => void) => void;
 }
 
-
 export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled, forceRawSignal, viewingDistanceCm = 40, fontSizePreference = 'normal', registerStop }: ExerciseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);

@@ -109,7 +109,11 @@ export function saveScreenCalibration(cardWidthPx: number): ScreenCalibration | 
   const pxPerCm = pxPerCmFromCardWidthPx(cardWidthPx);
   if (!key || pxPerCm == null || typeof localStorage === 'undefined') return null;
   const calibration: ScreenCalibration = { pxPerCm, cardWidthPx, measuredAt: Date.now(), key };
-  localStorage.setItem(SCREEN_CALIBRATION_STORAGE_KEY, JSON.stringify(calibration));
+  try {
+    localStorage.setItem(SCREEN_CALIBRATION_STORAGE_KEY, JSON.stringify(calibration));
+  } catch {
+    return null;
+  }
   return calibration;
 }
 

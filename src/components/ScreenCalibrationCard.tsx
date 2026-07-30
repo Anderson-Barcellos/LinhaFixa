@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   CARD_WIDTH_MM,
   activePxPerCm,
@@ -32,6 +32,25 @@ export function ScreenCalibrationCard() {
   const previewPxPerCm = useMemo(() => pxPerCmFromCardWidthPx(cardWidthPx), [cardWidthPx]);
   const active = activePxPerCm();
 
+  const rectRef = useRef<HTMLDivElement>(null);
+  const [clamped, setClamped] = useState(false);
+
+  // maxWidth: '100%' no retângulo protege o layout, mas num container mais
+  // estreito que cardWidthPx a largura RENDERIZADA fica menor que o valor
+  // salvo — o usuário alinharia o cartão físico ao retângulo cortado e
+  // carimbaria como 'measured' um px/cm errado. Mede a largura real após
+  // cada render/resize e bloqueia o salvar quando o clamp está ativo.
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = rectRef.current;
+      if (!el) return;
+      setClamped(el.clientWidth < cardWidthPx - 1);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [cardWidthPx]);
+
   const nudge = (delta: number) =>
     setCardWidthPx(w => Math.min(SLIDER_MAX_PX, Math.max(SLIDER_MIN_PX, w + delta)));
 
@@ -46,6 +65,7 @@ export function ScreenCalibrationCard() {
         dependem dessa régua.
       </p>
       <div
+        ref={rectRef}
         className="border-2 border-indigo-500 rounded-lg bg-accent-soft"
         style={{ width: `${cardWidthPx}px`, height: `${Math.round(cardWidthPx * CARD_ASPECT)}px`, maxWidth: '100%' }}
         aria-label="Retângulo de comparação com o cartão"
@@ -64,9 +84,11 @@ export function ScreenCalibrationCard() {
         <button type="button" onClick={() => nudge(1)} className="px-3 py-1 rounded-lg border border-line-strong text-mild font-bold">+1px</button>
       </div>
       <div className="text-sm text-mild">
-        {previewPxPerCm != null
-          ? `Medida atual: ${previewPxPerCm.toFixed(2)} px/cm (referência CSS: ${CSS_PX_PER_CM} px/cm)`
-          : 'Fora da faixa plausível (20–80 px/cm) — ajuste o retângulo até casar com o cartão.'}
+        {clamped
+          ? 'Tela estreita demais para medir com este tamanho — o retângulo está cortado.'
+          : previewPxPerCm != null
+            ? `Medida atual: ${previewPxPerCm.toFixed(2)} px/cm (referência CSS: ${CSS_PX_PER_CM} px/cm)`
+            : 'Fora da faixa plausível (20–80 px/cm) — ajuste o retângulo até casar com o cartão.'}
         {' · '}
         {active.source === 'measured'
           ? `Em uso: medida de ${saved ? new Date(saved.measuredAt).toLocaleDateString('pt-BR') : '—'}`
@@ -75,7 +97,7 @@ export function ScreenCalibrationCard() {
       <div className="flex gap-3 flex-wrap">
         <button
           type="button"
-          disabled={previewPxPerCm == null}
+          disabled={previewPxPerCm == null || clamped}
           onClick={() => setSaved(saveScreenCalibration(cardWidthPx))}
           className="px-5 py-3 bg-accent hover:bg-indigo-500 text-white rounded-xl font-bold disabled:opacity-40"
         >
