@@ -44,7 +44,10 @@ export function ScreenCalibrationCard() {
     const measure = () => {
       const el = rectRef.current;
       if (!el) return;
-      setClamped(el.clientWidth < cardWidthPx - 1);
+      // offsetWidth, não clientWidth: com o border-box do Tailwind o width
+      // inline inclui as bordas (border-2 = 4px), e clientWidth as exclui —
+      // comparar clientWidth com cardWidthPx acusaria clamp sempre.
+      setClamped(el.offsetWidth < cardWidthPx - 1);
     };
     measure();
     window.addEventListener('resize', measure);
