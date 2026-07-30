@@ -48,6 +48,23 @@ export interface DetectFixationsOptions {
 export const DEFAULT_MIN_FIXATION_MS = 100;
 export const DEFAULT_MAX_GAP_MS = 200;
 
+// --- Full Hooge pipeline: short candidates → merge → post-hoc selection ---
+//
+// The 100ms cut must happen AFTER merging: applied during detection (the old
+// behaviour) it discards 40-99ms fragments before the merge step could recover
+// them. 40ms is the candidate floor (≈1 frame at 30fps survives nothing shorter);
+// 100ms remains the published minimum — selection just moved to the end.
+
+export const CANDIDATE_MIN_FIXATION_MS = 40;
+export const DEFAULT_MERGE_GAP_MS = 100;
+
+export interface DetectMergedFixationsOptions {
+  dispersionThreshold: number;
+  minDurationMs?: number;   // seleção final, default DEFAULT_MIN_FIXATION_MS (100)
+  maxGapMs?: number;        // default DEFAULT_MAX_GAP_MS (200)
+  maxMergeGapMs?: number;   // default DEFAULT_MERGE_GAP_MS (100)
+}
+
 // Summed horizontal and vertical extent of a window (Salvucci & Goldberg).
 export function dispersion(samples: GazeSample[]): number {
   if (samples.length === 0) return 0;
@@ -169,4 +186,28 @@ export function mergeFixations(
     }
   }
   return { fixations: out, mergeCount };
+}
+
+// Full Hooge pipeline: detect short candidates (40ms), merge them, then filter
+// on final selection threshold (100ms by default). WHY: applying the 100ms cut
+// during initial detection discards fragments before the merge step has a chance
+// to recover them.
+export function detectMergedFixations(
+  samples: GazeSample[],
+  options: DetectMergedFixationsOptions,
+): MergedFixations {
+  const minDurationMs = options.minDurationMs ?? DEFAULT_MIN_FIXATION_MS;
+  const candidates = detectFixations(samples, {
+    dispersionThreshold: options.dispersionThreshold,
+    minDurationMs: CANDIDATE_MIN_FIXATION_MS,
+    maxGapMs: options.maxGapMs ?? DEFAULT_MAX_GAP_MS,
+  });
+  const merged = mergeFixations(candidates, {
+    maxMergeGapMs: options.maxMergeGapMs ?? DEFAULT_MERGE_GAP_MS,
+    maxMergeDistance: options.dispersionThreshold,
+  });
+  return {
+    fixations: merged.fixations.filter(f => f.durationMs >= minDurationMs),
+    mergeCount: merged.mergeCount,
+  };
 }

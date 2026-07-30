@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectFixations, dispersion, mergeFixations } from './fixationDetection';
+import { detectFixations, detectMergedFixations, dispersion, mergeFixations } from './fixationDetection';
 import type { GazeSample } from '@/types';
 
 // Builds a sample series at a given rate so the same eye behaviour can be
@@ -223,4 +223,56 @@ test('mergeFixations: fusão em cascata: três fragmentos viram um', () => {
   );
   assert.equal(out.fixations.length, 1);
   assert.equal(out.mergeCount, 2);
+});
+
+// --- Pipeline Hooge completo: candidatos 40ms → merge → seleção 100ms ---
+
+// Helper: 30fps synthetic stream com posições h (v fixo), 33ms por amostra.
+const stream = (frames: number[], v = 0.5): GazeSample[] =>
+  frames.map((h, i) => ({ t: i * 33, h, v }));
+
+test('detectMergedFixations: spike em v que parte uma fixação volta a ser uma só, sem sacada espúria', () => {
+  // 12 amostras estáveis com um outlier de v no meio: sem merge o detector
+  // produz 2 fixações com centroides iguais em h — e a dupla encurta meanFixation.
+  const samples = stream(Array(12).fill(0.5)).map((s, i) =>
+    i === 6 ? { ...s, v: 0.95 } : s);
+  const { fixations, mergeCount } = detectMergedFixations(samples, {
+    dispersionThreshold: 0.05,
+  });
+  assert.equal(fixations.length, 1);
+  assert.ok(mergeCount >= 1);
+  assert.ok(fixations[0].durationMs >= 300);
+});
+
+test('detectMergedFixations: fragmento curto (2 amostras, 66ms) é recuperado pelo merge em vez de descartado', () => {
+  // 4 amostras (99ms) + buraco de 1 frame + 2 amostras (33ms) no mesmo lugar:
+  // nenhum fragmento sozinho passa de 100ms, juntos passam.
+  const a = [0, 33, 66, 99].map(t => ({ t, h: 0.5, v: 0.5 }));
+  const b = [165, 198].map(t => ({ t, h: 0.5, v: 0.5 }));
+  const { fixations } = detectMergedFixations([...a, ...b], { dispersionThreshold: 0.05 });
+  assert.equal(fixations.length, 1);
+  assert.equal(fixations[0].durationMs, 198);
+});
+
+test('detectMergedFixations: seleção final ainda corta repouso curto isolado (<100ms)', () => {
+  const { fixations } = detectMergedFixations(stream([0.5, 0.5, 0.5]), {
+    dispersionThreshold: 0.05,
+  }); // 66ms total, nada por perto para fundir
+  assert.equal(fixations.length, 0);
+});
+
+test('detectMergedFixations: mesma leitura a 30fps e 60fps produz as mesmas fixações fundidas', () => {
+  // Reuso do padrão do teste de invariância existente: 400ms parado, salto, 400ms parado.
+  const at = (fps: number) => {
+    const dt = 1000 / fps;
+    const n = Math.round(400 / dt);
+    const first = Array.from({ length: n }, (_, i) => ({ t: i * dt, h: 0.3, v: 0.5 }));
+    const second = Array.from({ length: n }, (_, i) => ({ t: 450 + i * dt, h: 0.7, v: 0.5 }));
+    return detectMergedFixations([...first, ...second], { dispersionThreshold: 0.05 });
+  };
+  const f30 = at(30).fixations, f60 = at(60).fixations;
+  assert.equal(f30.length, 2);
+  assert.equal(f60.length, 2);
+  assert.ok(Math.abs(f30[0].centroidH - f60[0].centroidH) < 0.005);
+  assert.ok(Math.abs(f30[1].centroidH - f60[1].centroidH) < 0.005);
 });
