@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { analyzeSaccades } from './saccadeAnalysis';
+import { analyzeSaccades, GAZE_ANALYZER_VERSION } from './saccadeAnalysis';
 import { GazeSample } from '@/types';
 import { classifyTemporalTier } from '@/services/captureValidity';
 
@@ -309,4 +309,52 @@ test('preprocessForDetection: remove spike isolado no canal h (paridade com o fi
 test('preprocessForDetection: série real (rampa) passa inalterada', () => {
   const samples = [0, 1, 2, 3, 4].map(i => ({ t: i * 33, h: 0.1 * i, v: 0.05 * i }));
   assert.deepEqual(preprocessForDetection(samples), samples);
+});
+
+// --- Âncora angular (v3) ---
+//
+// Task 4: com geometria (px/grau + largura do canvas) válida, o limiar de
+// dispersão vem de dispersionThresholdForAngular (1,08°, Blignaut 2009) em vez
+// da escala relativa ao span da própria captura — a comparabilidade da série
+// consigo mesma exige um instrumento fixo em graus. thresholdSource carimba
+// qual regra decidiu, para o fallback nunca recriar a colisão em silêncio.
+
+const angularGeometry = { pxPerDegAtCapture: 40, canvasWidthPx: 800 };
+const frameStream = (frames: number[]): GazeSample[] =>
+  frames.map((h, i) => ({ t: i * 33, h, v: 0.5 }));
+
+test('GAZE_ANALYZER_VERSION é 3', () => {
+  assert.equal(GAZE_ANALYZER_VERSION, 3);
+});
+
+test('com geometria carimba angular; sem geometria carimba relative-fallback', () => {
+  const samples = frameStream([...Array(6).fill(0.3), ...Array(6).fill(0.7)]);
+  assert.equal(analyzeSaccades(samples, { geometry: angularGeometry }).thresholdSource, 'angular');
+  assert.equal(analyzeSaccades(samples).thresholdSource, 'relative-fallback');
+});
+
+test('no caminho angular, leitura com sacadas de ~2° preserva as fixações separadas', () => {
+  // 2° = 80px = 0.10 do canvas: acima do limiar angular 0.054, então as pausas
+  // não se fundem. O caso decisivo é o span alto: um span sintético de 1.2
+  // levaria o limiar relativo antigo a 0.144 e FUNDIRIA tudo — o angular não
+  // depende do span da captura.
+  const line = [0.10, 0.20, 0.30, 0.40].flatMap(h => Array(5).fill(h));
+  const withSpanInflator = [...Array(3).fill(0.0), ...line, ...Array(3).fill(1.2)];
+  const metrics = analyzeSaccades(frameStream(withSpanInflator), { geometry: angularGeometry });
+  assert.ok(metrics.saccadeCount >= 3, `esperava >= 3 sacadas, obteve ${metrics.saccadeCount}`);
+});
+
+test('expõe fixationMergeCount', () => {
+  const samples = frameStream(Array(12).fill(0.5)).map((s, i) => (i === 6 ? { ...s, v: 0.95 } : s));
+  const metrics = analyzeSaccades(samples, { geometry: angularGeometry });
+  assert.ok((metrics.fixationMergeCount ?? -1) >= 0);
+  assert.equal(typeof metrics.fixationMergeCount, 'number');
+});
+
+test('spike em v não fabrica par de sacadas espúrias', () => {
+  // 20 amostras estáveis, spike único em v: pré-filtro + merge → 1 fixação, 0 sacadas.
+  const samples = frameStream(Array(20).fill(0.5)).map((s, i) => (i === 10 ? { ...s, v: 0.95 } : s));
+  const metrics = analyzeSaccades(samples, { geometry: angularGeometry });
+  assert.equal(metrics.saccadeCount, 0);
+  assert.ok((metrics.meanFixationMs ?? 0) >= 400);
 });

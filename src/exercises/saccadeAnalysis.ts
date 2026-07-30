@@ -1,6 +1,6 @@
 import { GazeSample, SaccadeMetrics, SaccadeEvent } from '@/types';
-import { detectFixations, dispersion } from './fixationDetection';
-import { saccadesFromFixations, dispersionThresholdFor } from './saccadesFromFixations';
+import { detectMergedFixations, dispersion } from './fixationDetection';
+import { saccadesFromFixations, dispersionThresholdFor, dispersionThresholdForAngular } from './saccadesFromFixations';
 
 export type { SaccadeEvent };
 
@@ -26,10 +26,11 @@ export type { SaccadeEvent };
 
 // Version of the analysis this module produces, stamped onto every SaccadeMetrics.
 // 1 (implicit, absent on old records) = velocity-threshold detector, frame-rate
-// dependent. 2 = fixation-first. Values from different versions are NOT
-// comparable; captureReprocess.ts lifts old records onto the current version by
-// re-running this analyser over their persisted raw signal.
-export const GAZE_ANALYZER_VERSION = 2;
+// dependent. 2 = fixation-first. 3 = Hooge merge + angular anchor + h/v
+// pre-filter. Values from different versions are NOT comparable; captureReprocess.ts
+// lifts old records onto the current version by re-running this analyser over
+// their persisted raw signal.
+export const GAZE_ANALYZER_VERSION = 3;
 
 // Ignore tiny displacements between neighbouring fixations: centroid wobble, not
 // a jump of the eye.
@@ -59,6 +60,15 @@ const LINE_RETURN_THRESHOLD_CAP = 0.35;     // ratio units (previous fixed thres
 // instead of inflating the mean fixation duration.
 const MAX_FIXATION_GAP_MS = 200;
 
+// Geometry needed to anchor the dispersion threshold in degrees rather than in a
+// fraction of the capture's own span. Both fields must be finite and positive;
+// anything else (missing geometry, a raw/uncalibrated capture) falls back to the
+// relative threshold below.
+export interface AnalyzeSaccadesGeometry {
+  pxPerDegAtCapture: number;
+  canvasWidthPx: number;
+}
+
 export interface AnalyzeSaccadesOptions {
   signalSource?: SaccadeMetrics['signalSource'];
   // When true, the returned metrics carry the individual detected events with
@@ -66,6 +76,10 @@ export interface AnalyzeSaccadesOptions {
   // the ground-truth validation harness opts in to match detections against known
   // target jumps.
   collectEvents?: boolean;
+  // Calibrated capture geometry. When present and valid, the dispersion threshold
+  // is anchored in degrees (dispersionThresholdForAngular) instead of scaled from
+  // this capture's own signal span — see thresholdSource on SaccadeMetrics.
+  geometry?: AnalyzeSaccadesGeometry;
 }
 
 // 3-sample median filter over the horizontal channel. MediaPipe occasionally emits
@@ -92,6 +106,15 @@ export function preprocessForDetection(samples: GazeSample[]): GazeSample[] {
   return samples.map((s, i) => ({ ...s, h: h[i], v: v[i] }));
 }
 
+// Shared by both return paths: geometry decides once, and the fallback never
+// silently recreates the two-instrument (per-capture-span) series.
+function thresholdSourceFor(geometry: AnalyzeSaccadesGeometry | undefined): SaccadeMetrics['thresholdSource'] {
+  const angular = geometry != null
+    && Number.isFinite(geometry.pxPerDegAtCapture) && geometry.pxPerDegAtCapture > 0
+    && Number.isFinite(geometry.canvasWidthPx) && geometry.canvasWidthPx > 0;
+  return angular ? 'angular' : 'relative-fallback';
+}
+
 export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesOptions = {}): SaccadeMetrics {
   const valid = samples.filter(s => Number.isFinite(s.h) && Number.isFinite(s.t));
 
@@ -102,6 +125,8 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
       signalSource: options.signalSource ?? 'unavailable',
       sampleRateHz: sampleRateHz(valid),
       analyzerVersion: GAZE_ANALYZER_VERSION,
+      fixationMergeCount: 0,
+      thresholdSource: thresholdSourceFor(options.geometry),
       saccadeCount: 0,
       regressionCount: 0,
       lineReturnCount: 0,
@@ -117,11 +142,26 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
   // and split one fixation into two.
   const filtered = preprocessForDetection(valid);
 
+  // Angular anchor (calibrated path): the dispersion threshold is sized in
+  // degrees instead of as a fraction of this capture's own span, so the same
+  // eye produces the same fixations across captures. Without valid geometry we
+  // fall back to the relative threshold (raw/uncalibrated signal) — and stamp
+  // which rule decided so the fallback never recreates the two-instrument series
+  // in silence.
+  const geometry = options.geometry;
+  const thresholdSource = thresholdSourceFor(geometry);
+  const dispersionThreshold = thresholdSource === 'angular'
+    ? dispersionThresholdForAngular(geometry!.pxPerDegAtCapture, geometry!.canvasWidthPx)
+    : dispersionThresholdFor(dispersion(filtered));
+
   // Detect what the webcam can actually resolve — the eye standing still — and
   // read the saccades off the transitions between those rests. See
   // fixationDetection.ts for why velocity thresholding cannot work at 24-60Hz.
-  const fixations = detectFixations(filtered, {
-    dispersionThreshold: dispersionThresholdFor(dispersion(filtered)),
+  // detectMergedFixations runs the full Hooge pipeline (candidates → merge →
+  // final selection) so a single bad frame cannot split one physiological
+  // fixation into two.
+  const { fixations, mergeCount } = detectMergedFixations(filtered, {
+    dispersionThreshold,
     minDurationMs: MIN_FIXATION_MS,
     maxGapMs: MAX_FIXATION_GAP_MS,
   });
@@ -163,6 +203,8 @@ export function analyzeSaccades(samples: GazeSample[], options: AnalyzeSaccadesO
     signalSource: options.signalSource,
     sampleRateHz: sampleRateHz(valid),
     analyzerVersion: GAZE_ANALYZER_VERSION,
+    fixationMergeCount: mergeCount,
+    thresholdSource,
     saccadeCount: amplitudes.length,
     regressionCount,
     lineReturnCount,

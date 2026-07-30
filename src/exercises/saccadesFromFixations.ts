@@ -60,3 +60,18 @@ export function dispersionThresholdFor(signalSpan: number): number {
     Math.max(DISPERSION_FLOOR, DISPERSION_RELATIVE_FACTOR * signalSpan),
   );
 }
+
+// --- Dispersion threshold, angular anchor (calibrated path) ---
+
+// Angular anchor for the dispersion threshold (calibrated path). The relative
+// threshold above made the instrument a function of each capture's own span —
+// two captures, two instruments — colliding head-on with the series' P0:
+// comparability with itself. Blignaut (2009): optimum 1.08° for a 1.0° radius,
+// useful band 0.76-1.4°, in the same summed h+v metric this module uses.
+// The clamp is defensive only; sane geometry never reaches it.
+export const ANGULAR_DISPERSION_DEG = 1.08;
+
+export function dispersionThresholdForAngular(pxPerDeg: number, canvasWidthPx: number): number {
+  const fraction = (ANGULAR_DISPERSION_DEG * pxPerDeg) / canvasWidthPx;
+  return Math.min(DISPERSION_CAP, Math.max(DISPERSION_FLOOR, fraction));
+}

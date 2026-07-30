@@ -108,6 +108,13 @@ export interface SaccadeMetrics {
   // negotiated frame rate — those values are NOT comparable with version 2
   // (fixation-first) without reprocessing the raw signal. See captureReprocess.ts.
   analyzerVersion?: number;
+  // v3 provenance: how many candidate fixations the Hooge merge step fused, and
+  // which dispersion threshold sized the detector. 'angular' anchors on degrees
+  // (comparable across captures); 'relative-fallback' derives from the capture's
+  // own span (legacy behaviour, kept for captures without geometry). Without this
+  // stamp the fallback would silently recreate the two-instrument series.
+  fixationMergeCount?: number;
+  thresholdSource?: 'angular' | 'relative-fallback';
   saccadeCount: number;           // reading saccades (progressive + regressions), excludes line returns
   regressionCount: number;        // saccades against the reading direction (re-reading), excludes line returns
   lineReturnCount?: number;       // large leftward sweeps back to the next line start (absent on legacy captures)

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { saccadesFromFixations, dispersionThresholdFor } from './saccadesFromFixations';
+import { saccadesFromFixations, dispersionThresholdFor, dispersionThresholdForAngular } from './saccadesFromFixations';
 import type { Fixation } from './fixationDetection';
 
 function fix(tStart: number, tEnd: number, centroidH: number, centroidV = 0.5): Fixation {
@@ -75,4 +75,21 @@ test('limiar respeita piso e teto', () => {
 test('span inválido cai no limiar padrão em vez de quebrar', () => {
   const fallback = dispersionThresholdFor(Number.NaN);
   assert.ok(Number.isFinite(fallback) && fallback > 0);
+});
+
+// --- Âncora angular (Task 4) ---
+//
+// A escala relativa acima faz do limiar uma função do span de cada captura —
+// duas capturas, dois instrumentos. Quando há geometria (px/grau + largura do
+// canvas), 1,08° (Blignaut 2009) ancora o limiar em graus, comparável entre
+// capturas da mesma pessoa.
+
+test('dispersionThresholdForAngular: converte 1,08° para fração de canvas', () => {
+  // 40 px/deg num canvas de 800px: 1.08 * 40 / 800 = 0.054
+  const threshold = dispersionThresholdForAngular(40, 800);
+  assert.ok(Math.abs(threshold - 0.054) < 1e-9, `esperava ≈0.054, obteve ${threshold}`);
+});
+
+test('dispersionThresholdForAngular: clamp defensivo no cap para geometria degenerada', () => {
+  assert.ok(dispersionThresholdForAngular(400, 100) <= 0.20);
 });
