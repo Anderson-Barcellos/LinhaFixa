@@ -295,7 +295,18 @@ export function useCaptureLifecycle(options: UseCaptureLifecycleOptions): Captur
 
     const durationMs = Math.max(0, performance.now() - startSnapshot.monotonicStart);
     const series = selectCaptureSeries(calibratedSamples, rawSamples);
-    const metrics = analyzeSaccades(series.samples, { signalSource: series.signalSource });
+    // Computed before analysis (not after, as before) so the SAME geometry instance
+    // feeds both the analyzer's angular threshold and the persisted capture fields
+    // below — otherwise the two independent computations could silently drift
+    // (e.g. a distance sample landing differently) and the persisted
+    // pxPerDegAtCapture would no longer describe the metrics it sits next to.
+    const distanceEstimatedCm = medianCaptureDistanceCm(distanceSamples);
+    const pxPerDegAtCapture = cssPxPerDeg(distanceEstimatedCm ?? startSnapshot.conditions.distanceCm);
+    const canvasWidthPx = startSnapshot.environment.surfaceRect.width;
+    const metrics = analyzeSaccades(series.samples, {
+      signalSource: series.signalSource,
+      geometry: { pxPerDegAtCapture, canvasWidthPx },
+    });
     const detectionTelemetry = getDetectionTelemetry();
     const measuredRates = readCameraPipelineTelemetry(videoRef.current, {
       detectionFps: getDetectionFpsRef.current(),
@@ -325,7 +336,6 @@ export function useCaptureLifecycle(options: UseCaptureLifecycleOptions): Captur
 
     // Persist the tagged capture so PACK 1 thresholds can be calibrated on real data.
     const samples = series.samples.slice();
-    const distanceEstimatedCm = medianCaptureDistanceCm(distanceSamples);
     const validity = assessCaptureValidity({
       assessedAt: Date.now(),
       durationMs,
@@ -356,8 +366,8 @@ export function useCaptureLifecycle(options: UseCaptureLifecycleOptions): Captur
       sampleCount: samples.length,
       samples,
       distanceEstimatedCm,
-      pxPerDegAtCapture: cssPxPerDeg(distanceEstimatedCm ?? startSnapshot.conditions.distanceCm),
-      canvasWidthPx: environment.surfaceRect.width,
+      pxPerDegAtCapture,
+      canvasWidthPx,
       orientation: environment.viewport.orientation,
       calibratedSampleCount: series.calibratedSampleCount,
       rawSampleCount: series.rawSampleCount,

@@ -127,3 +127,20 @@ test('uma captura já na versão corrente não precisa de reprocessamento', () =
   current.metrics = { ...current.metrics, analyzerVersion: GAZE_ANALYZER_VERSION };
   assert.equal(needsReprocessing(current), false);
 });
+
+test('reprocessamento v3 usa a geometria persistida (thresholdSource angular)', () => {
+  const capture = legacyCapture({ pxPerDegAtCapture: 40, canvasWidthPx: 800 });
+  const reprocessed = reprocessCapture(capture);
+  assert.equal(reprocessed.metrics.analyzerVersion, GAZE_ANALYZER_VERSION);
+  assert.equal(reprocessed.metrics.thresholdSource, 'angular');
+  // legacyCapture() has no analyzerVersion at all (pre-versioning), so this just
+  // confirms the preserved snapshot never picks up the new stamp.
+  assert.notEqual(reprocessed.legacyMetrics?.analyzerVersion, GAZE_ANALYZER_VERSION);
+});
+
+test('captura legada sem geometria reprocessa como relative-fallback carimbado', () => {
+  const capture = legacyCapture();
+  const reprocessed = reprocessCapture(capture);
+  assert.equal(reprocessed.metrics.analyzerVersion, GAZE_ANALYZER_VERSION);
+  assert.equal(reprocessed.metrics.thresholdSource, 'relative-fallback');
+});

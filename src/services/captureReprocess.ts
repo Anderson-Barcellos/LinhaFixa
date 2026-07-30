@@ -28,8 +28,16 @@ export function needsReprocessing(capture: ValidationCapture): boolean {
 export function reprocessCapture(capture: ValidationCapture): ValidationCapture {
   if (!needsReprocessing(capture)) return capture;
 
+  // Feed the persisted capture-time geometry back in so a v3 reprocess of an old
+  // capture gets the same angular threshold the live capture would have used —
+  // otherwise every reprocessed history entry would silently fall back to the
+  // relative threshold even when the geometry to do better was recorded.
+  const geometry = capture.pxPerDegAtCapture != null && capture.canvasWidthPx != null
+    ? { pxPerDegAtCapture: capture.pxPerDegAtCapture, canvasWidthPx: capture.canvasWidthPx }
+    : undefined;
   const metrics = analyzeSaccades(capture.samples, {
     signalSource: capture.metrics?.signalSource,
+    geometry,
   });
 
   return {
