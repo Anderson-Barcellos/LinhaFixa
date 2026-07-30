@@ -14,6 +14,19 @@ export interface DerivedBlinkThresholds {
   exit: number;
 }
 
+// Faixas de elevação da grade de calibração (y normalizado): a coleta em alvos
+// inferiores embute downgaze no baseline (Read 2006). Fase 1 do §3.4: MEDIR o
+// gradiente sem mudar a derivação — slopeProxy >0 recorrente é a evidência que
+// justificaria (ou não) um exit elevação-dependente no futuro.
+export type BaselineBand = 'top' | 'mid' | 'bottom';
+export const MIN_BAND_SAMPLES = 10;
+
+export function bandForCalibY(y: number): BaselineBand {
+  if (y < 1 / 3) return 'top';
+  if (y < 2 / 3) return 'mid';
+  return 'bottom';
+}
+
 export const BLINK_EXIT_MIN_MARGIN = 0.05;
 export const BLINK_ENTER_GAP = 0.15;
 export const BLINK_ENTER_FLOOR = 0.45;
@@ -31,10 +44,14 @@ export interface BlinkBaselineSnapshot {
   baseline: number | null;
   p90: number | null;
   derived: DerivedBlinkThresholds | null;
+  /** Só faixas com n>0 — observação lateral, não alimenta a derivação. */
+  perBand: Array<{ band: BaselineBand; n: number; median: number }>;
+  /** mediana(bottom) − mediana(top); >0 sugere downgaze elevando o score. */
+  slopeProxy: number | null;
 }
 
 export interface BlinkBaselineMeter {
-  observe(score: number | null): void;
+  observe(score: number | null, band?: BaselineBand): void;
   sampleCount(): number;
   derive(): DerivedBlinkThresholds | null;
   snapshot(): BlinkBaselineSnapshot;
@@ -47,9 +64,21 @@ function percentile(sorted: number[], q: number): number {
 
 export function createBlinkBaselineMeter(): BlinkBaselineMeter {
   const scores: number[] = [];
+  // Pool por faixa: observacional, nunca lido por derive(). O pool completo
+  // acima continua o único dono da derivação de limiares.
+  const byBand = new Map<BaselineBand, number[]>();
   return {
-    observe(score) {
-      if (score != null && Number.isFinite(score)) scores.push(score);
+    observe(score, band) {
+      if (score == null || !Number.isFinite(score)) return;
+      scores.push(score);
+      if (band != null) {
+        let bucket = byBand.get(band);
+        if (!bucket) {
+          bucket = [];
+          byBand.set(band, bucket);
+        }
+        bucket.push(score);
+      }
     },
     sampleCount() {
       return scores.length;
@@ -70,18 +99,37 @@ export function createBlinkBaselineMeter(): BlinkBaselineMeter {
     },
     snapshot() {
       if (scores.length === 0) {
-        return { sampleCount: 0, baseline: null, p90: null, derived: null };
+        return { sampleCount: 0, baseline: null, p90: null, derived: null, perBand: [], slopeProxy: null };
       }
       const sorted = scores.slice().sort((a, b) => a - b);
+      const perBand: Array<{ band: BaselineBand; n: number; median: number }> = [];
+      const medianByBand = new Map<BaselineBand, number>();
+      for (const band of ['top', 'mid', 'bottom'] as const) {
+        const bucket = byBand.get(band);
+        if (!bucket || bucket.length === 0) continue;
+        const bucketSorted = bucket.slice().sort((a, b) => a - b);
+        const median = percentile(bucketSorted, 0.5);
+        medianByBand.set(band, median);
+        perBand.push({ band, n: bucket.length, median });
+      }
+      const topN = byBand.get('top')?.length ?? 0;
+      const bottomN = byBand.get('bottom')?.length ?? 0;
+      const slopeProxy =
+        topN >= MIN_BAND_SAMPLES && bottomN >= MIN_BAND_SAMPLES
+          ? medianByBand.get('bottom')! - medianByBand.get('top')!
+          : null;
       return {
         sampleCount: scores.length,
         baseline: percentile(sorted, 0.5),
         p90: percentile(sorted, 0.9),
         derived: this.derive(),
+        perBand,
+        slopeProxy,
       };
     },
     reset() {
       scores.length = 0;
+      byBand.clear();
     },
   };
 }
@@ -104,7 +152,9 @@ export function getBlinkBaselineSnapshot(): BlinkBaselineSnapshot | null {
 
 /** Commit de limiares sem medição associada (testes e overrides diretos). */
 export function commitDerivedBlinkThresholds(t: DerivedBlinkThresholds | null): void {
-  committedSnapshot = t ? { sampleCount: 0, baseline: null, p90: null, derived: t } : null;
+  committedSnapshot = t
+    ? { sampleCount: 0, baseline: null, p90: null, derived: t, perBand: [], slopeProxy: null }
+    : null;
 }
 
 export function getDerivedBlinkThresholds(): DerivedBlinkThresholds | null {

@@ -7,8 +7,10 @@ import {
   getBlinkBaselineSnapshot,
   getDerivedBlinkThresholds,
   resetDerivedBlinkThresholds,
+  bandForCalibY,
   BLINK_ENTER_GAP,
   MIN_BASELINE_SAMPLES,
+  MIN_BAND_SAMPLES,
 } from './blinkBaseline';
 
 // Distribuição realista do repouso do Anders: corpo em ~0.27-0.31, cauda de
@@ -101,17 +103,38 @@ test('snapshot preserva a medição mesmo quando a derivação é recusada', () 
 
 test('snapshot do meter vazio devolve nulls e n=0', () => {
   const s = createBlinkBaselineMeter().snapshot();
-  assert.deepEqual(s, { sampleCount: 0, baseline: null, p90: null, derived: null });
+  assert.deepEqual(s, {
+    sampleCount: 0,
+    baseline: null,
+    p90: null,
+    derived: null,
+    perBand: [],
+    slopeProxy: null,
+  });
 });
 
 test('store: snapshot commitado alimenta getDerivedBlinkThresholds e sobrevive à recusa', () => {
   resetDerivedBlinkThresholds();
   assert.equal(getBlinkBaselineSnapshot(), null);
-  commitBlinkBaselineSnapshot({ sampleCount: 100, baseline: 0.29, p90: 0.34, derived: { enter: 0.49, exit: 0.34 } });
+  commitBlinkBaselineSnapshot({
+    sampleCount: 100,
+    baseline: 0.29,
+    p90: 0.34,
+    derived: { enter: 0.49, exit: 0.34 },
+    perBand: [],
+    slopeProxy: null,
+  });
   assert.deepEqual(getDerivedBlinkThresholds(), { enter: 0.49, exit: 0.34 });
   assert.equal(getBlinkBaselineSnapshot()?.baseline, 0.29);
   // Derivação recusada: gate cai no fixo, mas a medição continua visível.
-  commitBlinkBaselineSnapshot({ sampleCount: 100, baseline: 0.45, p90: 0.45, derived: null });
+  commitBlinkBaselineSnapshot({
+    sampleCount: 100,
+    baseline: 0.45,
+    p90: 0.45,
+    derived: null,
+    perBand: [],
+    slopeProxy: null,
+  });
   assert.equal(getDerivedBlinkThresholds(), null);
   assert.equal(getBlinkBaselineSnapshot()?.baseline, 0.45);
   resetDerivedBlinkThresholds();
@@ -128,4 +151,57 @@ test('store: commit publica, null e reset restauram o default', () => {
   commitDerivedBlinkThresholds({ enter: 0.49, exit: 0.34 });
   resetDerivedBlinkThresholds();
   assert.equal(getDerivedBlinkThresholds(), null);
+});
+
+test('observe com faixa não muda a derivação (pool completo continua o dono)', () => {
+  const withBands = createBlinkBaselineMeter();
+  const without = createBlinkBaselineMeter();
+  for (let i = 0; i < 45; i++) {
+    const score = 0.25 + (i % 5) * 0.02;
+    withBands.observe(score, i % 3 === 0 ? 'top' : i % 3 === 1 ? 'mid' : 'bottom');
+    without.observe(score);
+  }
+  assert.deepEqual(withBands.derive(), without.derive());
+});
+
+test('slopeProxy = mediana(bottom) − mediana(top) com faixas suficientes', () => {
+  const meter = createBlinkBaselineMeter();
+  for (let i = 0; i < 12; i++) meter.observe(0.20, 'top');
+  for (let i = 0; i < 12; i++) meter.observe(0.25, 'mid');
+  for (let i = 0; i < 12; i++) meter.observe(0.32, 'bottom');
+  const snap = meter.snapshot();
+  assert.ok(snap.slopeProxy != null && Math.abs(snap.slopeProxy - 0.12) < 1e-9);
+  const bands = Object.fromEntries(snap.perBand.map(b => [b.band, b]));
+  assert.equal(bands.top.n, 12);
+  assert.ok(Math.abs(bands.top.median - 0.20) < 1e-9);
+  assert.ok(Math.abs(bands.bottom.median - 0.32) < 1e-9);
+});
+
+test('slopeProxy é null quando top ou bottom tem menos que MIN_BAND_SAMPLES', () => {
+  const meter = createBlinkBaselineMeter();
+  for (let i = 0; i < MIN_BAND_SAMPLES - 1; i++) meter.observe(0.20, 'top');
+  for (let i = 0; i < 20; i++) meter.observe(0.32, 'bottom');
+  assert.equal(meter.snapshot().slopeProxy, null);
+});
+
+test('observe sem faixa alimenta só o pool (perBand vazio, slopeProxy null)', () => {
+  const meter = createBlinkBaselineMeter();
+  for (let i = 0; i < 40; i++) meter.observe(0.29);
+  const snap = meter.snapshot();
+  assert.deepEqual(snap.perBand, []);
+  assert.equal(snap.slopeProxy, null);
+  assert.equal(snap.sampleCount, 40);
+});
+
+test('bandForCalibY mapeia a grade de calibração (0.18/0.5/0.82)', () => {
+  assert.equal(bandForCalibY(0.18), 'top');
+  assert.equal(bandForCalibY(0.5), 'mid');
+  assert.equal(bandForCalibY(0.82), 'bottom');
+});
+
+test('reset zera também as faixas', () => {
+  const meter = createBlinkBaselineMeter();
+  for (let i = 0; i < 15; i++) meter.observe(0.2, 'top');
+  meter.reset();
+  assert.deepEqual(meter.snapshot().perBand, []);
 });
