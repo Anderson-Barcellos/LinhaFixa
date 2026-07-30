@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectFixations, dispersion } from './fixationDetection';
+import { detectFixations, dispersion, mergeFixations } from './fixationDetection';
 import type { GazeSample } from '@/types';
 
 // Builds a sample series at a given rate so the same eye behaviour can be
@@ -148,4 +148,79 @@ test('sacada sub-frame não escapa: o salto entre fixações é visto nas duas t
   const jump30 = at30[1].centroidH - at30[0].centroidH;
   const jump60 = at60[1].centroidH - at60[0].centroidH;
   assert.ok(Math.abs(jump30 - jump60) < 0.02, `salto divergiu: ${jump30} vs ${jump60}`);
+});
+
+// --- Candidate merging (Hooge et al. 2022) ---
+
+test('mergeFixations: funde adjacentes com gap curto e centroides próximos, ponderando pelo sampleCount', () => {
+  const fix = (tStart: number, tEnd: number, h: number, v: number, n: number) => ({
+    tStart,
+    tEnd,
+    durationMs: tEnd - tStart,
+    centroidH: h,
+    centroidV: v,
+    sampleCount: n,
+  });
+  const { fixations, mergeCount } = mergeFixations(
+    [fix(0, 200, 0.50, 0.50, 6), fix(266, 400, 0.52, 0.50, 3)], // gap 66ms, dist 0.02
+    { maxMergeGapMs: 100, maxMergeDistance: 0.05 },
+  );
+  assert.equal(mergeCount, 1);
+  assert.equal(fixations.length, 1);
+  assert.equal(fixations[0].tStart, 0);
+  assert.equal(fixations[0].tEnd, 400);
+  assert.equal(fixations[0].durationMs, 400);
+  assert.equal(fixations[0].sampleCount, 9);
+  const expectedH = (0.5 * 6 + 0.52 * 3) / 9;
+  assert.ok(Math.abs(fixations[0].centroidH - expectedH) < 1e-9);
+});
+
+test('mergeFixations: gap acima de maxMergeGapMs não funde', () => {
+  const fix = (tStart: number, tEnd: number, h: number, v: number, n: number) => ({
+    tStart,
+    tEnd,
+    durationMs: tEnd - tStart,
+    centroidH: h,
+    centroidV: v,
+    sampleCount: n,
+  });
+  const out = mergeFixations(
+    [fix(0, 200, 0.5, 0.5, 6), fix(350, 500, 0.5, 0.5, 5)], // gap 150ms
+    { maxMergeGapMs: 100, maxMergeDistance: 0.05 },
+  );
+  assert.equal(out.fixations.length, 2);
+  assert.equal(out.mergeCount, 0);
+});
+
+test('mergeFixations: centroides distantes não fundem mesmo com gap curto (sacada real preservada)', () => {
+  const fix = (tStart: number, tEnd: number, h: number, v: number, n: number) => ({
+    tStart,
+    tEnd,
+    durationMs: tEnd - tStart,
+    centroidH: h,
+    centroidV: v,
+    sampleCount: n,
+  });
+  const out = mergeFixations(
+    [fix(0, 200, 0.30, 0.5, 6), fix(266, 466, 0.60, 0.5, 6)], // dist 0.30
+    { maxMergeGapMs: 100, maxMergeDistance: 0.05 },
+  );
+  assert.equal(out.fixations.length, 2);
+});
+
+test('mergeFixations: fusão em cascata: três fragmentos viram um', () => {
+  const fix = (tStart: number, tEnd: number, h: number, v: number, n: number) => ({
+    tStart,
+    tEnd,
+    durationMs: tEnd - tStart,
+    centroidH: h,
+    centroidV: v,
+    sampleCount: n,
+  });
+  const out = mergeFixations(
+    [fix(0, 100, 0.50, 0.5, 3), fix(166, 266, 0.51, 0.5, 3), fix(333, 433, 0.52, 0.5, 3)],
+    { maxMergeGapMs: 100, maxMergeDistance: 0.05 },
+  );
+  assert.equal(out.fixations.length, 1);
+  assert.equal(out.mergeCount, 2);
 });

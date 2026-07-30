@@ -123,3 +123,50 @@ export function detectFixations(
 
   return fixations;
 }
+
+// --- Candidate merging (Hooge et al. 2022) ---
+//
+// A single bad frame splits one physiological fixation into two candidates. The
+// split does double damage: it shortens meanFixationMs AND, when the fragments'
+// centroids sit ≥ the saccade floor apart, it fabricates a saccade/regression that
+// never happened. Hooge et al. (2022) showed explicit merge+selection lifts
+// agreement between seven detectors from F1 0.47 to 0.93 — more decisive than the
+// choice of algorithm itself.
+//
+// Distance uses the same summed h+v metric as dispersion(), for internal coherence.
+// Merging cascades: a merged fixation may absorb the next candidate too.
+
+export interface MergeFixationsOptions {
+  maxMergeGapMs: number;      // 100ms: one dropped frame at 30fps is ~66ms; 40ms (I2MC) is inert here
+  maxMergeDistance: number;   // same units and value as the detection dispersion threshold
+}
+
+export interface MergedFixations { fixations: Fixation[]; mergeCount: number; }
+
+export function mergeFixations(
+  fixations: Fixation[],
+  options: MergeFixationsOptions,
+): MergedFixations {
+  if (fixations.length < 2) return { fixations: fixations.slice(), mergeCount: 0 };
+  const out: Fixation[] = [{ ...fixations[0] }];
+  let mergeCount = 0;
+  for (let i = 1; i < fixations.length; i++) {
+    const prev = out[out.length - 1];
+    const next = fixations[i];
+    const gap = next.tStart - prev.tEnd;
+    const distance = Math.abs(next.centroidH - prev.centroidH)
+      + Math.abs(next.centroidV - prev.centroidV);
+    if (gap <= options.maxMergeGapMs && distance < options.maxMergeDistance) {
+      const total = prev.sampleCount + next.sampleCount;
+      prev.centroidH = (prev.centroidH * prev.sampleCount + next.centroidH * next.sampleCount) / total;
+      prev.centroidV = (prev.centroidV * prev.sampleCount + next.centroidV * next.sampleCount) / total;
+      prev.tEnd = next.tEnd;
+      prev.durationMs = prev.tEnd - prev.tStart;
+      prev.sampleCount = total;
+      mergeCount++;
+    } else {
+      out.push({ ...next });
+    }
+  }
+  return { fixations: out, mergeCount };
+}
