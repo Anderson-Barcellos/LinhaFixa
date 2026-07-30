@@ -13,6 +13,7 @@ import { confirmDeviceClass, defaultViewingDistanceCm, resolveDeviceClass } from
 import type { DeviceClass, UserProfile } from '@/types';
 import { Save, Eye, ScanEye } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { ScreenCalibrationCard } from '@/components/ScreenCalibrationCard';
 
 interface SettingsFormData {
   name: string;
@@ -220,9 +221,11 @@ export function SettingsScreen() {
             </div>
           </fieldset>
 
+          <ScreenCalibrationCard />
+
           <div>
              <label className="flex items-center gap-4 p-6 bg-surface-sunken rounded-2xl cursor-pointer">
-                <input 
+                <input
                   type="checkbox"
                   checked={formData.cameraEnabled}
                   onChange={e => setFormData({...formData, cameraEnabled: e.target.checked})}
