@@ -69,3 +69,12 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* Alvo de calibração: nasce grande e encolhe até o núcleo durante o settle —
+   concentra a fixação no centro e sinaliza quando a coleta começa. Escala
+   inicial e duração vêm do componente (--calib-start-scale + animationDuration
+   inline, fonte única em SETTLE_MS/targetSizing). */
+@keyframes calib-target-shrink {
+  from { transform: scale(var(--calib-start-scale, 3.33)); }
+  to { transform: scale(1); }
+}

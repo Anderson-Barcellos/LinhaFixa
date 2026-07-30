@@ -41,6 +41,7 @@ import {
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import { currentOrientation, fullViewportRect, type SurfaceRect } from '@/services/ocularSignalContract';
 import { activePxPerCm } from '@/services/screenCalibration';
+import { targetSizing } from '@/services/calibrationTarget';
 
 interface CalibrationOverlayProps {
   viewingDistanceCm: number;
@@ -407,6 +408,15 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   const surface = activeSurfaceRect();
   const targetPx = targetToViewportPx(target, surface);
 
+  // Alvo: núcleo ~0,6° que nasce ~2° e encolhe no settle; anel de progresso
+  // fecha com amostras válidas do ponto e REGRIDE quando a purga de blink
+  // remove amostras — feedback honesto, não animação decorativa.
+  const sizing = targetSizing(pxPerDeg);
+  const ringSizePx = sizing.corePx + 14;
+  const ringRadius = (sizing.corePx + 8) / 2;
+  const ringCircumference = 2 * Math.PI * ringRadius;
+  const pointProgress = Math.min(1, Math.max(0, collectedRef.current / MIN_SAMPLES_PER_POINT));
+
   return (
     <div
       className="fixed inset-0 z-50 bg-slate-900 overflow-hidden"
@@ -449,10 +459,48 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
           </div>
           {/* The moving dot the user must follow with their eyes. */}
           <div
-            className="absolute w-5 h-5 md:w-6 md:h-6 rounded-full bg-blue-400 ring-4 ring-blue-400/30 -translate-x-1/2 -translate-y-1/2 transition-all duration-300"
+            className="absolute -translate-x-1/2 -translate-y-1/2"
             style={{ left: `${targetPx.x}px`, top: `${targetPx.y}px` }}
           >
-            <div className="absolute inset-0 rounded-full bg-blue-200 animate-ping opacity-60" />
+            <svg
+              className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-90"
+              width={ringSizePx}
+              height={ringSizePx}
+              viewBox={`0 0 ${ringSizePx} ${ringSizePx}`}
+              aria-hidden="true"
+            >
+              <circle
+                cx={ringSizePx / 2}
+                cy={ringSizePx / 2}
+                r={ringRadius}
+                fill="none"
+                stroke="rgba(147, 197, 253, 0.25)"
+                strokeWidth={3}
+              />
+              <circle
+                cx={ringSizePx / 2}
+                cy={ringSizePx / 2}
+                r={ringRadius}
+                fill="none"
+                stroke="rgb(96, 165, 250)"
+                strokeWidth={3}
+                strokeLinecap="round"
+                strokeDasharray={ringCircumference}
+                strokeDashoffset={ringCircumference * (1 - pointProgress)}
+              />
+            </svg>
+            <div
+              key={`${mode}-${index}`}
+              className="relative rounded-full bg-blue-400 ring-2 ring-blue-300/40"
+              style={{
+                width: `${sizing.corePx}px`,
+                height: `${sizing.corePx}px`,
+                '--calib-start-scale': String(sizing.startScale),
+                animation: `calib-target-shrink ${SETTLE_MS}ms ease-out both`,
+              } as React.CSSProperties}
+            >
+              <div className="absolute left-1/2 top-1/2 h-[22%] w-[22%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
+            </div>
           </div>
           {compactChrome ? (
             /* Uma linha fora do surface rect quando há folga acima; sem folga o
