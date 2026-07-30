@@ -39,6 +39,7 @@ import {
 } from '@/exercises/posturalStability';
 import { startVideoFrameLoop, type VideoFrameLoopHandle } from '@/services/videoFrameLoop';
 import { currentOrientation, fullViewportRect, type SurfaceRect } from '@/services/ocularSignalContract';
+import { activePxPerCm } from '@/services/screenCalibration';
 
 interface CalibrationOverlayProps {
   viewingDistanceCm: number;
@@ -65,7 +66,6 @@ const SETTLE_MS = 450;          // let the eyes land on a new dot before collect
 const MIN_POINT_MS = 550;       // avoid advancing from a burst of adjacent frames
 const MAX_POINT_MS = 2200;      // avoid hanging forever on dropped video frames
 const MIN_SAMPLES_PER_POINT = CALIBRATION_VALIDITY_CONTRACT.minimumSamplesPerPoint;
-const PX_PER_CM = 37.8;         // CSS reference (~96 dpi); used only for the deg readout
 
 type Phase = 'warmup' | 'calibrating' | 'validating' | 'done' | 'rejected' | 'unavailable';
 
@@ -107,7 +107,9 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
   // Trigger a re-render to nudge progress without spamming state every frame.
   const [, setTick] = useState(0);
 
-  const pxPerDeg = 2 * viewingDistanceCm * Math.tan((1 * Math.PI / 180) / 2) * PX_PER_CM;
+  // px/cm vigente: a régua do erro de validação (errorsDeg) tem de ser o MESMO
+  // instrumento que mede o resto da sessão — medido quando houver, CSS senão.
+  const pxPerDeg = 2 * viewingDistanceCm * Math.tan((1 * Math.PI / 180) / 2) * activePxPerCm().pxPerCm;
 
   useEffect(() => {
     let frameLoop: VideoFrameLoopHandle | null = null;

@@ -19,6 +19,7 @@ import {
   rectFromElement,
   viewportNormToRectPoint,
 } from '@/services/ocularSignalContract';
+import { activePxPerCm } from '@/services/screenCalibration';
 
 interface ExerciseCanvasProps {
   exerciseId: string;
@@ -34,11 +35,6 @@ interface ExerciseCanvasProps {
   registerStop?: (stop: () => void) => void;
 }
 
-// Standard CSS reference is 96px/inch => ~37.8px/cm.
-// NOTE: the canvas backing store IS DPR-scaled (see applySurface below), but
-// exercises still draw in CSS px — the ctx.setTransform(dpr, ...) call absorbs
-// the DPR, so PX_PER_CM correctly stays a CSS-px constant here.
-const PX_PER_CM = 37.8;
 
 export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled, forceRawSignal, viewingDistanceCm = 40, fontSizePreference = 'normal', registerStop }: ExerciseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -151,7 +147,8 @@ export function ExerciseCanvas({ exerciseId, parameters, onFinish, cameraEnabled
       // NOTE: the canvas backing store is DPR-scaled (device px), but exercises
       // draw in CSS px — the loop's ctx.setTransform(surface.dpr, ...) absorbs the
       // DPR, so pxPerCm stays a CSS-px constant and must NOT be multiplied by DPR.
-      const pxPerCm = PX_PER_CM;
+      // px/cm vigente (medido no Settings quando houver; referência CSS caso contrário).
+      const pxPerCm = activePxPerCm().pxPerCm;
       // Visual angle -> screen size at the FROZEN stimulus distance (profile until
       // the tracker freezes; a single early adjustment ≤3s in is the accepted cost).
       const degToPx = (deg: number) => {
