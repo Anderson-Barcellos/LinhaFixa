@@ -7,7 +7,7 @@ import {
   type PosturalSample,
 } from '@/exercises/posturalStability';
 import { getDetectionTelemetry, type HeadPose } from '@/services/faceTracking';
-import { purgeLeadingBlinkSamples } from '@/services/blinkGate';
+import { purgeLeadingBlinkSamples, captureBlinkGateStamp } from '@/services/blinkGate';
 import { getMotionQuality } from '@/services/motionSensor';
 import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { cssPxPerDeg } from '@/services/viewingGeometry';
@@ -368,6 +368,7 @@ export function useCaptureLifecycle(options: UseCaptureLifecycleOptions): Captur
       environment,
       calibrationAssessment: startSnapshot.calibrationAssessment ?? undefined,
       validity,
+      blinkGate: captureBlinkGateStamp(),
       sampleCount: samples.length,
       samples,
       distanceEstimatedCm,

@@ -4,10 +4,12 @@ import {
   activeBlinkThresholds,
   createBlinkGateTracker,
   purgeLeadingBlinkSamples,
+  captureBlinkGateStamp,
   BLINK_EXIT_THRESHOLD,
   BLINK_HOLD_MS,
   BLINK_LEADING_PURGE_MS,
   BLINK_RECOVERY_STABLE_MS,
+  BLINK_SCHEME_VERSION,
   MAX_BLINK_MS,
 } from './blinkGate';
 import { commitDerivedBlinkThresholds, resetDerivedBlinkThresholds } from './blinkBaseline';
@@ -173,4 +175,28 @@ test('purgeLeadingBlinkSamples drops only the trailing window in place', () => {
   const samples = [{ t: 0 }, { t: 400 }, { t: 950 }, { t: 990 }];
   purgeLeadingBlinkSamples(samples, 1000, BLINK_LEADING_PURGE_MS);
   assert.deepEqual(samples, [{ t: 0 }, { t: 400 }]); // 950/990 estão nos últimos 80ms
+});
+
+test('captureBlinkGateStamp espelha limiares calibrados + repouso medido', () => {
+  const stamp = captureBlinkGateStamp(
+    { enter: 0.47, exit: 0.36, source: 'calibrated' },
+    { sampleCount: 120, baseline: 0.29, p90: 0.31, derived: { enter: 0.47, exit: 0.36 }, perBand: [], slopeProxy: null },
+  );
+  assert.deepEqual(stamp, {
+    schemeVersion: BLINK_SCHEME_VERSION,
+    source: 'calibrated',
+    baseMedian: 0.29,
+    enter: 0.47,
+    exit: 0.36,
+  });
+});
+
+test('captureBlinkGateStamp no fallback fixo carimba baseMedian null', () => {
+  const stamp = captureBlinkGateStamp(
+    { enter: 0.5, exit: 0.25, source: 'fixed' },
+    null,
+  );
+  assert.equal(stamp.source, 'fixed');
+  assert.equal(stamp.baseMedian, null);
+  assert.equal(stamp.schemeVersion, 1);
 });

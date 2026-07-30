@@ -5,7 +5,7 @@
 // re-opening wobble, and the leading purge retroactively removes the rising edge from
 // sample buffers. All windows are in ms, not frames — fps-independent by design.
 import { BLINK_REJECT_THRESHOLD, BLINK_REJECT_GATE_ENABLED, isBlinking } from './faceTracking';
-import { getDerivedBlinkThresholds } from './blinkBaseline';
+import { getDerivedBlinkThresholds, getBlinkBaselineSnapshot, type BlinkBaselineSnapshot } from './blinkBaseline';
 
 export const BLINK_EXIT_THRESHOLD = 0.25;
 export const BLINK_HOLD_MS = 100;
@@ -42,6 +42,32 @@ export function activeBlinkThresholds(): ActiveBlinkThresholds {
   return derived
     ? { enter: derived.enter, exit: derived.exit, source: 'calibrated' }
     : { enter: BLINK_REJECT_THRESHOLD, exit: BLINK_EXIT_THRESHOLD, source: 'fixed' };
+}
+
+// Versão do esquema de derivação de limiares (1 = aditivo sobre a mediana do
+// settle, spec P3 2026-07-28). Sem este carimbo por captura, a série mistura
+// instrumentos (fixed vs calibrated, e futuros esquemas) sem registro.
+export const BLINK_SCHEME_VERSION = 1;
+
+export interface CaptureBlinkGateStamp {
+  schemeVersion: number;
+  source: 'calibrated' | 'fixed';
+  baseMedian: number | null; // repouso medido que originou os limiares (null no fallback)
+  enter: number;
+  exit: number;
+}
+
+export function captureBlinkGateStamp(
+  active: ActiveBlinkThresholds = activeBlinkThresholds(),
+  snapshot: BlinkBaselineSnapshot | null = getBlinkBaselineSnapshot(),
+): CaptureBlinkGateStamp {
+  return {
+    schemeVersion: BLINK_SCHEME_VERSION,
+    source: active.source,
+    baseMedian: snapshot?.baseline ?? null,
+    enter: active.enter,
+    exit: active.exit,
+  };
 }
 
 export interface BlinkGateTracker {

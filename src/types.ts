@@ -2,6 +2,7 @@ import type { PosturalStabilityMetrics } from '@/exercises/posturalStability';
 import type { CalibrationAssessment } from '@/services/calibrationValidity';
 import type { CaptureValiditySnapshot } from '@/services/captureValidity';
 import type { PxPerCmSource } from '@/services/screenCalibration';
+import type { CaptureBlinkGateStamp } from '@/services/blinkGate';
 
 export type DeviceClass = 'phone' | 'tablet' | 'desktop';
 export type DeviceClassSource = 'confirmed' | 'suggested' | 'legacy-inferred';
@@ -278,6 +279,8 @@ export interface ValidationCapture {
   durationMs?: number;
   calibrationAssessment?: CalibrationAssessment;
   validity?: CaptureValiditySnapshot;
+  // Esquema de blink vigente na captura (limiar + origem + repouso que o gerou).
+  blinkGate?: CaptureBlinkGateStamp;
 }
 
 export type AssessedValidationCapture = ValidationCapture & {
