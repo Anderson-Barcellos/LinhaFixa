@@ -1066,6 +1066,16 @@ export function EyeTrackingTestScreen({
           ? `${blinkBaselineSnap.baseline.toFixed(2)} p90 ${blinkBaselineSnap.p90?.toFixed(2)} n${blinkBaselineSnap.sampleCount}`
           : '—'}
       />
+      <Metric
+        label="Repouso por faixa"
+        value={(() => {
+          const per = blinkBaselineSnap?.perBand;
+          if (!per || per.length === 0) return '—';
+          const m = (band: string) => per.find(p => p.band === band)?.median.toFixed(2) ?? '·';
+          const slope = blinkBaselineSnap?.slopeProxy;
+          return `t${m('top')} m${m('mid')} b${m('bottom')}${slope != null ? ` Δ${slope >= 0 ? '+' : ''}${slope.toFixed(2)}` : ''}`;
+        })()}
+      />
       <Metric label="Olhar H" value={fmt(live.h)} />
       <Metric label="Olhar V" value={fmt(live.v)} />
       <Metric label="Yaw idx" value={live.yaw != null ? live.yaw.toFixed(0) : '—'} />
