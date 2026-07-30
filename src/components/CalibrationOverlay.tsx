@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { initFaceTracking, isFaceTrackingActive, extractGazeFeatures, getLastLandmarks, estimateHeadPose, getBlinkScore } from '@/services/faceTracking';
 import { createBlinkGateTracker, BLINK_LEADING_PURGE_MS } from '@/services/blinkGate';
 import {
+  bandForCalibY,
   createBlinkBaselineMeter,
   commitBlinkBaselineSnapshot,
   resetDerivedBlinkThresholds,
@@ -63,6 +64,10 @@ const VALID_POINTS = [
 ];
 
 const SETTLE_MS = 450;          // let the eyes land on a new dot before collecting
+// Metade final do settle: os primeiros ~250ms contêm o trânsito/sacada vertical
+// até o alvo; atribuí-los à faixa do destino contaminaria o gradiente que a
+// coleta existe para medir (a ordem raster torna o viés sistemático).
+const BASELINE_BAND_MIN_SETTLE_MS = 250;
 const MIN_POINT_MS = 550;       // avoid advancing from a burst of adjacent frames
 const MAX_POINT_MS = 2200;      // avoid hanging forever on dropped video frames
 const MIN_SAMPLES_PER_POINT = CALIBRATION_VALIDITY_CONTRACT.minimumSamplesPerPoint;
@@ -349,7 +354,12 @@ export function CalibrationOverlay({ viewingDistanceCm, onComplete, onSkip, keep
         } else if (phaseNow === 'calibrating') {
           // Janela de settle: o olho está pousando e nada alimenta o fit — é a
           // amostra de repouso que calibra os limiares de piscada (spec P3).
-          baselineMeterRef.current.observe(getBlinkScore());
+          if (elapsed >= BASELINE_BAND_MIN_SETTLE_MS) {
+            baselineMeterRef.current.observe(
+              getBlinkScore(),
+              bandForCalibY(CALIB_POINTS[idxRef.current].y),
+            );
+          }
         }
         setTick(t => (t + 1) % 1000);
       }
