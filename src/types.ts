@@ -1,6 +1,7 @@
 import type { PosturalStabilityMetrics } from '@/exercises/posturalStability';
 import type { CalibrationAssessment } from '@/services/calibrationValidity';
 import type { CaptureValiditySnapshot } from '@/services/captureValidity';
+import type { PxPerCmSource } from '@/services/screenCalibration';
 
 export type DeviceClass = 'phone' | 'tablet' | 'desktop';
 export type DeviceClassSource = 'confirmed' | 'suggested' | 'legacy-inferred';
@@ -260,6 +261,11 @@ export interface ValidationCapture {
   distanceEstimatedCm?: number;  // median IPD-based distance estimate during the capture
   pxPerDegAtCapture?: number;    // CSS px per degree of visual angle at capture time
   canvasWidthPx?: number;        // reading-canvas width in CSS px at capture time
+  pxPerCmAtCapture?: number;     // px/cm usado para converter distância em pxPerDeg nesta captura
+  // Proveniência da régua px/cm ('measured' = cartão físico; 'css-reference' =
+  // premissa 96dpi). Sem este carimbo, medir a tela criaria dois instrumentos
+  // indistinguíveis na série — o mesmo defeito que thresholdSource previne.
+  pxPerCmSource?: PxPerCmSource;
   orientation?: 'portrait' | 'landscape';
   // Source provenance (absent on legacy captures). The analysis series is single-source
   // (the majority buffer); these counts expose how consistent that source really was

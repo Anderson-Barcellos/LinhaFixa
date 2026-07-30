@@ -11,6 +11,7 @@ import { purgeLeadingBlinkSamples } from '@/services/blinkGate';
 import { getMotionQuality } from '@/services/motionSensor';
 import { readCameraPipelineTelemetry } from '@/services/cameraTelemetry';
 import { cssPxPerDeg } from '@/services/viewingGeometry';
+import { activePxPerCm } from '@/services/screenCalibration';
 import { selectCaptureSeries, summarizeAxisSignal } from '@/services/validationCapture';
 import {
   assessCaptureValidity,
@@ -301,7 +302,11 @@ export function useCaptureLifecycle(options: UseCaptureLifecycleOptions): Captur
     // (e.g. a distance sample landing differently) and the persisted
     // pxPerDegAtCapture would no longer describe the metrics it sits next to.
     const distanceEstimatedCm = medianCaptureDistanceCm(distanceSamples);
-    const pxPerDegAtCapture = cssPxPerDeg(distanceEstimatedCm ?? startSnapshot.conditions.distanceCm);
+    const pxPerCmActive = activePxPerCm();
+    const pxPerDegAtCapture = cssPxPerDeg(
+      distanceEstimatedCm ?? startSnapshot.conditions.distanceCm,
+      pxPerCmActive.pxPerCm,
+    );
     const canvasWidthPx = startSnapshot.environment.surfaceRect.width;
     const metrics = analyzeSaccades(series.samples, {
       signalSource: series.signalSource,
@@ -368,6 +373,8 @@ export function useCaptureLifecycle(options: UseCaptureLifecycleOptions): Captur
       distanceEstimatedCm,
       pxPerDegAtCapture,
       canvasWidthPx,
+      pxPerCmAtCapture: pxPerCmActive.pxPerCm,
+      pxPerCmSource: pxPerCmActive.source,
       orientation: environment.viewport.orientation,
       calibratedSampleCount: series.calibratedSampleCount,
       rawSampleCount: series.rawSampleCount,

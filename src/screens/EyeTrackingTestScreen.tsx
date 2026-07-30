@@ -10,6 +10,7 @@ import { emaAlpha, RAW_V_EMA_TAU_MS, DISTANCE_EMA_TAU_MS } from '@/services/emaT
 import { createStimulusDistanceTracker } from '@/services/stimulusDistance';
 import { activeBlinkThresholds, purgeLeadingBlinkSamples } from '@/services/blinkGate';
 import { getBlinkBaselineSnapshot } from '@/services/blinkBaseline';
+import { activePxPerCm } from '@/services/screenCalibration';
 import {
   interpupillaryPx, estimateDistanceCm, getDistanceAnchor, readingFontCssPx, readingFontAngleDeg,
   distanceWithinAnchorTolerance, cssPxPerDeg,
@@ -489,7 +490,7 @@ export function EyeTrackingTestScreen({
       const stimulusSnap = screenDistanceTrackerRef.current.update(ipdPx != null && anchor ? dEst : null, ts);
       const fontPx = capturingRef.current && frozenFontPxRef.current != null
         ? frozenFontPxRef.current
-        : Math.round(readingFontCssPx(fontAngleRef.current, stimulusSnap.distanceCm));
+        : Math.round(readingFontCssPx(fontAngleRef.current, stimulusSnap.distanceCm, activePxPerCm().pxPerCm));
 
       const coverage = frame.coverage;
 
@@ -643,7 +644,7 @@ export function EyeTrackingTestScreen({
           // Live IPD distance only: without a real estimate this frame, the hint
           // falls back to the stamped relative threshold instead of faking geometry.
           geometry: ipdPx != null && anchor && Number.isFinite(dEst)
-            ? { pxPerDeg: cssPxPerDeg(dEst), canvasWidthPx: cssW }
+            ? { pxPerDeg: cssPxPerDeg(dEst, activePxPerCm().pxPerCm), canvasWidthPx: cssW }
             : undefined,
         }));
       }
@@ -794,7 +795,7 @@ export function EyeTrackingTestScreen({
     dispatchSession({ type: 'CAPTURE_STARTED' });
     // Freeze the stimulus geometry for the whole measurement window (the hook owns
     // the provenance snapshot; the font lock is the screen's stimulus concern).
-    frozenFontPxRef.current = Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current));
+    frozenFontPxRef.current = Math.round(readingFontCssPx(fontAngleRef.current, distanceRef.current, activePxPerCm().pxPerCm));
   };
 
   const removeCapture = (id: string) => {
