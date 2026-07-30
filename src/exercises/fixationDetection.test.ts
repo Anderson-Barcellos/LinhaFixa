@@ -244,14 +244,21 @@ test('detectMergedFixations: spike em v que parte uma fixação volta a ser uma 
   assert.ok(fixations[0].durationMs >= 300);
 });
 
-test('detectMergedFixations: fragmento curto (2 amostras, 66ms) é recuperado pelo merge em vez de descartado', () => {
-  // 4 amostras (99ms) + buraco de 1 frame + 2 amostras (33ms) no mesmo lugar:
-  // nenhum fragmento sozinho passa de 100ms, juntos passam.
-  const a = [0, 33, 66, 99].map(t => ({ t, h: 0.5, v: 0.5 }));
-  const b = [165, 198].map(t => ({ t, h: 0.5, v: 0.5 }));
-  const { fixations } = detectMergedFixations([...a, ...b], { dispersionThreshold: 0.05 });
-  assert.equal(fixations.length, 1);
+test('detectMergedFixations: fragmento curto é recuperado pelo merge (via dispersão, não gap)', () => {
+  // Fragmento A: 3 amostras (t=0,33,66) com h=0.5, v=0.5 → candidato de 66ms.
+  // Outlier: 1 amostra (t=99) com h=0.9, v=0.5 quebra dispersão 0.05 → detectFixations descarta.
+  // Fragmento B: 3 amostras (t=132,165,198) com h=0.5, v=0.5 → candidato de 66ms.
+  // Gap B−A: 132−66=66ms ≤ 100; distância 0 < 0.05 → merge.
+  // Sem merge, ambos os 66ms seriam filtrados no piso de 100ms. Com merge, resultado é 198ms.
+  const a = [0, 33, 66].map(t => ({ t, h: 0.5, v: 0.5 }));
+  const outlier = [{ t: 99, h: 0.9, v: 0.5 }];
+  const b = [132, 165, 198].map(t => ({ t, h: 0.5, v: 0.5 }));
+  const { fixations, mergeCount } = detectMergedFixations([...a, ...outlier, ...b], {
+    dispersionThreshold: 0.05,
+  });
+  assert.equal(fixations.length, 1, 'dois fragmentos devem fundir em um');
   assert.equal(fixations[0].durationMs, 198);
+  assert.equal(mergeCount, 1, 'merge deve ter ocorrido (prova de que cada fragmento 66ms foi recuperado pela fusão)');
 });
 
 test('detectMergedFixations: seleção final ainda corta repouso curto isolado (<100ms)', () => {
