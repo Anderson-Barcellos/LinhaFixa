@@ -64,3 +64,13 @@ test('activePxPerCm sem ambiente de browser cai na referência CSS carimbada', (
   // Em Node (sem window/localStorage) o fallback é o comportamento de hoje, nunca pior.
   assert.deepEqual(activePxPerCm(), { pxPerCm: CSS_PX_PER_CM, source: 'css-reference' });
 });
+
+test('resolveScreenCalibration: registro sem key cai no fallback em vez de lançar', () => {
+  // Registro corrompido sem a chave é descartado honestamente
+  assert.equal(resolveScreenCalibration({ pxPerCm: 40, cardWidthPx: 342.4, measuredAt: 1 } as any, KEY), null);
+});
+
+test('resolveScreenCalibration: registro com key parcial cai no fallback em vez de lançar', () => {
+  // Registro com key incompleto é descartado honestamente
+  assert.equal(resolveScreenCalibration({ pxPerCm: 40, cardWidthPx: 342.4, measuredAt: 1, key: { devicePixelRatio: 1.3375 } } as any, KEY), null);
+});

@@ -62,12 +62,25 @@ export function sameScreenCalibrationKey(a: ScreenCalibrationKey, b: ScreenCalib
     && a.orientation === b.orientation;
 }
 
+// Valida se a key tem a shape correta (todos os 4 campos presentes e com tipos esperados)
+function isValidScreenCalibrationKey(key: unknown): key is ScreenCalibrationKey {
+  if (!key || typeof key !== 'object') return false;
+  const k = key as Record<string, unknown>;
+  return (
+    typeof k.devicePixelRatio === 'number'
+    && typeof k.screenWidth === 'number'
+    && typeof k.screenHeight === 'number'
+    && (k.orientation === 'portrait' || k.orientation === 'landscape')
+  );
+}
+
 export function resolveScreenCalibration(
   stored: ScreenCalibration | null,
   currentKey: ScreenCalibrationKey,
 ): ScreenCalibration | null {
   if (!stored) return null;
   if (!inMeasuredRange(stored.pxPerCm)) return null;
+  if (!isValidScreenCalibrationKey(stored.key)) return null;
   return sameScreenCalibrationKey(stored.key, currentKey) ? stored : null;
 }
 
