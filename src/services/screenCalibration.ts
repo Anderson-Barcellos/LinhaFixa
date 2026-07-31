@@ -13,7 +13,8 @@
 import { CSS_PX_PER_CM } from './viewingGeometry';
 import { currentOrientation } from './ocularSignalContract';
 
-export const CARD_WIDTH_MM = 85.6; // ISO/IEC 7810 ID-1
+export const CARD_WIDTH_MM = 85.6;  // ISO/IEC 7810 ID-1, lado maior
+export const CARD_HEIGHT_MM = 53.98; // lado menor — permite medir com o cartão "em pé" em telas estreitas
 const CARD_WIDTH_CM = CARD_WIDTH_MM / 10;
 // Faixa de sanidade: monitores/phones reais ficam em ~25-70 px(CSS)/cm; fora
 // disso a "medida" é erro de manuseio. Fora da faixa não se clampa — fallback
@@ -49,10 +50,17 @@ function inMeasuredRange(pxPerCm: number): boolean {
     && pxPerCm <= MEASURED_PX_PER_CM_RANGE.max;
 }
 
-export function pxPerCmFromCardWidthPx(cardWidthPx: number): number | null {
-  if (!Number.isFinite(cardWidthPx) || cardWidthPx <= 0) return null;
-  const pxPerCm = cardWidthPx / CARD_WIDTH_CM;
+// Medida pelo lado informado do cartão (deitado = 85,60mm; em pé = 53,98mm) —
+// o lado menor existe para telas cujo viewport não comporta o lado maior.
+export function pxPerCmFromSpanPx(spanPx: number, spanMm: number): number | null {
+  if (!Number.isFinite(spanPx) || spanPx <= 0) return null;
+  if (!Number.isFinite(spanMm) || spanMm <= 0) return null;
+  const pxPerCm = spanPx / (spanMm / 10);
   return inMeasuredRange(pxPerCm) ? pxPerCm : null;
+}
+
+export function pxPerCmFromCardWidthPx(cardWidthPx: number): number | null {
+  return pxPerCmFromSpanPx(cardWidthPx, CARD_WIDTH_MM);
 }
 
 export function sameScreenCalibrationKey(a: ScreenCalibrationKey, b: ScreenCalibrationKey): boolean {
@@ -104,10 +112,13 @@ export function loadScreenCalibration(): ScreenCalibration | null {
   }
 }
 
-export function saveScreenCalibration(cardWidthPx: number): ScreenCalibration | null {
+export function saveScreenCalibration(spanPx: number, spanMm: number = CARD_WIDTH_MM): ScreenCalibration | null {
   const key = currentScreenCalibrationKey();
-  const pxPerCm = pxPerCmFromCardWidthPx(cardWidthPx);
+  const pxPerCm = pxPerCmFromSpanPx(spanPx, spanMm);
   if (!key || pxPerCm == null || typeof localStorage === 'undefined') return null;
+  // cardWidthPx persiste sempre normalizado ao lado maior (85,60mm), independente
+  // do lado usado no ritual — o registro descreve o cartão, não o gesto.
+  const cardWidthPx = pxPerCm * CARD_WIDTH_CM;
   const calibration: ScreenCalibration = { pxPerCm, cardWidthPx, measuredAt: Date.now(), key };
   try {
     localStorage.setItem(SCREEN_CALIBRATION_STORAGE_KEY, JSON.stringify(calibration));

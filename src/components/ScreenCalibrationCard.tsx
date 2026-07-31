@@ -1,11 +1,12 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
+  CARD_HEIGHT_MM,
   CARD_WIDTH_MM,
   activePxPerCm,
   clearScreenCalibration,
   currentScreenCalibrationKey,
   loadScreenCalibration,
-  pxPerCmFromCardWidthPx,
+  pxPerCmFromSpanPx,
   resolveScreenCalibration,
   saveScreenCalibration,
 } from '@/services/screenCalibration';
@@ -13,49 +14,41 @@ import { CSS_PX_PER_CM } from '@/services/viewingGeometry';
 import { CreditCard } from 'lucide-react';
 
 // Proporção ISO/IEC 7810 ID-1: 85,60 × 53,98 mm.
-const CARD_ASPECT = 53.98 / 85.6;
-const CARD_WIDTH_CM = CARD_WIDTH_MM / 10;
-const SLIDER_MIN_PX = 200;
-const SLIDER_MAX_PX = 600;
+const CARD_ASPECT = CARD_HEIGHT_MM / CARD_WIDTH_MM;
+const SLIDER_MIN_PX = 150;
+
+type CardPose = 'deitado' | 'em-pe';
+
+function spanMmFor(pose: CardPose): number {
+  return pose === 'deitado' ? CARD_WIDTH_MM : CARD_HEIGHT_MM;
+}
 
 // Ritual do "virtual chinrest": encostar um cartão físico na tela e ajustar o
-// retângulo até coincidir. px/cm = larguraPx / 8,56cm — mede a tela de verdade
-// em vez de assumir os 96dpi da referência CSS.
+// retângulo até coincidir. px/cm = spanPx / spanCm — mede a tela de verdade em
+// vez de assumir os 96dpi da referência CSS. O ritual roda em OVERLAY de tela
+// cheia: o teto da medida tem de ser o viewport, nunca a largura de um card de
+// layout — um teto de container tornaria o instrumento cego exatamente nas
+// telas mais densas. Em viewport estreito (phone), mede-se com o cartão em pé
+// (lado de 53,98mm).
 export function ScreenCalibrationCard() {
+  const [measuring, setMeasuring] = useState(false);
   const [saved, setSaved] = useState(() => {
     const key = currentScreenCalibrationKey();
     return key ? resolveScreenCalibration(loadScreenCalibration(), key) : null;
   });
-  const [cardWidthPx, setCardWidthPx] = useState(() =>
-    saved?.cardWidthPx ?? Math.round(CSS_PX_PER_CM * CARD_WIDTH_CM),
-  );
-  const previewPxPerCm = useMemo(() => pxPerCmFromCardWidthPx(cardWidthPx), [cardWidthPx]);
   const active = activePxPerCm();
 
-  const rectRef = useRef<HTMLDivElement>(null);
-  const [clamped, setClamped] = useState(false);
-
-  // maxWidth: '100%' no retângulo protege o layout, mas num container mais
-  // estreito que cardWidthPx a largura RENDERIZADA fica menor que o valor
-  // salvo — o usuário alinharia o cartão físico ao retângulo cortado e
-  // carimbaria como 'measured' um px/cm errado. Mede a largura real após
-  // cada render/resize e bloqueia o salvar quando o clamp está ativo.
-  useLayoutEffect(() => {
-    const measure = () => {
-      const el = rectRef.current;
-      if (!el) return;
-      // offsetWidth, não clientWidth: com o border-box do Tailwind o width
-      // inline inclui as bordas (border-2 = 4px), e clientWidth as exclui —
-      // comparar clientWidth com cardWidthPx acusaria clamp sempre.
-      setClamped(el.offsetWidth < cardWidthPx - 1);
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [cardWidthPx]);
-
-  const nudge = (delta: number) =>
-    setCardWidthPx(w => Math.min(SLIDER_MAX_PX, Math.max(SLIDER_MIN_PX, w + delta)));
+  if (measuring) {
+    return (
+      <ScreenCalibrationOverlay
+        initialSpanPx={saved?.cardWidthPx}
+        onDone={result => {
+          if (result) setSaved(result);
+          setMeasuring(false);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="p-6 bg-surface-sunken rounded-2xl space-y-4">
@@ -63,55 +56,148 @@ export function ScreenCalibrationCard() {
         <CreditCard className="w-5 h-5 text-indigo-500" /> Calibração de tela (cartão físico)
       </div>
       <p className="text-sm text-mild">
-        Encoste um cartão de crédito/débito na tela e ajuste o retângulo até as larguras
-        coincidirem. Isso mede o tamanho real do pixel — os graus absolutos da série
-        dependem dessa régua.
+        Meça o tamanho real do pixel comparando um cartão de crédito/débito com um
+        retângulo na tela — os graus absolutos da série dependem dessa régua.
       </p>
-      <div
-        ref={rectRef}
-        className="border-2 border-indigo-500 rounded-lg bg-accent-soft"
-        style={{ width: `${cardWidthPx}px`, height: `${Math.round(cardWidthPx * CARD_ASPECT)}px`, maxWidth: '100%' }}
-        aria-label="Retângulo de comparação com o cartão"
-      />
-      <div className="flex items-center gap-3 flex-wrap">
-        <input
-          type="range"
-          min={SLIDER_MIN_PX}
-          max={SLIDER_MAX_PX}
-          step={1}
-          value={cardWidthPx}
-          onChange={e => setCardWidthPx(Number(e.target.value))}
-          className="flex-1 min-w-40 accent-indigo-600"
-        />
-        <button type="button" onClick={() => nudge(-1)} className="px-3 py-1 rounded-lg border border-line-strong text-mild font-bold">−1px</button>
-        <button type="button" onClick={() => nudge(1)} className="px-3 py-1 rounded-lg border border-line-strong text-mild font-bold">+1px</button>
-      </div>
       <div className="text-sm text-mild">
-        {clamped
-          ? 'Tela estreita demais para medir com este tamanho — o retângulo está cortado.'
-          : previewPxPerCm != null
-            ? `Medida atual: ${previewPxPerCm.toFixed(2)} px/cm (referência CSS: ${CSS_PX_PER_CM} px/cm)`
-            : 'Fora da faixa plausível (20–80 px/cm) — ajuste o retângulo até casar com o cartão.'}
-        {' · '}
         {active.source === 'measured'
-          ? `Em uso: medida de ${saved ? new Date(saved.measuredAt).toLocaleDateString('pt-BR') : '—'}`
-          : 'Em uso: referência CSS (sem medida válida para esta tela)'}
+          ? `Em uso: ${active.pxPerCm.toFixed(2)} px/cm medidos em ${saved ? new Date(saved.measuredAt).toLocaleDateString('pt-BR') : '—'} (referência CSS: ${CSS_PX_PER_CM} px/cm)`
+          : `Em uso: referência CSS (${CSS_PX_PER_CM} px/cm) — sem medida válida para esta tela`}
       </div>
       <div className="flex gap-3 flex-wrap">
         <button
           type="button"
-          disabled={previewPxPerCm == null || clamped}
-          onClick={() => setSaved(saveScreenCalibration(cardWidthPx))}
-          className="px-5 py-3 bg-accent hover:bg-indigo-500 text-white rounded-xl font-bold disabled:opacity-40"
+          onClick={() => setMeasuring(true)}
+          className="px-5 py-3 bg-accent hover:bg-indigo-500 text-white rounded-xl font-bold"
+        >
+          {active.source === 'measured' ? 'Medir novamente' : 'Medir agora'}
+        </button>
+        {active.source === 'measured' && (
+          <button
+            type="button"
+            onClick={() => { clearScreenCalibration(); setSaved(null); }}
+            className="px-5 py-3 bg-surface border border-line-strong text-mild rounded-xl font-bold"
+          >
+            Voltar à referência CSS
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ScreenCalibrationOverlay({
+  initialSpanPx,
+  onDone,
+}: {
+  initialSpanPx?: number;
+  onDone: (saved: ReturnType<typeof saveScreenCalibration>) => void;
+}) {
+  // Teto físico do gesto: quase todo o viewport. Medido uma vez na abertura —
+  // o overlay é efêmero e resize mid-ritual invalidaria a chave de qualquer forma.
+  const [viewport] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  const sliderMax = Math.max(SLIDER_MIN_PX + 50, Math.floor(viewport.w) - 32);
+  // Cartão em pé por padrão quando o viewport não comporta o lado maior com folga.
+  const [pose, setPose] = useState<CardPose>(() =>
+    viewport.w < CSS_PX_PER_CM * (CARD_WIDTH_MM / 10) + 80 ? 'em-pe' : 'deitado',
+  );
+  const [spanPx, setSpanPx] = useState(() => {
+    // initialSpanPx vem normalizado ao lado maior (cardWidthPx); converte para
+    // o lado da pose inicial antes de usar, senão o px/cm nasce inflado ~1,59×.
+    const seedDeitado = initialSpanPx ?? CSS_PX_PER_CM * (CARD_WIDTH_MM / 10);
+    const seed = (seedDeitado * spanMmFor(pose)) / CARD_WIDTH_MM;
+    return Math.round(Math.min(seed, Math.floor(viewport.w) - 32));
+  });
+
+  const previewPxPerCm = useMemo(
+    () => pxPerCmFromSpanPx(spanPx, spanMmFor(pose)),
+    [spanPx, pose],
+  );
+
+  const clampSpan = (v: number) => Math.min(sliderMax, Math.max(SLIDER_MIN_PX, v));
+  const nudge = (delta: number) => setSpanPx(w => clampSpan(w + delta));
+
+  const switchPose = (next: CardPose) => {
+    if (next === pose) return;
+    // Converte o span atual para o outro lado preservando o px/cm implícito.
+    setSpanPx(w => clampSpan(Math.round((w * spanMmFor(next)) / spanMmFor(pose))));
+    setPose(next);
+  };
+
+  // O span ajustado é SEMPRE a dimensão horizontal do retângulo (é ela que se
+  // compara com o cartão encostado); o outro lado segue a proporção ISO. Em pé,
+  // a horizontal corresponde ao lado menor do cartão físico girado 90°.
+  const rectW = spanPx;
+  const rectH = pose === 'deitado' ? Math.round(spanPx * CARD_ASPECT) : Math.round(spanPx / CARD_ASPECT);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900 flex flex-col items-center justify-center gap-6 p-4 overflow-hidden">
+      <div className="text-center text-white px-4">
+        <p className="text-base md:text-xl font-semibold mb-1">Calibração de tela</p>
+        <p className="text-slate-300 text-xs md:text-sm">
+          Encoste o cartão {pose === 'deitado' ? 'deitado' : 'em pé (girado 90°)'} na tela e
+          ajuste até a largura do retângulo coincidir com a do cartão.
+        </p>
+      </div>
+
+      <div className="flex gap-2">
+        {(['deitado', 'em-pe'] as const).map(p => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => switchPose(p)}
+            className={`px-4 py-2 rounded-lg text-sm font-bold border ${
+              pose === p
+                ? 'bg-blue-500 border-blue-400 text-white'
+                : 'bg-slate-800 border-slate-600 text-slate-300'
+            }`}
+          >
+            {p === 'deitado' ? 'Cartão deitado (85,6mm)' : 'Cartão em pé (54,0mm)'}
+          </button>
+        ))}
+      </div>
+
+      <div
+        className="border-2 border-blue-400 rounded-lg bg-blue-400/10 shrink-0"
+        style={{ width: `${rectW}px`, height: `${Math.min(rectH, viewport.h - 220)}px` }}
+        aria-label="Retângulo de comparação com o cartão"
+      />
+
+      <div className="flex items-center gap-3 flex-wrap justify-center w-full max-w-xl px-2">
+        <input
+          type="range"
+          min={SLIDER_MIN_PX}
+          max={sliderMax}
+          step={1}
+          value={spanPx}
+          onChange={e => setSpanPx(Number(e.target.value))}
+          className="flex-1 min-w-40 accent-blue-500"
+        />
+        <button type="button" onClick={() => nudge(-1)} className="px-3 py-1 rounded-lg border border-slate-600 text-slate-200 font-bold">−1px</button>
+        <button type="button" onClick={() => nudge(1)} className="px-3 py-1 rounded-lg border border-slate-600 text-slate-200 font-bold">+1px</button>
+      </div>
+
+      <div className="text-sm text-slate-300 text-center px-4">
+        {previewPxPerCm != null
+          ? `Medida atual: ${previewPxPerCm.toFixed(2)} px/cm (referência CSS: ${CSS_PX_PER_CM} px/cm)`
+          : 'Fora da faixa plausível (20–80 px/cm) — ajuste até o retângulo casar com o cartão.'}
+      </div>
+
+      <div className="flex gap-3 flex-wrap justify-center">
+        <button
+          type="button"
+          disabled={previewPxPerCm == null}
+          onClick={() => onDone(saveScreenCalibration(spanPx, spanMmFor(pose)))}
+          className="px-6 py-3 bg-blue-500 hover:bg-blue-400 text-white rounded-xl font-bold disabled:opacity-40"
         >
           Salvar medida
         </button>
         <button
           type="button"
-          onClick={() => { clearScreenCalibration(); setSaved(null); }}
-          className="px-5 py-3 bg-surface border border-line-strong text-mild rounded-xl font-bold"
+          onClick={() => onDone(null)}
+          className="px-6 py-3 bg-slate-800 border border-slate-600 text-slate-200 rounded-xl font-bold"
         >
-          Voltar à referência CSS
+          Cancelar
         </button>
       </div>
     </div>

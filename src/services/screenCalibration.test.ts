@@ -2,8 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CARD_WIDTH_MM,
+  CARD_HEIGHT_MM,
   MEASURED_PX_PER_CM_RANGE,
   pxPerCmFromCardWidthPx,
+  pxPerCmFromSpanPx,
   sameScreenCalibrationKey,
   resolveScreenCalibration,
   activePxPerCm,
@@ -22,6 +24,19 @@ const KEY: ScreenCalibrationKey = {
 function calib(overrides: Partial<ScreenCalibration> = {}): ScreenCalibration {
   return { pxPerCm: 40, cardWidthPx: 342.4, measuredAt: 1_753_000_000_000, key: { ...KEY }, ...overrides };
 }
+
+test('pxPerCmFromSpanPx mede pelo lado informado do cartão (deitado ou em pé)', () => {
+  // Mesmo px/cm físico medido pelos dois lados: 40 px/cm → 342.4px deitado, 215.92px em pé.
+  const deitado = pxPerCmFromSpanPx(40 * (CARD_WIDTH_MM / 10), CARD_WIDTH_MM);
+  const emPe = pxPerCmFromSpanPx(40 * (CARD_HEIGHT_MM / 10), CARD_HEIGHT_MM);
+  assert.ok(deitado != null && Math.abs(deitado - 40) < 1e-9);
+  assert.ok(emPe != null && Math.abs(emPe - 40) < 1e-9);
+  // Faixa de sanidade vale igual nos dois lados; entradas inválidas caem fora.
+  assert.equal(pxPerCmFromSpanPx(50, CARD_HEIGHT_MM), null);   // 9.3 px/cm < 20
+  assert.equal(pxPerCmFromSpanPx(500, CARD_HEIGHT_MM), null);  // 92.6 px/cm > 80
+  assert.equal(pxPerCmFromSpanPx(Number.NaN, CARD_HEIGHT_MM), null);
+  assert.equal(pxPerCmFromSpanPx(300, 0), null);
+});
 
 test('pxPerCmFromCardWidthPx converte largura do cartão (85,60mm) em px/cm', () => {
   // 323.53 px / 8.56 cm = 37.795 px/cm (reproduz a referência CSS)
